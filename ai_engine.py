@@ -1,0 +1,406 @@
+"""
+============================================
+AI ENGINE - Nhận diện khuôn mặt
+============================================
+Module chứa toàn bộ logic AI:
+  - Kiểm tra GPU / CUDA
+  - Load models (YOLOv8-Face, YOLOv8n Person, MediaPipe)
+  - Detect faces / persons
+  - Kiểm tra ràng buộc (vị trí, kích thước, góc nghiêng)
+============================================
+"""
+
+import math
+import numpy as np
+import cv2
+import torch
+import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision as mp_vision
+from pathlib import Path
+from ultralytics import YOLO
+
+from config import (
+    FACE_MODEL_PATH, MP_FACE_MODEL_PATH,
+    FACE_CONFIDENCE, PERSON_CONFIDENCE, PERSON_CLASS_ID,
+    FACE_MIN_SIZE_RATIO, FACE_MAX_SIZE_RATIO, FACE_MAX_TILT_ANGLE,
+    CV_COLOR_DEFAULT, CV_COLOR_RED, CV_COLOR_GREEN,
+)
+
+
+# ============================================
+# GPU / CUDA
+# ============================================
+def check_gpu():
+    """
+    Kiểm tra và hiển thị thông tin GPU/CUDA.
+    Returns:
+        device_str: '0' nếu có GPU, 'cpu' nếu không
+    """
+    print("\n" + "=" * 50)
+    print("  KIỂM TRA GPU / CUDA")
+    print("=" * 50)
+    
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        print(f"✅ PyTorch CUDA: SẴN SÀNG")
+        print(f"🔌 GPU: {gpu_name}")
+        print(f"💾 VRAM: {gpu_memory:.1f} GB")
+        print(f"🔧 CUDA Version: {torch.version.cuda}")
+        print(f"📦 PyTorch Version: {torch.__version__}")
+        device = '0'
+    else:
+        print("⚠️  PyTorch CUDA: KHÔNG KHẢ DỤNG")
+        print("    -> Sẽ fallback về CPU (chậm hơn đáng kể)")
+        device = 'cpu'
+    
+    # TensorFlow GPU check (cho DeepFace)
+    try:
+        import tensorflow as tf
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            print(f"✅ TensorFlow GPU: SẴN SÀNG ({len(gpus)} GPU)")
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            print("   -> Đã bật memory growth (tối ưu VRAM)")
+        else:
+            print("⚠️  TensorFlow GPU: KHÔNG KHẢ DỤNG")
+    except ImportError:
+        print("ℹ️  TensorFlow: Chưa cài đặt (sẽ cần cho DeepFace)")
+    except Exception as e:
+        print(f"⚠️  TensorFlow GPU check lỗi: {e}")
+    
+    print("=" * 50 + "\n")
+    return device
+
+
+def check_gpu_quick():
+    """
+    Kiểm tra GPU nhanh gọn (cho Admin Panel, không cần log dài).
+    Returns:
+        device_str: '0' nếu có GPU, 'cpu' nếu không
+    """
+    if torch.cuda.is_available():
+        print(f"[AI] GPU: {torch.cuda.get_device_name(0)}")
+        return '0'
+    else:
+        print("[AI] GPU không khả dụng, dùng CPU")
+        return 'cpu'
+
+
+# ============================================
+# LOAD MODELS
+# ============================================
+def load_face_model(device='0'):
+    """
+    Load YOLOv8-Face model.
+    Returns:
+        (face_model, device) hoặc (None, device) nếu không tìm thấy model
+    """
+    model_path = Path(FACE_MODEL_PATH)
+    
+    if not model_path.exists():
+        print(f"[AI] WARN: Không tìm thấy model tại: {model_path.absolute()}")
+        print("[AI] Hãy tải model từ HuggingFace:")
+        print("     python -c \"from huggingface_hub import hf_hub_download; "
+              "hf_hub_download(repo_id='arnabdhar/YOLOv8-Face-Detection', "
+              "filename='model.pt', local_dir='models')\"")
+        return None, device
+    
+    face_model = YOLO(str(model_path))
+    target = 'GPU' if device == '0' and torch.cuda.is_available() else 'CPU'
+    print(f"[AI] YOLOv8-Face loaded → {target}")
+    return face_model, device
+
+
+def load_person_model(device='0'):
+    """
+    Load YOLOv8n (COCO) cho detect person.
+    Returns:
+        (person_model, device) hoặc (None, device) nếu lỗi
+    """
+    try:
+        person_model = YOLO("yolov8n.pt")
+        target = 'GPU' if device == '0' and torch.cuda.is_available() else 'CPU'
+        print(f"[AI] YOLOv8n Person loaded → {target}")
+        return person_model, device
+    except Exception as e:
+        print(f"[AI] WARN: Không load được person model: {e}")
+        return None, device
+
+
+def load_mediapipe_detector():
+    """
+    Khởi tạo MediaPipe Face Detection (Tasks API) cho tính góc nghiêng.
+    Returns:
+        face_detector hoặc None nếu lỗi
+    """
+    try:
+        mp_model_path = MP_FACE_MODEL_PATH
+        if not Path(mp_model_path).exists():
+            print(f"[AI] WARN: Không tìm thấy {mp_model_path}")
+            return None
+        
+        base_options = mp_python.BaseOptions(model_asset_path=mp_model_path)
+        options = mp_vision.FaceDetectorOptions(
+            base_options=base_options,
+            min_detection_confidence=0.5,
+        )
+        detector = mp_vision.FaceDetector.create_from_options(options)
+        print("[AI] MediaPipe Face Detector loaded")
+        return detector
+    except Exception as e:
+        print(f"[AI] WARN: MediaPipe init lỗi: {e}")
+        return None
+
+
+# ============================================
+# DETECTION FUNCTIONS
+# ============================================
+def detect_faces(face_model, frame, device='0'):
+    """
+    Detect khuôn mặt bằng YOLOv8-Face model.
+    Returns:
+        faces: [(x1, y1, x2, y2, confidence), ...]
+    """
+    if face_model is None:
+        return []
+    
+    results = face_model(frame, verbose=False, conf=FACE_CONFIDENCE, device=device)
+    
+    faces = []
+    for result in results:
+        if result.boxes is None:
+            continue
+        for box in result.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+            confidence = float(box.conf[0])
+            faces.append((x1, y1, x2, y2, confidence))
+    
+    return faces
+
+
+def detect_persons(person_model, frame, device='0'):
+    """
+    Detect "person" bằng YOLOv8n (COCO).
+    Returns:
+        persons: [(x1, y1, x2, y2, confidence), ...]
+    """
+    if person_model is None:
+        return []
+    
+    results = person_model(frame, verbose=False, conf=PERSON_CONFIDENCE, device=device)
+    
+    persons = []
+    for result in results:
+        if result.boxes is None:
+            continue
+        for box in result.boxes:
+            if int(box.cls[0]) != PERSON_CLASS_ID:
+                continue
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+            confidence = float(box.conf[0])
+            persons.append((x1, y1, x2, y2, confidence))
+    
+    return persons
+
+
+# ============================================
+# CONSTRAINT CHECKING
+# ============================================
+def is_fully_inside(face_box, constraint_box):
+    """
+    Kiểm tra khuôn mặt nằm gọn 100% bên trong khung định vị.
+    """
+    fx1, fy1, fx2, fy2 = face_box
+    cx1, cy1, cx2, cy2 = constraint_box
+    return (fx1 >= cx1 and fy1 >= cy1 and fx2 <= cx2 and fy2 <= cy2)
+
+
+def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=None, strict_mode=False):
+    """
+    Phân tích chất lượng khuôn mặt: ngẩng/cúi (pitch), quay ngang (yaw), nghiêng (roll).
+    Nếu strict_mode=True, sẽ bật kiểm tra che khuất nghiêm ngặt.
+    Returns:
+        (is_valid, error_msg)
+    """
+    if not mp_results or not mp_results.detections:
+        return False, "Khuon mat chua ro rang"
+    
+    fx1, fy1, fx2, fy2 = face_box
+    face_w = fx2 - fx1
+    yolo_cx = (fx1 + fx2) / 2.0
+    yolo_cy = (fy1 + fy2) / 2.0
+    
+    # Tìm khuôn mặt MediaPipe tương ứng với YOLO box
+    best_detection = None
+    min_dist = float('inf')
+    
+    for detection in mp_results.detections:
+        bbox = detection.bounding_box
+        mx = bbox.origin_x + bbox.width / 2.0
+        my = bbox.origin_y + bbox.height / 2.0
+        dist = math.hypot(mx - yolo_cx, my - yolo_cy)
+        if dist < min_dist:
+            min_dist = dist
+            best_detection = detection
+    
+    if not best_detection or min_dist >= max(face_w, fy2 - fy1):
+        return False, "Khuon mat chua ro rang"
+    
+    # Kiểm tra độ tự tin (Chỉ áp dụng khi chụp ảnh - Strict Mode)
+    if strict_mode:
+        if best_detection.categories[0].score < 0.88:
+            return False, "Khuon mat bi che khuat"
+        
+    if len(best_detection.keypoints) < 4:
+        return False, "Khuon mat chua ro rang"
+        
+    right_eye = best_detection.keypoints[0]
+    left_eye = best_detection.keypoints[1]
+    nose = best_detection.keypoints[2]
+    mouth = best_detection.keypoints[3]
+    
+    if right_eye.x < left_eye.x:
+        pt_left, pt_right = right_eye, left_eye
+    else:
+        pt_left, pt_right = left_eye, right_eye
+        
+    # 1. TILT / ROLL (Nghiêng đầu)
+    dx = (pt_right.x - pt_left.x) * frame_width
+    dy = (pt_right.y - pt_left.y) * frame_height
+    if dx != 0:
+        angle_roll = math.degrees(math.atan2(dy, dx))
+        if abs(angle_roll) > FACE_MAX_TILT_ANGLE:
+            return False, "Giu thang mat voi khung hinh"
+            
+    # 2. YAW (Quay ngang)
+    dist_nose_right = math.hypot(nose.x - pt_right.x, nose.y - pt_right.y)
+    dist_nose_left = math.hypot(nose.x - pt_left.x, nose.y - pt_left.y)
+    if dist_nose_right == 0 or dist_nose_left == 0:
+        return False, "Khuon mat chua ro rang"
+    
+    yaw_ratio = dist_nose_left / dist_nose_right
+    if yaw_ratio > 1.6 or yaw_ratio < 0.6:
+        return False, "Vui long nhin thang vao camera"
+        
+    # 3. PITCH (Ngẩng / cúi)
+    eye_cy = (pt_left.y + pt_right.y) / 2.0
+    dist_eye_nose = nose.y - eye_cy
+    dist_nose_mouth = mouth.y - nose.y
+    if dist_nose_mouth <= 0 or dist_eye_nose <= 0:
+        return False, "Khuon mat chua ro rang"
+        
+    pitch_ratio = dist_eye_nose / dist_nose_mouth
+    if pitch_ratio > 1.6 or pitch_ratio < 0.7:
+        return False, "Khong ngang hoac cui dau"
+        
+    # 4. GEOMETRIC OCCLUSION (Chỉ bật khi chụp ảnh để tránh nhiễu nhấp nháy UI)
+    if strict_mode:
+        face_h = fy2 - fy1
+        mouth_y_px = mouth.y * frame_height
+        eye_y_px = eye_cy * frame_height
+        
+        # 4.0. Tỷ lệ khuôn mặt (Aspect Ratio): YOLO box chứa cả bàn tay sẽ dài bất thường
+        aspect_ratio = face_w / face_h
+        if aspect_ratio < 0.65 or aspect_ratio > 1.1:
+            return False, "Khuon mat bi che khuat (Sai ty le)"
+            
+        # 4.1. Che miệng/cằm (Hình học)
+        dist_mouth_bottom = fy2 - mouth_y_px
+        if dist_mouth_bottom < 0.08 * face_h:
+            return False, "Khuon mat bi che khuat (Khong thay cam)"
+            
+        # 4.2. Phân tích Pixel miệng (Chống bàn tay che mồm cực mạnh)
+        if frame is not None:
+            roi_w = int(0.25 * face_w)
+            roi_h = int(0.15 * face_h)
+            mx_px, my_px = int(mouth.x * frame_width), int(mouth.y * frame_height)
+            x1 = max(0, mx_px - roi_w // 2)
+            y1 = max(0, my_px - roi_h // 2)
+            x2 = min(frame_width, mx_px + roi_w // 2)
+            y2 = min(frame_height, my_px + roi_h // 2)
+            
+            if y2 > y1 and x2 > x1:
+                mouth_roi = frame[y1:y2, x1:x2]
+                
+                # 1. Đo độ tương phản/chi tiết (Môi và răng có nhiều nếp nhăn/góc cạnh hơn mu bàn tay)
+                gray = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2GRAY)
+                sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+                sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+                magnitude = cv2.magnitude(sobelx, sobely)
+                edge_density = np.mean(magnitude)
+                
+                # 2. Đo sắc đỏ (Môi người có độ đỏ Cr cao hơn da tay rất nhiều)
+                ycrcb = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2YCrCb)
+                cr_channel = ycrcb[:,:,1]
+                max_cr = np.max(cr_channel)
+                
+                # Nếu không có chi tiết (mịn như mu bàn tay) HOẶC không có sắc đỏ (tay/khẩu trang)
+                if edge_density < 25.0 or max_cr < 145:
+                    return False, "Khuon mat bi che khuat (Khong hop le)"
+        
+        # 4.3. Che mắt/trán
+        dist_top_eye = eye_y_px - fy1
+        if dist_top_eye < 0.18 * face_h:
+            return False, "Khuon mat bi che khuat (Khong thay tran)"
+            
+    return True, ""
+    
+def check_face_constraints(faces, constraint_box, mp_results, frame_width, frame_height, frame=None, strict_mode=False):
+    """
+    Kiểm tra tất cả ràng buộc cho từng khuôn mặt.
+    Returns:
+        (color, status_text, is_locked): trạng thái UI
+    """
+    color = CV_COLOR_DEFAULT
+    status_text = "Dua mat vao khung hinh"
+    is_locked = False
+    
+    if constraint_box is None:
+        return color, status_text, is_locked
+    
+    cx1, cy1, cx2, cy2 = constraint_box
+    box_w = cx2 - cx1
+    
+    for (fx1, fy1, fx2, fy2, fconf) in faces:
+        # 0. Kiểm tra độ tự tin của YOLO
+        if strict_mode and fconf < 0.88:
+            color = CV_COLOR_RED
+            status_text = "Khuon mat bi che khuat"
+            continue
+            
+        # 1. Kiểm tra vị trí
+        if not is_fully_inside((fx1, fy1, fx2, fy2), constraint_box):
+            continue
+        
+        # 2. Ràng buộc kích thước (khoảng cách)
+        face_w = fx2 - fx1
+        
+        if face_w < FACE_MIN_SIZE_RATIO * box_w:
+            color = CV_COLOR_RED
+            status_text = "Di chuyen lai gan hon"
+            continue
+        elif face_w > FACE_MAX_SIZE_RATIO * box_w:
+            color = CV_COLOR_RED
+            status_text = "Vui long lui lai"
+            continue
+        
+        # 3. Ràng buộc góc nghiêng, quay, ngẩng và độ rõ nét khuôn mặt
+        is_valid_pose, pose_error = analyze_face_quality(
+            (fx1, fy1, fx2, fy2), mp_results, frame_width, frame_height, frame, strict_mode
+        )
+        
+        if not is_valid_pose:
+            color = CV_COLOR_RED
+            status_text = pose_error
+            continue
+        
+        # TẤT CẢ 3 ĐIỀU KIỆN THỎA MÃN → KHÓA MỤC TIÊU
+        color = CV_COLOR_GREEN
+        status_text = "Goc mat hop le - San sang luu"
+        is_locked = True
+        break
+    
+    return color, status_text, is_locked
