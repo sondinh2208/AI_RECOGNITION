@@ -252,7 +252,7 @@ def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=
     # Kiểm tra độ tự tin (Chỉ áp dụng khi chụp ảnh - Strict Mode)
     if strict_mode:
         if best_detection.categories[0].score < 0.88:
-            return False, "Khuon mat bi che khuat"
+            return False, "Khuon mat chua ro rang"
         
     if len(best_detection.keypoints) < 4:
         return False, "Khuon mat chua ro rang"
@@ -282,7 +282,7 @@ def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=
         return False, "Khuon mat chua ro rang"
     
     yaw_ratio = dist_nose_left / dist_nose_right
-    if yaw_ratio > 1.6 or yaw_ratio < 0.6:
+    if yaw_ratio > 1.3 or yaw_ratio < 0.75:
         return False, "Vui long nhin thang vao camera"
         
     # 3. PITCH (Ngẩng / cúi)

@@ -17,6 +17,7 @@ Tích hợp: AI Engine + eKYC Renderer (shared modules)
 import cv2
 import mediapipe as mp
 import customtkinter as ctk
+from tkinter import ttk
 from PIL import Image, ImageTk
 from datetime import datetime
 from pathlib import Path
@@ -47,7 +48,7 @@ from ekyc_renderer import (
 # ============================================
 # CustomTkinter Theme
 # ============================================
-ctk.set_appearance_mode("dark")
+ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
 
@@ -162,6 +163,7 @@ class AdminPanel(ctk.CTk):
         nav_items = [
             ("dashboard",     "📊  Bảng điều khiển"),
             ("add_employee",  "👤  Quét khuôn mặt"),
+            ("attendance",    "📍  Nhận diện điểm danh"),
             ("database",      "📁  Người đăng ký"),
             ("history",       "📋  Lịch sử ra vào"),
         ]
@@ -184,6 +186,14 @@ class AdminPanel(ctk.CTk):
         ctk.CTkFrame(self.sidebar, height=1, fg_color=CTK_ACCENT).pack(
             fill="x", padx=20, pady=(0, 10))
         
+        self.appearance_mode_menu = ctk.CTkOptionMenu(
+            self.sidebar, values=["Light", "Dark"],
+            command=self._change_appearance_mode_event,
+            fg_color=CTK_CARD, button_color=CTK_ACCENT, text_color=CTK_TEXT
+        )
+        self.appearance_mode_menu.pack(padx=20, pady=(0, 10))
+        self.appearance_mode_menu.set("Light")
+        
         ctk.CTkLabel(
             self.sidebar, text="AI Recognition v2.0",
             font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM,
@@ -200,7 +210,7 @@ class AdminPanel(ctk.CTk):
         for pid, btn in self.nav_buttons.items():
             if pid == active_page_id:
                 btn.configure(
-                    fg_color=CTK_BTN_ACTIVE, text_color="#ffffff",
+                    fg_color=CTK_BTN_ACTIVE, text_color=("#ffffff", "#ffffff"),
                     font=ctk.CTkFont(size=14, weight="bold"),
                 )
             else:
@@ -208,24 +218,58 @@ class AdminPanel(ctk.CTk):
                     fg_color="transparent", text_color=CTK_TEXT,
                     font=ctk.CTkFont(size=14),
                 )
+                
+    def _change_appearance_mode_event(self, new_appearance_mode: str):
+        ctk.set_appearance_mode(new_appearance_mode)
     
     def _navigate(self, page_id):
         """Xử lý chuyển trang."""
         self.current_page = page_id
         self._highlight_nav(page_id)
         print(f"[NAV] Chuyển đến trang: {page_id}")
-    
+        self._show_page(page_id)
+        
+    def _show_page(self, page_id):
+        """Hiển thị frame được chọn và xử lý camera."""
+        # Ẩn tất cả các trang
+        for pid, frame in getattr(self, "page_frames", {}).items():
+            frame.grid_remove()
+            
+        # Hiển thị trang hiện tại
+        if page_id in self.page_frames:
+            self.page_frames[page_id].grid()
+            if page_id == "database" and hasattr(self, "search_entry"):
+                self._load_database_to_scrollable(self.search_entry.get().lower())
+            
+        # Quản lý vòng lặp camera để tiết kiệm tài nguyên
+        if page_id == "add_employee" or page_id == "attendance":
+            if not self.camera_running and self.camera_cap is not None:
+                self._toggle_camera()
+            elif self.camera_cap is None:
+                self._start_camera()
+        else:
+            if self.camera_running:
+                self._toggle_camera()
 
     # ============================================
     # MAIN AREA (Khu vực chính - Phải)
     # ============================================
     def _build_main_area(self):
-        """Xây dựng khu vực chính (Form + Camera)."""
-        self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_frame.grid(row=0, column=1, sticky="nswe", padx=15, pady=15)
+        """Xây dựng khu vực chính (Gồm nhiều trang thay đổi)."""
+        self.main_container = ctk.CTkFrame(self, fg_color="transparent")
+        self.main_container.grid(row=0, column=1, sticky="nswe", padx=15, pady=15)
         
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
+        
+        self.main_container.grid_columnconfigure(0, weight=1)
+        self.main_container.grid_rowconfigure(0, weight=1)
+        
+        self.page_frames = {}
+        
+        # --- Trang 1: Quét khuôn mặt (Add Employee) ---
+        self.main_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.main_frame.grid(row=0, column=0, sticky="nswe")
         
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_columnconfigure(1, weight=0)
@@ -233,6 +277,16 @@ class AdminPanel(ctk.CTk):
         
         self._build_form_column()
         self._build_camera_column()
+        self.page_frames["add_employee"] = self.main_frame
+        
+        # --- Trang 2: Người đăng ký (Database) ---
+        self.database_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.database_frame.grid(row=0, column=0, sticky="nswe")
+        self._build_database_page()
+        self.page_frames["database"] = self.database_frame
+        
+        # Mặc định mở trang Add Employee
+        self._show_page("add_employee")
     
 
     # ============================================
@@ -272,7 +326,8 @@ class AdminPanel(ctk.CTk):
         self.entry_name = ctk.CTkEntry(
             fields, placeholder_text="VD: Nguyễn Văn A", height=42,
             font=ctk.CTkFont(size=14), corner_radius=8,
-            border_color=CTK_ACCENT, fg_color="#0d1b2a",
+            border_color=CTK_ACCENT, fg_color=("#ffffff", "#0d1b2a"),
+            text_color=CTK_TEXT, placeholder_text_color=CTK_TEXT_DIM,
         )
         self.entry_name.pack(fill="x", pady=(0, 18))
         
@@ -283,7 +338,8 @@ class AdminPanel(ctk.CTk):
         self.entry_id = ctk.CTkEntry(
             fields, placeholder_text="VD: NV001", height=42,
             font=ctk.CTkFont(size=14), corner_radius=8,
-            border_color=CTK_ACCENT, fg_color="#0d1b2a",
+            border_color=CTK_ACCENT, fg_color=("#ffffff", "#0d1b2a"),
+            text_color=CTK_TEXT, placeholder_text_color=CTK_TEXT_DIM,
         )
         self.entry_id.pack(fill="x", pady=(0, 18))
         
@@ -294,7 +350,8 @@ class AdminPanel(ctk.CTk):
         self.entry_role = ctk.CTkEntry(
             fields, placeholder_text="VD: Kỹ sư phần mềm - Phòng IT", height=42,
             font=ctk.CTkFont(size=14), corner_radius=8,
-            border_color=CTK_ACCENT, fg_color="#0d1b2a",
+            border_color=CTK_ACCENT, fg_color=("#ffffff", "#0d1b2a"),
+            text_color=CTK_TEXT, placeholder_text_color=CTK_TEXT_DIM,
         )
         self.entry_role.pack(fill="x", pady=(0, 25))
         
@@ -307,19 +364,21 @@ class AdminPanel(ctk.CTk):
         
         self.btn_capture = ctk.CTkButton(
             btn_frame, text="📸  CHỤP ẢNH KHUÔN MẶT",
-            font=ctk.CTkFont(size=14, weight="bold"), height=45,
-            corner_radius=10, fg_color=CTK_ACCENT, hover_color="#1a4a7a",
+            font=ctk.CTkFont(size=14, weight="bold"), height=46,
+            corner_radius=8, fg_color=("#2563eb", "#3b82f6"), hover_color=("#1d4ed8", "#2563eb"),
+            text_color=("#ffffff", "#ffffff"),
             command=self._capture_face,
         )
-        self.btn_capture.pack(fill="x", pady=(0, 8))
+        self.btn_capture.pack(fill="x", pady=(0, 10))
         
         self.btn_save = ctk.CTkButton(
             btn_frame, text="💾  LƯU DỮ LIỆU (ONE-SHOT)",
-            font=ctk.CTkFont(size=15, weight="bold"), height=50,
-            corner_radius=10, fg_color="#00865a", hover_color="#00a06a",
+            font=ctk.CTkFont(size=14, weight="bold"), height=48,
+            corner_radius=8, fg_color=("#10b981", "#059669"), hover_color=("#059669", "#047857"),
+            text_color=("#ffffff", "#ffffff"),
             command=self._save_employee,
         )
-        self.btn_save.pack(fill="x", pady=(0, 8))
+        self.btn_save.pack(fill="x", pady=(0, 10))
         
         # --- Status ---
         self.status_label = ctk.CTkLabel(
@@ -389,20 +448,294 @@ class AdminPanel(ctk.CTk):
         
         self.btn_toggle_cam = ctk.CTkButton(
             cam_btn_frame, text="⏸  Tạm dừng",
-            font=ctk.CTkFont(size=12), height=35, corner_radius=8,
-            fg_color=CTK_ACCENT, hover_color="#1a4a7a",
+            font=ctk.CTkFont(size=12, weight="bold"), height=36, corner_radius=8,
+            fg_color=("#f1f5f9", "#1e293b"), hover_color=("#e2e8f0", "#334155"),
+            border_width=1, border_color=("#cbd5e1", "#334155"),
+            text_color=CTK_TEXT,
             command=self._toggle_camera,
         )
         self.btn_toggle_cam.pack(side="left", expand=True, fill="x", padx=(0, 5))
         
         self.btn_restart_cam = ctk.CTkButton(
             cam_btn_frame, text="🔄  Khởi động lại",
-            font=ctk.CTkFont(size=12), height=35, corner_radius=8,
-            fg_color=CTK_ACCENT, hover_color="#1a4a7a",
+            font=ctk.CTkFont(size=12, weight="bold"), height=36, corner_radius=8,
+            fg_color=("#f1f5f9", "#1e293b"), hover_color=("#e2e8f0", "#334155"),
+            border_width=1, border_color=("#cbd5e1", "#334155"),
+            text_color=CTK_TEXT,
             command=self._restart_camera,
         )
         self.btn_restart_cam.pack(side="right", expand=True, fill="x", padx=(5, 0))
     
+
+    # ============================================
+    # DATABASE TAB (Người đăng ký)
+    # ============================================
+    def _build_database_page(self):
+        """Xây dựng giao diện cho tab Người đăng ký (SaaS Data Card)."""
+        # --- Top Header ---
+        header = ctk.CTkFrame(self.database_frame, fg_color="transparent")
+        header.pack(fill="x", padx=25, pady=(25, 15))
+        
+        # Left Title
+        title_frame = ctk.CTkFrame(header, fg_color="transparent")
+        title_frame.pack(side="left")
+        ctk.CTkLabel(
+            title_frame, text="Người đăng ký",
+            font=ctk.CTkFont(size=26, weight="bold"), text_color=CTK_PRIMARY, anchor="w"
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_frame, text="Quản lý danh sách nhân viên đã đăng ký nhận diện khuôn mặt",
+            font=ctk.CTkFont(size=13), text_color=CTK_TEXT_DIM, anchor="w"
+        ).pack(anchor="w", pady=(2, 0))
+        
+        # Right Actions
+        btn_frame = ctk.CTkFrame(header, fg_color="transparent")
+        btn_frame.pack(side="right", fill="y", pady=5)
+        
+        self.search_entry = ctk.CTkEntry(
+            btn_frame, placeholder_text="🔍 Tìm theo tên hoặc mã nhân viên...",
+            width=280, height=38, corner_radius=8, border_color=CTK_ACCENT, fg_color=("#ffffff", "#0d1b2a")
+        )
+        self.search_entry.pack(side="left", padx=(0, 15))
+        self.search_entry.bind("<KeyRelease>", self._on_search_change)
+        
+        btn_add_new = ctk.CTkButton(
+            btn_frame, text="+ Đăng ký mới",
+            font=ctk.CTkFont(size=14, weight="bold"), height=38,
+            corner_radius=8, fg_color="#2563eb", hover_color="#1d4ed8", text_color=("#ffffff", "#ffffff"),
+            command=lambda: self._navigate("add_employee")
+        )
+        btn_add_new.pack(side="left")
+
+        # --- Stats Cards Section ---
+        stats_frame = ctk.CTkFrame(self.database_frame, fg_color="transparent")
+        stats_frame.pack(fill="x", padx=25, pady=(0, 20))
+        stats_frame.grid_columnconfigure((0,1,2,3), weight=1, uniform="card")
+        
+        # Helper to create card
+        def create_stat_card(parent, col, icon, title, value, subtext, icon_color="#3b82f6"):
+            card = ctk.CTkFrame(parent, fg_color=CTK_CARD, corner_radius=12)
+            card.grid(row=0, column=col, sticky="nsew", padx=8 if col > 0 else (0, 8))
+            
+            icon_box = ctk.CTkFrame(card, width=45, height=45, corner_radius=10, fg_color=("#f1f5f9", "#1e293b"))
+            icon_box.pack(side="left", padx=15, pady=15)
+            icon_box.pack_propagate(False)
+            ctk.CTkLabel(icon_box, text=icon, font=ctk.CTkFont(size=20), text_color=icon_color).place(relx=0.5, rely=0.5, anchor="center")
+            
+            text_box = ctk.CTkFrame(card, fg_color="transparent")
+            text_box.pack(side="left", fill="both", expand=True, pady=15)
+            ctk.CTkLabel(text_box, text=title, font=ctk.CTkFont(size=12), text_color=CTK_TEXT_DIM, anchor="w").pack(fill="x")
+            val_label = ctk.CTkLabel(text_box, text=value, font=ctk.CTkFont(size=22, weight="bold"), text_color=CTK_TEXT, anchor="w")
+            val_label.pack(fill="x", pady=(2, 2))
+            ctk.CTkLabel(text_box, text=subtext, font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w").pack(fill="x")
+            return val_label
+            
+        self.lbl_total_emp = create_stat_card(stats_frame, 0, "👥", "Tổng nhân viên", "0", "Dữ liệu thực tế", "#3b82f6")
+        self.lbl_registered = create_stat_card(stats_frame, 1, "✅", "Đã đăng ký", "0", "Khuôn mặt đã lưu", "#10b981")
+        self.lbl_pending = create_stat_card(stats_frame, 2, "⏱", "Chưa cập nhật", "0", "Chưa có ảnh khuôn mặt", "#f59e0b")
+        self.lbl_new = create_stat_card(stats_frame, 3, "👤+", "Mới trong tháng", "0", "Đăng ký gần đây", "#6366f1")
+            
+        # --- Main Table Frame ---
+        table_container = ctk.CTkFrame(self.database_frame, fg_color=CTK_CARD, corner_radius=12)
+        table_container.pack(fill="both", expand=True, padx=25, pady=(0, 20))
+        
+        # Table Title
+        ctk.CTkLabel(
+            table_container, text="Danh sách nhân viên đã đăng ký",
+            font=ctk.CTkFont(size=16, weight="bold"), text_color=CTK_TEXT, anchor="w"
+        ).pack(fill="x", padx=20, pady=(15, 10))
+        
+        # Scrollable Frame cho các dòng dữ liệu
+        self.db_scroll = ctk.CTkScrollableFrame(table_container, fg_color="transparent")
+        self.db_scroll.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Pagination Footer
+        footer = ctk.CTkFrame(table_container, fg_color="transparent")
+        footer.pack(fill="x", padx=20, pady=(10, 15))
+        
+        # Left footer (Hiển thị)
+        show_frame = ctk.CTkFrame(footer, fg_color="transparent")
+        show_frame.pack(side="left")
+        ctk.CTkLabel(show_frame, text="Hiển thị", text_color=CTK_TEXT_DIM, font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 10))
+        dropdown = ctk.CTkOptionMenu(show_frame, values=["10", "20", "50"], width=60, height=28, fg_color=CTK_CARD, button_color=CTK_ACCENT, text_color=CTK_TEXT)
+        dropdown.pack(side="left")
+        ctk.CTkLabel(show_frame, text="kết quả", text_color=CTK_TEXT_DIM, font=ctk.CTkFont(size=13)).pack(side="left", padx=(10, 0))
+        
+        # Right footer (Pagination buttons)
+        page_frame = ctk.CTkFrame(footer, fg_color="transparent")
+        page_frame.pack(side="right")
+        for text in ["<", "1", "2", "3", "...", "13", ">"]:
+            fg = "#2563eb" if text == "1" else "transparent"
+            tc = ("#ffffff", "#ffffff") if text == "1" else CTK_TEXT_DIM
+            btn = ctk.CTkButton(page_frame, text=text, width=30, height=30, fg_color=fg, text_color=tc, font=ctk.CTkFont(size=12, weight="bold"), hover_color=CTK_SIDEBAR_HOVER)
+            btn.pack(side="left", padx=2)
+        
+        # Load Data
+        self._load_database_to_scrollable()
+
+    def _render_table_header(self):
+        thead = ctk.CTkFrame(self.db_scroll, fg_color=CTK_BG_DARK, height=45, corner_radius=8)
+        thead.pack(fill="x", padx=5, pady=(0, 6))
+        
+        headers = ["", "Ảnh", "Mã NV", "Họ và tên", "Chức vụ", "Trạng thái", "Hành động"]
+        weights = [3, 5, 8, 24, 16, 14, 10]
+        
+        for i, w in enumerate(weights):
+            thead.grid_columnconfigure(i, weight=w, uniform="table_col")
+            
+        for i, text in enumerate(headers):
+            if i == 0:
+                chk = ctk.CTkCheckBox(thead, text="", width=24, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1.5, border_color="#D1D5DB", fg_color="#2563EB")
+                chk.grid(row=0, column=i, pady=10, padx=(10, 0), sticky="w")
+            else:
+                ctk.CTkLabel(
+                    thead, text=text, font=ctk.CTkFont(size=13, weight="bold"),
+                    text_color=CTK_TEXT_DIM
+                ).grid(row=0, column=i, pady=10, sticky="w", padx=10)
+
+    def _on_search_change(self, event=None):
+        query = self.search_entry.get().lower()
+        self._load_database_to_scrollable(query)
+
+    def _load_database_to_scrollable(self, query=""):
+        """Đọc file và hiển thị từng dòng."""
+        # Clear cũ
+        for widget in self.db_scroll.winfo_children():
+            widget.destroy()
+            
+        # Vẽ Header đồng bộ trong db_scroll
+        self._render_table_header()
+            
+        data_dir = Path(DATA_FACES_DIR)
+        image_files = list(data_dir.glob("*.jpg")) if data_dir.exists() else []
+        
+        # Cập nhật số liệu thực tế cho Stats Cards
+        total_files = len(image_files)
+        if hasattr(self, 'lbl_total_emp'):
+            self.lbl_total_emp.configure(text=str(total_files))
+            self.lbl_registered.configure(text=str(total_files))
+            self.lbl_pending.configure(text="0")
+            self.lbl_new.configure(text=str(total_files))
+        
+        row_idx = 0
+        for img_path in image_files:
+            filename = img_path.stem
+            import re
+            
+            emp_id = "Unknown"
+            emp_role = "Nhân viên"
+            emp_name = "Unknown"
+            
+            if "@" in filename:
+                parts = filename.split("@")
+                emp_id = parts[0]
+                if len(parts) >= 3:
+                    emp_role = parts[1].replace("_", " ")
+                    emp_name = parts[2].replace("_", " ")
+                elif len(parts) == 2:
+                    emp_name = parts[1].replace("_", " ")
+            else:
+                parts = filename.split("_", 1)
+                emp_id = parts[0] if len(parts) > 0 else "Unknown"
+                emp_name = parts[1].replace("_", " ") if len(parts) > 1 else "Unknown"
+                
+            emp_name = re.sub(r'\s*\d{8}\s\d{6}.*$', '', emp_name).strip()
+            
+            if query and query not in emp_id.lower() and query not in emp_name.lower() and query not in emp_role.lower():
+                continue
+                
+            emp_data = {
+                "img_path": img_path,
+                "id": emp_id,
+                "name": emp_name,
+                "role": emp_role,
+                "status": "Đã đăng ký"
+            }
+            
+            self._render_employee_row(emp_data, row_idx)
+            row_idx += 1
+
+    def _render_employee_row(self, emp_data, row_index):
+        bg_color = ("#ffffff", "#1e2a3a") if row_index % 2 == 0 else ("#f8fafc", "#253447") 
+        
+        row_frame = ctk.CTkFrame(self.db_scroll, fg_color=bg_color, corner_radius=6)
+        row_frame.pack(fill="x", pady=2, padx=5)
+        
+        weights = [3, 5, 8, 24, 16, 14, 10]
+        for i, w in enumerate(weights):
+            row_frame.grid_columnconfigure(i, weight=w, uniform="table_col")
+            
+        # 0. Checkbox
+        checkbox = ctk.CTkCheckBox(row_frame, text="", width=24, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1.5, border_color="#D1D5DB", fg_color="#2563EB")
+        checkbox.grid(row=0, column=0, pady=8, padx=(10, 0), sticky="w")
+        
+        # 1. Ảnh
+        try:
+            pil_img = Image.open(emp_data["img_path"]).resize((35, 35))
+            ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(35, 35))
+            img_label = ctk.CTkLabel(row_frame, image=ctk_img, text="")
+            img_label.image = ctk_img
+        except Exception:
+            img_label = ctk.CTkLabel(row_frame, text="Lỗi", text_color=CTK_DANGER)
+        img_label.grid(row=0, column=1, pady=8, padx=10, sticky="w")
+        
+        # 2. Mã NV
+        ctk.CTkLabel(row_frame, text=emp_data["id"], font=ctk.CTkFont(size=13), text_color=CTK_TEXT).grid(row=0, column=2, sticky="w", padx=10)
+        
+        # 3. Tên
+        ctk.CTkLabel(row_frame, text=emp_data["name"], font=ctk.CTkFont(size=14, weight="bold"), text_color=CTK_TEXT).grid(row=0, column=3, sticky="w", padx=10)
+        
+        # 4. Chức vụ
+        ctk.CTkLabel(row_frame, text=emp_data["role"], font=ctk.CTkFont(size=13), text_color=CTK_TEXT_DIM).grid(row=0, column=4, sticky="w", padx=10)
+        
+        # 5. Trạng thái (Badge)
+        badge_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+        badge_frame.grid(row=0, column=5, sticky="w", padx=10)
+        
+        status_text = emp_data["status"]
+        if "Chưa đăng ký" in status_text:
+            fg_col, text_col, icon = ("#fee2e2", "#7f1d1d"), ("#991b1b", "#fca5a5"), "❌ "
+        elif "Chưa cập nhật" in status_text:
+            fg_col, text_col, icon = ("#ffedd5", "#78350f"), ("#ea580c", "#fcd34d"), "⏱ "
+        else:
+            fg_col, text_col, icon = ("#dcfce7", "#064e3b"), ("#16a34a", "#6ee7b7"), "✅ "
+            
+        badge = ctk.CTkLabel(
+            badge_frame, text=icon + status_text,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=text_col, fg_color=fg_col,
+            corner_radius=15, padx=10, pady=4
+        )
+        badge.pack(side="left")
+        
+        # 6. Hành động (3 nút)
+        action_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+        action_frame.grid(row=0, column=6, sticky="w", padx=10)
+        
+        btn_view = ctk.CTkButton(action_frame, text="👁", width=30, height=28, fg_color="transparent", corner_radius=4, border_width=1, border_color=("#e5e7eb", "#334155"), text_color=("#3b82f6", "#60a5fa"), hover_color=CTK_SIDEBAR_HOVER)
+        btn_view.pack(side="left", padx=2)
+        
+        btn_edit = ctk.CTkButton(action_frame, text="📝", width=30, height=28, fg_color="transparent", corner_radius=4, border_width=1, border_color=("#e5e7eb", "#334155"), text_color=("#6b7280", "#cbd5e1"), hover_color=CTK_SIDEBAR_HOVER)
+        btn_edit.pack(side="left", padx=2)
+        
+        btn_del = ctk.CTkButton(
+            action_frame, text="🗑", width=30, height=28,
+            fg_color="transparent", corner_radius=4, border_width=1, border_color=("#e5e7eb", "#334155"), text_color=("#ef4444", "#fca5a5"), hover_color=("#fee2e2", "#7f1d1d"),
+            command=lambda: self._delete_single_employee(emp_data["img_path"], row_frame)
+        )
+        btn_del.pack(side="left", padx=2)
+
+    def _delete_single_employee(self, img_path, row_frame):
+        import os
+        try:
+            if img_path.exists():
+                os.remove(img_path)
+                print(f"[DB] Đã xóa: {img_path}")
+            # Tải lại danh sách để tự động cập nhật số liệu trên thẻ Stats
+            self._load_database_to_scrollable(self.search_entry.get().lower())
+        except Exception as e:
+            print(f"[DB] Lỗi xóa file {img_path}: {e}")
+
 
     # ============================================
     # CAMERA + AI PIPELINE
@@ -606,6 +939,11 @@ class AdminPanel(ctk.CTk):
             self.btn_toggle_cam.configure(text="⏸  Tạm dừng")
             self.cam_status_dot.configure(text="● LIVE", text_color=CTK_SUCCESS)
             self.cam_info_label.configure(text="Camera đang hoạt động", text_color=CTK_SUCCESS)
+            
+            if self.camera_thread is None or not self.camera_thread.is_alive():
+                self.camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
+                self.camera_thread.start()
+                
             self._update_frame()
     
 
@@ -720,8 +1058,9 @@ class AdminPanel(ctk.CTk):
         
         # Lưu ảnh
         safe_name = name.replace(" ", "_")
+        safe_role = role.replace(" ", "_") if role else "Nhân_viên"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{emp_id}_{safe_name}_{timestamp}.jpg"
+        filename = f"{emp_id}@{safe_role}@{safe_name}_{timestamp}.jpg"
         filepath = Path(DATA_FACES_DIR) / filename
         
         cv2.imwrite(str(filepath), self.captured_photo)

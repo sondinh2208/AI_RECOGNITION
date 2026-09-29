@@ -24,7 +24,7 @@ PERSON_CONFIDENCE = 0.5
 PERSON_CLASS_ID = 0
 
 # Ràng buộc khuôn mặt
-FACE_MIN_SIZE_RATIO = 0.5    # face_w >= 50% box_w
+FACE_MIN_SIZE_RATIO = 0.55    # face_w >= 50% box_w
 FACE_MAX_SIZE_RATIO = 0.9    # face_w <= 90% box_w
 FACE_MAX_TILT_ANGLE = 10     # Góc nghiêng tối đa (độ)
 
@@ -64,18 +64,18 @@ CV_COLOR_CYAN = (255, 255, 0)      # Bounding box (nếu cần)
 # ============================================
 # CẤU HÌNH GIAO DIỆN ADMIN PANEL (CustomTkinter)
 # ============================================
-CTK_BG_DARK = "#1a1a2e"
-CTK_BG_MAIN = "#16213e"
-CTK_ACCENT = "#0f3460"
-CTK_PRIMARY = "#00b4d8"
-CTK_SUCCESS = "#00f5a0"
-CTK_DANGER = "#ff6b6b"
-CTK_WARNING = "#ffd93d"
-CTK_TEXT = "#e0e0e0"
-CTK_TEXT_DIM = "#8d99ae"
-CTK_CARD = "#1e2a3a"
-CTK_SIDEBAR_HOVER = "#2a2a4a"
-CTK_BTN_ACTIVE = "#00b4d8"
+CTK_BG_DARK = ("#ffffff", "#1a1a2e")
+CTK_BG_MAIN = ("#f8fafc", "#16213e")
+CTK_ACCENT = ("#e2e8f0", "#0f3460")
+CTK_PRIMARY = ("#2563eb", "#00b4d8")
+CTK_SUCCESS = ("#10b981", "#00f5a0")
+CTK_DANGER = ("#ef4444", "#ff6b6b")
+CTK_WARNING = ("#f59e0b", "#ffd93d")
+CTK_TEXT = ("#0f172a", "#e0e0e0")
+CTK_TEXT_DIM = ("#64748b", "#8d99ae")
+CTK_CARD = ("#ffffff", "#1e2a3a")
+CTK_SIDEBAR_HOVER = ("#f1f5f9", "#2a2a4a")
+CTK_BTN_ACTIVE = ("#2563eb", "#00b4d8")
 
 
 # ============================================
