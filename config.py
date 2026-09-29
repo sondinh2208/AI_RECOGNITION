@@ -18,6 +18,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # ============================================
 FACE_MODEL_PATH = "models/model.pt"
 MP_FACE_MODEL_PATH = "models/blaze_face_short_range.tflite"
+DEEPFACE_MODEL_NAME = "Facenet512"   # Facenet512: Vector đặc trưng 512 chiều (512-d embedding)
 
 FACE_CONFIDENCE = 0.45
 PERSON_CONFIDENCE = 0.5

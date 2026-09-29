@@ -19,10 +19,25 @@ import mediapipe as mp
 import customtkinter as ctk
 from tkinter import ttk
 from PIL import Image, ImageTk
-from datetime import datetime
-from pathlib import Path
+import sys
+import os
+import pickle
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
+
+# Đảm bảo UTF-8 encoding trên Windows Terminal để DeepFace/Logging không bị lỗi charmap
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 from config import (
     # Admin Panel UI
@@ -31,7 +46,7 @@ from config import (
     CTK_TEXT, CTK_TEXT_DIM, CTK_CARD, CTK_SIDEBAR_HOVER, CTK_BTN_ACTIVE,
     ADMIN_WINDOW_WIDTH, ADMIN_WINDOW_HEIGHT, ADMIN_SIDEBAR_WIDTH,
     ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, ADMIN_CAMERA_FPS_DELAY,
-    DATA_FACES_DIR,
+    DATA_FACES_DIR, DEEPFACE_MODEL_NAME,
 )
 from ai_engine import (
     check_gpu_quick,
@@ -580,7 +595,7 @@ class AdminPanel(ctk.CTk):
         sys_rows = ctk.CTkFrame(sys_card, fg_color="transparent")
         sys_rows.pack(fill="x", pady=(0, 14))
         
-        self.lbl_stat_model = create_telemetry_row(sys_rows, "🤖", "Model", "YOLOv8 + FaceMesh")
+        self.lbl_stat_model = create_telemetry_row(sys_rows, "🤖", "Model", f"YOLOv8 + {DEEPFACE_MODEL_NAME}")
         self.lbl_stat_conf = create_telemetry_row(sys_rows, "🎯", "Độ tin cậy (Face)", "0.00")
         self.lbl_stat_fps = create_telemetry_row(sys_rows, "⏱", "FPS", "30")
         self.lbl_stat_status = create_telemetry_row(sys_rows, "🩺", "Trạng thái", "● Hoạt động tốt", is_highlight=True)
@@ -1122,15 +1137,16 @@ class AdminPanel(ctk.CTk):
     
 
     # ============================================
-    # CHỤP ẢNH & LƯU DỮ LIỆU (ENROLLMENT)
+    # CHỤP ẢNH & LƯU DỮ LIỆU (1-CLICK ENROLLMENT)
     # ============================================
     def _start_enrollment_process(self):
         """
-        Quy trình 1-click Quét và Lưu khuôn mặt:
+        Quy trình 1-click Quét và Lưu khuôn mặt (Main Thread):
         1. Kiểm tra Họ tên và Mã NV hợp lệ.
-        2. Quét và kiểm tra chất lượng khuôn mặt (Strict mode eKYC).
-        3. Lưu ảnh vào data/known_faces/ theo cú pháp ID@Chuc_vu@Ho_Ten_Timestamp.jpg.
-        4. Cập nhật preview và làm mới danh sách dữ liệu.
+        2. Kiểm tra trạng thái AI (self.is_face_valid == True).
+        3. Cắt (crop) khuôn mặt tại frame hiện tại và hiển thị preview ngay.
+        4. Kích hoạt hiệu ứng loading (thanh tiến trình indeterminate, disable nút).
+        5. Đẩy việc trích xuất Vector AI (DeepFace) và lưu trữ sang Background Thread.
         """
         # --- ANTI-SPAM LOGIC ---
         if not hasattr(self, 'spam_count'):
@@ -1164,6 +1180,7 @@ class AdminPanel(ctk.CTk):
             return
         # --- END ANTI-SPAM ---
 
+        # 1. Kiểm tra thông tin Form
         name = self.entry_name.get().strip()
         emp_id = self.entry_id.get().strip()
         role = self.entry_role.get().strip()
@@ -1177,66 +1194,142 @@ class AdminPanel(ctk.CTk):
         if self.current_frame is None or not self.camera_running:
             self._set_status("❌ Camera chưa sẵn sàng hoặc đang tạm dừng!", CTK_DANGER)
             return
+            
+        # 2. Kiểm tra khuôn mặt hợp lệ (Khung Xanh lá)
+        if not getattr(self, 'is_face_valid', False):
+            self._set_status("❌ KHUÔN MẶT CHƯA HỢP LỆ: Vui lòng đưa mặt vào đúng vị trí khung xanh!", CTK_DANGER)
+            return
         
         frame = self.current_frame.copy()
-        
-        # --- BƯỚC 1: QUÉT LẠI BỨC ẢNH VỚI CHẾ ĐỘ NGHIÊM NGẶT (STRICT MODE) ---
         fw, fh = self.frame_width, self.frame_height
+        
+        # 3. Cắt (crop) lấy khuôn mặt ngay tại frame hiện tại
         faces = detect_faces(self.face_model, frame, self.device)
+        face_crop = frame
+        if len(faces) > 0:
+            fx1, fy1, fx2, fy2, _ = faces[0]
+            pad_x = int((fx2 - fx1) * 0.1)
+            pad_y = int((fy2 - fy1) * 0.1)
+            cx1 = max(0, fx1 - pad_x)
+            cy1 = max(0, fy1 - pad_y)
+            cx2 = min(fw, fx2 + pad_x)
+            cy2 = min(fh, fy2 + pad_y)
+            if cx2 > cx1 and cy2 > cy1:
+                face_crop = frame[cy1:cy2, cx1:cx2]
         
-        if len(faces) == 0:
-            self._set_status("❌ ẢNH BỊ TỪ CHỐI: Không tìm thấy khuôn mặt!", CTK_DANGER)
-            return
-            
-        mp_results = None
-        if self.face_detector is not None:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-            mp_results = self.face_detector.detect(mp_image)
-            
-        _, status_text, is_locked = check_face_constraints(
-            faces, self.constraint_box, mp_results, fw, fh, strict_mode=True
-        )
-        
-        if not is_locked:
-            self._set_status(f"❌ ẢNH BỊ TỪ CHỐI: {status_text}", CTK_DANGER)
-            return
-        
-        # --- BƯỚC 2: NẾU VƯỢT QUA KIỂM TRA -> LƯU DỮ LIỆU & HIỂN THỊ PREVIEW ---
+        # Lưu frame và hiển thị Preview ngay lập tức
         self.captured_photo = frame
-        
-        # Preview thumbnail
-        preview_rgb = cv2.cvtColor(self.captured_photo, cv2.COLOR_BGR2RGB)
+        preview_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
         preview_pil = Image.fromarray(preview_rgb).resize((160, 120), Image.LANCZOS)
-        preview_ctk = ctk.CTkImage(
-            light_image=preview_pil, dark_image=preview_pil, size=(160, 120))
+        preview_ctk = ctk.CTkImage(light_image=preview_pil, dark_image=preview_pil, size=(160, 120))
         self.preview_label.configure(image=preview_ctk, text="")
         self.preview_label.image = preview_ctk
         self.preview_label.pack(pady=(5, 0))
         
-        # Lưu file ảnh
-        safe_name = name.replace(" ", "_")
-        safe_role = role.replace(" ", "_") if role else "Nhân_viên"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{emp_id}@{safe_role}@{safe_name}_{timestamp}.jpg"
-        filepath = Path(DATA_FACES_DIR) / filename
+        # 4. Kích hoạt Loading UI
+        self.btn_capture.configure(state="disabled", text="⏳ Đang trích xuất Vector AI...")
+        self.progress_bar.pack(fill="x", pady=(0, 6))
+        self.progress_bar.start()
+        self._set_status("⏳ Đang trích xuất Vector AI và lưu dữ liệu...", CTK_WARNING)
         
-        cv2.imwrite(str(filepath), self.captured_photo)
+        # 5. Khởi chạy AI Thread chạy ngầm (Non-blocking UI)
+        threading.Thread(
+            target=self._ai_worker_save_face,
+            args=(face_crop, frame, name, emp_id, role),
+            daemon=True
+        ).start()
+
+    def _ai_worker_save_face(self, face_crop, full_frame, name, emp_id, role):
+        """
+        Background Thread: Trích xuất Vector khuôn mặt qua DeepFace và lưu file.
+        Không thao tác trực tiếp với UI ở đây.
+        """
+        try:
+            from deepface import DeepFace
+            
+            # --- 1. Trích xuất Vector AI (Facenet512 512-dim) ---
+            reps = DeepFace.represent(
+                img_path=face_crop,
+                model_name=DEEPFACE_MODEL_NAME,
+                detector_backend="skip",
+                enforce_detection=False
+            )
+            embedding_vector = reps[0]["embedding"] if reps and len(reps) > 0 else None
+            
+            # --- 2. Lưu ảnh ra các thư mục ---
+            safe_name = name.replace(" ", "_")
+            safe_role = role.replace(" ", "_") if role else "Nhân_viên"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{emp_id}@{safe_role}@{safe_name}_{timestamp}.jpg"
+            
+            Path(DATA_FACES_DIR).mkdir(parents=True, exist_ok=True)
+            Path("images").mkdir(parents=True, exist_ok=True)
+            Path("data").mkdir(parents=True, exist_ok=True)
+            
+            filepath_main = Path(DATA_FACES_DIR) / filename
+            filepath_crop = Path("images") / filename
+            
+            cv2.imwrite(str(filepath_main), full_frame)
+            cv2.imwrite(str(filepath_crop), face_crop)
+            
+            # --- 3. Lưu Vector vào embeddings.pkl ---
+            embeddings_file = Path("data/embeddings.pkl")
+            embeddings_data = {}
+            if embeddings_file.exists():
+                try:
+                    with open(embeddings_file, "rb") as f:
+                        embeddings_data = pickle.load(f)
+                except Exception as pe:
+                    print(f"[AI WORKER] Cảnh báo đọc embeddings.pkl: {pe}")
+                    embeddings_data = {}
+                    
+            embeddings_data[emp_id] = {
+                "id": emp_id,
+                "name": name,
+                "role": role,
+                "embedding": embedding_vector,
+                "image_path": str(filepath_main),
+                "timestamp": timestamp
+            }
+            
+            with open(embeddings_file, "wb") as f:
+                pickle.dump(embeddings_data, f)
+                
+            print(f"[AI WORKER] Trích xuất Vector & lưu thành công: {emp_id} - {name} ({filepath_main})")
+            
+            # --- 4. Báo kết quả về Main Thread ---
+            self.after(0, self._finish_enrollment, True, name, emp_id, "")
+            
+        except Exception as e:
+            print(f"[AI WORKER ERROR] Lỗi xử lý AI: {e}")
+            self.after(0, self._finish_enrollment, False, name, emp_id, str(e))
+
+    def _finish_enrollment(self, success, name="", emp_id="", error_msg=""):
+        """
+        Main Thread: Nhận tín hiệu kết thúc từ AI Worker và hoàn tất UI.
+        """
+        # 1. Dừng và ẩn thanh loading
+        self.progress_bar.stop()
+        self.progress_bar.pack_forget()
         
-        print(f"[SAVE] Đã lưu: {filepath}")
-        print(f"       Tên: {name} | Mã NV: {emp_id} | Chức vụ: {role or 'N/A'}")
+        # 2. Khôi phục nút bấm
+        self.btn_capture.configure(state="normal", text="📸   QUÉT VÀ LƯU KHUÔN MẶT")
         
-        self._set_status(f"✅ Đã quét & lưu thành công: {name} ({emp_id})", CTK_SUCCESS)
-        
-        # Reset form
-        self.entry_name.delete(0, "end")
-        self.entry_id.delete(0, "end")
-        self.entry_role.delete(0, "end")
-        
-        # Cập nhật danh sách database nếu có
-        if hasattr(self, '_load_database_to_scrollable') and hasattr(self, 'db_scroll'):
-            query = self.search_entry.get().lower() if hasattr(self, 'search_entry') else ""
-            self._load_database_to_scrollable(query)
+        # 3. Cập nhật kết quả
+        if success:
+            self._set_status(f"✅ Quét và lưu khuôn mặt thành công: {name} ({emp_id})!", CTK_SUCCESS)
+            
+            # Tự động xóa các ô nhập liệu
+            self.entry_name.delete(0, "end")
+            self.entry_id.delete(0, "end")
+            self.entry_role.delete(0, "end")
+            
+            # Cập nhật danh sách database nếu có
+            if hasattr(self, '_load_database_to_scrollable') and hasattr(self, 'db_scroll'):
+                query = self.search_entry.get().lower() if hasattr(self, 'search_entry') else ""
+                self._load_database_to_scrollable(query)
+        else:
+            self._set_status(f"❌ Lưu dữ liệu thất bại: {error_msg}", CTK_DANGER)
 
     def _capture_face(self):
         """Hỗ trợ tương thích ngược cho hàm chụp ảnh."""
