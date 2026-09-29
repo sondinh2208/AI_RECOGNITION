@@ -66,16 +66,17 @@ CV_COLOR_CYAN = (255, 255, 0)      # Bounding box (nếu cần)
 # ============================================
 CTK_BG_DARK = ("#ffffff", "#0b111e")        # Sidebar background
 CTK_BG_MAIN = ("#f8fafc", "#060b13")        # Main window background
-CTK_ACCENT = ("#e2e8f0", "#1e293b")         # Borders & dividers
+CTK_ACCENT = ("#cbd5e1", "#1e293b")         # Borders & dividers (rõ nét #cbd5e1 ở bản sáng)
 CTK_PRIMARY = ("#2563eb", "#38bdf8")        # Brand / Highlight blue
 CTK_SUCCESS = ("#16a34a", "#22c55e")        # Success green
 CTK_DANGER = ("#ef4444", "#f87171")         # Danger red
-CTK_WARNING = ("#f59e0b", "#fbbf24")        # Warning yellow / amber
-CTK_TEXT = ("#0f172a", "#f8fafc")           # Text primary (Dark slate in light / Crisp white in dark)
-CTK_TEXT_DIM = ("#64748b", "#94a3b8")       # Text secondary (Muted slate)
-CTK_CARD = ("#ffffff", "#0d1522")           # Card surface (White in light / Dark navy in dark)
-CTK_SIDEBAR_HOVER = ("#f1f5f9", "#172033")  # Hover on sidebar items
+CTK_WARNING = ("#d97706", "#fbbf24")        # Warning yellow / amber (đậm hơn ở light mode)
+CTK_TEXT = ("#0f172a", "#f8fafc")           # Text primary (Đen than ở light / Trắng sáng ở dark)
+CTK_TEXT_DIM = ("#475569", "#94a3b8")       # Text secondary (Xám đậm ở light / Xám sáng ở dark)
+CTK_CARD = ("#ffffff", "#0d1522")           # Card surface (Trắng ở light / Xanh đen ở dark)
+CTK_SIDEBAR_HOVER = ("#e2e8f0", "#172033")  # Hover on sidebar items
 CTK_BTN_ACTIVE = ("#2563eb", "#2563eb")     # Active nav pill
+
 
 
 

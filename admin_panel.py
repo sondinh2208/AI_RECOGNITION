@@ -239,17 +239,24 @@ class AdminPanel(ctk.CTk):
         for pid, btn in self.nav_buttons.items():
             if pid == active_page_id:
                 btn.configure(
-                    fg_color=CTK_BTN_ACTIVE, text_color=("#ffffff", "#ffffff"),
+                    fg_color=CTK_BTN_ACTIVE,
+                    hover_color=("#1d4ed8", "#1d4ed8"),
+                    text_color=("#ffffff", "#ffffff"),
                     font=ctk.CTkFont(size=13, weight="bold"),
                 )
             else:
                 btn.configure(
-                    fg_color="transparent", text_color=CTK_TEXT,
+                    fg_color="transparent",
+                    hover_color=CTK_SIDEBAR_HOVER,
+                    text_color=CTK_TEXT,
                     font=ctk.CTkFont(size=13),
                 )
                 
     def _change_appearance_mode_event(self, new_appearance_mode: str):
         ctk.set_appearance_mode(new_appearance_mode)
+        self._highlight_nav(self.current_page)
+        if self.current_page == "database" and hasattr(self, "search_entry"):
+            self._load_database_to_scrollable(self.search_entry.get().lower())
     
     def _navigate(self, page_id):
         """Xử lý chuyển trang."""
@@ -356,14 +363,14 @@ class AdminPanel(ctk.CTk):
             input_box = ctk.CTkFrame(
                 parent, height=42, corner_radius=8,
                 border_width=1, border_color=CTK_ACCENT,
-                fg_color=("#ffffff", "#080e1a")
+                fg_color=("#f8fafc", "#080e1a")
             )
             input_box.pack(fill="x", pady=(0, 16))
             input_box.pack_propagate(False)
             
             icon_lbl = ctk.CTkLabel(
                 input_box, text=icon_symbol,
-                font=ctk.CTkFont(size=14), text_color=CTK_TEXT_DIM,
+                font=ctk.CTkFont(size=14), text_color=("#475569", "#94a3b8"),
                 width=34
             )
             icon_lbl.pack(side="left", padx=(8, 0))
@@ -372,7 +379,8 @@ class AdminPanel(ctk.CTk):
                 input_box, placeholder_text=placeholder,
                 font=ctk.CTkFont(size=13),
                 fg_color="transparent", border_width=0,
-                text_color=CTK_TEXT, placeholder_text_color=CTK_TEXT_DIM
+                text_color=CTK_TEXT,
+                placeholder_text_color=("#94a3b8", "#64748b")
             )
             entry.pack(side="left", fill="both", expand=True, padx=(4, 10))
             return entry
@@ -397,34 +405,30 @@ class AdminPanel(ctk.CTk):
         btn_frame.pack(fill="x", padx=24, pady=(6, 12))
         
         self.btn_capture = ctk.CTkButton(
-            btn_frame, text="📷   CHỤP ẢNH KHUÔN MẶT",
-            font=ctk.CTkFont(size=13, weight="bold"), height=44,
+            btn_frame, text="📸   QUÉT VÀ LƯU KHUÔN MẶT",
+            font=ctk.CTkFont(size=13, weight="bold"), height=46,
             corner_radius=8,
             fg_color=("#2563eb", "#2563eb"),
             hover_color=("#1d4ed8", "#1d4ed8"),
             text_color=("#ffffff", "#ffffff"),
-            command=self._capture_face,
+            command=self._start_enrollment_process,
         )
-        self.btn_capture.pack(fill="x", pady=(0, 10))
+        self.btn_capture.pack(fill="x", pady=(0, 6))
         
-        self.btn_save = ctk.CTkButton(
-            btn_frame, text="💾   LƯU DỮ LIỆU (ONE-SHOT)",
-            font=ctk.CTkFont(size=13, weight="bold"), height=44,
-            corner_radius=8,
-            fg_color=("#f0fdf4", "#081c18"),
-            hover_color=("#dcfce7", "#0d2e27"),
-            border_width=1.5,
-            border_color=("#10b981", "#059669"),
-            text_color=("#15803d", "#10b981"),
-            command=self._save_employee,
+        self.progress_bar = ctk.CTkProgressBar(
+            btn_frame, mode="indeterminate",
+            progress_color=("#2563eb", "#38bdf8"),
+            fg_color=("#e2e8f0", "#1e293b"),
+            height=6, corner_radius=3
         )
-        self.btn_save.pack(fill="x", pady=(0, 12))
+        self.progress_bar.pack_forget()
+
         
         # --- Alert / Guideline Box ---
         alert_box = ctk.CTkFrame(
             form_card, height=44, corner_radius=8,
             border_width=1, border_color=CTK_ACCENT,
-            fg_color=("#f8fafc", "#080e1a")
+            fg_color=("#f1f5f9", "#080e1a")
         )
         alert_box.pack(fill="x", padx=24, pady=(0, 10))
         alert_box.pack_propagate(False)
@@ -435,6 +439,7 @@ class AdminPanel(ctk.CTk):
             font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM,
             anchor="w"
         ).pack(side="left", padx=14)
+
         
         # --- Status & Preview ---
         self.status_label = ctk.CTkLabel(
@@ -612,7 +617,9 @@ class AdminPanel(ctk.CTk):
         
         self.search_entry = ctk.CTkEntry(
             btn_frame, placeholder_text="🔍 Tìm theo tên hoặc mã nhân viên...",
-            width=280, height=38, corner_radius=8, border_color=CTK_ACCENT, fg_color=("#ffffff", "#0d1b2a")
+            width=280, height=38, corner_radius=8,
+            border_color=CTK_ACCENT, fg_color=("#f8fafc", "#080e1a"),
+            text_color=CTK_TEXT, placeholder_text_color=("#94a3b8", "#64748b")
         )
         self.search_entry.pack(side="left", padx=(0, 15))
         self.search_entry.bind("<KeyRelease>", self._on_search_change)
@@ -620,7 +627,7 @@ class AdminPanel(ctk.CTk):
         btn_add_new = ctk.CTkButton(
             btn_frame, text="+ Đăng ký mới",
             font=ctk.CTkFont(size=14, weight="bold"), height=38,
-            corner_radius=8, fg_color="#2563eb", hover_color="#1d4ed8", text_color=("#ffffff", "#ffffff"),
+            corner_radius=8, fg_color=("#2563eb", "#2563eb"), hover_color=("#1d4ed8", "#1d4ed8"), text_color=("#ffffff", "#ffffff"),
             command=lambda: self._navigate("add_employee")
         )
         btn_add_new.pack(side="left")
@@ -632,10 +639,10 @@ class AdminPanel(ctk.CTk):
         
         # Helper to create card
         def create_stat_card(parent, col, icon, title, value, subtext, icon_color="#3b82f6"):
-            card = ctk.CTkFrame(parent, fg_color=CTK_CARD, corner_radius=12)
+            card = ctk.CTkFrame(parent, fg_color=CTK_CARD, corner_radius=12, border_width=1, border_color=CTK_ACCENT)
             card.grid(row=0, column=col, sticky="nsew", padx=8 if col > 0 else (0, 8))
             
-            icon_box = ctk.CTkFrame(card, width=45, height=45, corner_radius=10, fg_color=("#f1f5f9", "#1e293b"))
+            icon_box = ctk.CTkFrame(card, width=45, height=45, corner_radius=10, fg_color=("#f1f5f9", "#101d30"))
             icon_box.pack(side="left", padx=15, pady=15)
             icon_box.pack_propagate(False)
             ctk.CTkLabel(icon_box, text=icon, font=ctk.CTkFont(size=20), text_color=icon_color).place(relx=0.5, rely=0.5, anchor="center")
@@ -654,7 +661,7 @@ class AdminPanel(ctk.CTk):
         self.lbl_new = create_stat_card(stats_frame, 3, "👤+", "Mới trong tháng", "0", "Đăng ký gần đây", "#6366f1")
             
         # --- Main Table Frame ---
-        table_container = ctk.CTkFrame(self.database_frame, fg_color=CTK_CARD, corner_radius=12)
+        table_container = ctk.CTkFrame(self.database_frame, fg_color=CTK_CARD, corner_radius=12, border_width=1, border_color=CTK_ACCENT)
         table_container.pack(fill="both", expand=True, padx=25, pady=(0, 20))
         
         # Table Title
@@ -675,7 +682,7 @@ class AdminPanel(ctk.CTk):
         show_frame = ctk.CTkFrame(footer, fg_color="transparent")
         show_frame.pack(side="left")
         ctk.CTkLabel(show_frame, text="Hiển thị", text_color=CTK_TEXT_DIM, font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 10))
-        dropdown = ctk.CTkOptionMenu(show_frame, values=["10", "20", "50"], width=60, height=28, fg_color=CTK_CARD, button_color=CTK_ACCENT, text_color=CTK_TEXT)
+        dropdown = ctk.CTkOptionMenu(show_frame, values=["10", "20", "50"], width=60, height=28, fg_color=("#f1f5f9", "#111c2e"), button_color=CTK_ACCENT, text_color=CTK_TEXT)
         dropdown.pack(side="left")
         ctk.CTkLabel(show_frame, text="kết quả", text_color=CTK_TEXT_DIM, font=ctk.CTkFont(size=13)).pack(side="left", padx=(10, 0))
         
@@ -692,7 +699,7 @@ class AdminPanel(ctk.CTk):
         self._load_database_to_scrollable()
 
     def _render_table_header(self):
-        thead = ctk.CTkFrame(self.db_scroll, fg_color=CTK_BG_DARK, height=45, corner_radius=8)
+        thead = ctk.CTkFrame(self.db_scroll, fg_color=("#f1f5f9", "#0b111e"), height=45, corner_radius=8, border_width=1, border_color=CTK_ACCENT)
         thead.pack(fill="x", padx=5, pady=(0, 6))
         
         headers = ["", "Ảnh", "Mã NV", "Họ và tên", "Chức vụ", "Trạng thái", "Hành động"]
@@ -703,13 +710,14 @@ class AdminPanel(ctk.CTk):
             
         for i, text in enumerate(headers):
             if i == 0:
-                chk = ctk.CTkCheckBox(thead, text="", width=24, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1.5, border_color="#D1D5DB", fg_color="#2563EB")
+                chk = ctk.CTkCheckBox(thead, text="", width=24, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1.5, border_color=CTK_ACCENT, fg_color="#2563EB")
                 chk.grid(row=0, column=i, pady=10, padx=(10, 0), sticky="w")
             else:
                 ctk.CTkLabel(
                     thead, text=text, font=ctk.CTkFont(size=13, weight="bold"),
                     text_color=CTK_TEXT_DIM
                 ).grid(row=0, column=i, pady=10, sticky="w", padx=10)
+
 
     def _on_search_change(self, event=None):
         query = self.search_entry.get().lower()
@@ -1114,10 +1122,16 @@ class AdminPanel(ctk.CTk):
     
 
     # ============================================
-    # CHỤP ẢNH & LƯU DỮ LIỆU
+    # CHỤP ẢNH & LƯU DỮ LIỆU (ENROLLMENT)
     # ============================================
-    def _capture_face(self):
-        """Chụp frame hiện tại làm ảnh khuôn mặt."""
+    def _start_enrollment_process(self):
+        """
+        Quy trình 1-click Quét và Lưu khuôn mặt:
+        1. Kiểm tra Họ tên và Mã NV hợp lệ.
+        2. Quét và kiểm tra chất lượng khuôn mặt (Strict mode eKYC).
+        3. Lưu ảnh vào data/known_faces/ theo cú pháp ID@Chuc_vu@Ho_Ten_Timestamp.jpg.
+        4. Cập nhật preview và làm mới danh sách dữ liệu.
+        """
         # --- ANTI-SPAM LOGIC ---
         if not hasattr(self, 'spam_count'):
             self.spam_count = 0
@@ -1138,26 +1152,35 @@ class AdminPanel(ctk.CTk):
         if self.spam_count >= 5:
             self.is_capture_locked = True
             self.btn_capture.configure(state="disabled")
-            self._set_status("⏳ CẢNH BÁO: Bấm quá nhanh! Nút chụp khóa 10 giây.", CTK_WARNING)
+            self._set_status("⏳ CẢNH BÁO: Bấm quá nhanh! Nút quét khóa 5 giây.", CTK_WARNING)
             
             def unlock_capture():
                 self.is_capture_locked = False
                 self.spam_count = 0
                 self.btn_capture.configure(state="normal")
-                self._set_status("✅ Đã mở khóa nút chụp. Bạn có thể tiếp tục.", CTK_SUCCESS)
+                self._set_status("✅ Đã mở khóa nút quét. Bạn có thể tiếp tục.", CTK_SUCCESS)
                 
-            self.after(10000, unlock_capture)
+            self.after(5000, unlock_capture)
             return
         # --- END ANTI-SPAM ---
 
-        if self.current_frame is None:
-            self._set_status("❌ Camera chưa sẵn sàng!", CTK_DANGER)
+        name = self.entry_name.get().strip()
+        emp_id = self.entry_id.get().strip()
+        role = self.entry_role.get().strip()
+        
+        if not name:
+            self._set_status("❌ Vui lòng nhập HỌ VÀ TÊN!", CTK_DANGER)
+            return
+        if not emp_id:
+            self._set_status("❌ Vui lòng nhập MÃ NHÂN VIÊN!", CTK_DANGER)
+            return
+        if self.current_frame is None or not self.camera_running:
+            self._set_status("❌ Camera chưa sẵn sàng hoặc đang tạm dừng!", CTK_DANGER)
             return
         
         frame = self.current_frame.copy()
         
         # --- BƯỚC 1: QUÉT LẠI BỨC ẢNH VỚI CHẾ ĐỘ NGHIÊM NGẶT (STRICT MODE) ---
-        # Kiểm tra che khuất và độ tự tin cao để tránh lưu ảnh lỗi
         fw, fh = self.frame_width, self.frame_height
         faces = detect_faces(self.face_model, frame, self.device)
         
@@ -1179,9 +1202,10 @@ class AdminPanel(ctk.CTk):
             self._set_status(f"❌ ẢNH BỊ TỪ CHỐI: {status_text}", CTK_DANGER)
             return
         
-        # --- BƯỚC 2: NẾU VƯỢT QUA KIỂM TRA -> CHẤP NHẬN ẢNH ---
+        # --- BƯỚC 2: NẾU VƯỢT QUA KIỂM TRA -> LƯU DỮ LIỆU & HIỂN THỊ PREVIEW ---
         self.captured_photo = frame
         
+        # Preview thumbnail
         preview_rgb = cv2.cvtColor(self.captured_photo, cv2.COLOR_BGR2RGB)
         preview_pil = Image.fromarray(preview_rgb).resize((160, 120), Image.LANCZOS)
         preview_ctk = ctk.CTkImage(
@@ -1190,29 +1214,7 @@ class AdminPanel(ctk.CTk):
         self.preview_label.image = preview_ctk
         self.preview_label.pack(pady=(5, 0))
         
-        self._set_status("📸 Bức ảnh đạt chuẩn! Nhấn LƯU DỮ LIỆU để hoàn tất.", CTK_SUCCESS)
-    
-
-    def _save_employee(self):
-        """
-        Lưu thông tin nhân viên + ảnh khuôn mặt.
-        BẮT BUỘC: self.is_face_valid == True mới cho lưu.
-        """
-        name = self.entry_name.get().strip()
-        emp_id = self.entry_id.get().strip()
-        role = self.entry_role.get().strip()
-        
-        if not name:
-            self._set_status("❌ Vui lòng nhập HỌ VÀ TÊN!", CTK_DANGER)
-            return
-        if not emp_id:
-            self._set_status("❌ Vui lòng nhập MÃ NHÂN VIÊN!", CTK_DANGER)
-            return
-        if self.captured_photo is None:
-            self._set_status("❌ Chưa chụp ảnh! Nhấn CHỤP ẢNH trước.", CTK_DANGER)
-            return
-        
-        # Lưu ảnh
+        # Lưu file ảnh
         safe_name = name.replace(" ", "_")
         safe_role = role.replace(" ", "_") if role else "Nhân_viên"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1224,16 +1226,25 @@ class AdminPanel(ctk.CTk):
         print(f"[SAVE] Đã lưu: {filepath}")
         print(f"       Tên: {name} | Mã NV: {emp_id} | Chức vụ: {role or 'N/A'}")
         
-        self._set_status(f"✅ Đã lưu thành công: {filename}", CTK_SUCCESS)
+        self._set_status(f"✅ Đã quét & lưu thành công: {name} ({emp_id})", CTK_SUCCESS)
         
         # Reset form
         self.entry_name.delete(0, "end")
         self.entry_id.delete(0, "end")
         self.entry_role.delete(0, "end")
-        self.captured_photo = None
-        self.preview_label.configure(image=None, text="")
-        self.preview_label.pack_forget()
-    
+        
+        # Cập nhật danh sách database nếu có
+        if hasattr(self, '_load_database_to_scrollable') and hasattr(self, 'db_scroll'):
+            query = self.search_entry.get().lower() if hasattr(self, 'search_entry') else ""
+            self._load_database_to_scrollable(query)
+
+    def _capture_face(self):
+        """Hỗ trợ tương thích ngược cho hàm chụp ảnh."""
+        self._start_enrollment_process()
+
+    def _save_employee(self):
+        """Hỗ trợ tương thích ngược cho hàm lưu nhân viên."""
+        self._start_enrollment_process()
 
     def _set_status(self, text, color=CTK_TEXT_DIM):
         """Cập nhật dòng trạng thái trên form."""

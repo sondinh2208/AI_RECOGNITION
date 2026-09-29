@@ -294,7 +294,7 @@ def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=
         
     pitch_ratio = dist_eye_nose / dist_nose_mouth
     if pitch_ratio > 1.6 or pitch_ratio < 0.7:
-        return False, "Khong ngang hoac cui dau"
+        return False, "Khuon mat chua ro rang"
         
     # 4. GEOMETRIC OCCLUSION (Chỉ bật khi chụp ảnh để tránh nhiễu nhấp nháy UI)
     if strict_mode:
@@ -305,12 +305,12 @@ def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=
         # 4.0. Tỷ lệ khuôn mặt (Aspect Ratio): YOLO box chứa cả bàn tay sẽ dài bất thường
         aspect_ratio = face_w / face_h
         if aspect_ratio < 0.65 or aspect_ratio > 1.1:
-            return False, "Khuon mat bi che khuat (Sai ty le)"
+            return False, "Khuon mat chua ro rang"
             
         # 4.1. Che miệng/cằm (Hình học)
         dist_mouth_bottom = fy2 - mouth_y_px
         if dist_mouth_bottom < 0.08 * face_h:
-            return False, "Khuon mat bi che khuat (Khong thay cam)"
+            return False, "Khuon mat chua ro rang"
             
         # 4.2. Phân tích Pixel miệng (Chống bàn tay che mồm cực mạnh)
         if frame is not None:
@@ -339,12 +339,12 @@ def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=
                 
                 # Nếu không có chi tiết (mịn như mu bàn tay) HOẶC không có sắc đỏ (tay/khẩu trang)
                 if edge_density < 25.0 or max_cr < 145:
-                    return False, "Khuon mat bi che khuat (Khong hop le)"
+                    return False, "Khuon mat chua ro rang"
         
         # 4.3. Che mắt/trán
         dist_top_eye = eye_y_px - fy1
         if dist_top_eye < 0.18 * face_h:
-            return False, "Khuon mat bi che khuat (Khong thay tran)"
+            return False, "Khuon mat chua ro rang"
             
     return True, ""
     
