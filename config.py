@@ -64,18 +64,19 @@ CV_COLOR_CYAN = (255, 255, 0)      # Bounding box (nếu cần)
 # ============================================
 # CẤU HÌNH GIAO DIỆN ADMIN PANEL (CustomTkinter)
 # ============================================
-CTK_BG_DARK = ("#ffffff", "#1a1a2e")
-CTK_BG_MAIN = ("#f8fafc", "#16213e")
-CTK_ACCENT = ("#e2e8f0", "#0f3460")
-CTK_PRIMARY = ("#2563eb", "#00b4d8")
-CTK_SUCCESS = ("#10b981", "#00f5a0")
-CTK_DANGER = ("#ef4444", "#ff6b6b")
-CTK_WARNING = ("#f59e0b", "#ffd93d")
-CTK_TEXT = ("#0f172a", "#e0e0e0")
-CTK_TEXT_DIM = ("#64748b", "#8d99ae")
-CTK_CARD = ("#ffffff", "#1e2a3a")
-CTK_SIDEBAR_HOVER = ("#f1f5f9", "#2a2a4a")
-CTK_BTN_ACTIVE = ("#2563eb", "#00b4d8")
+CTK_BG_DARK = ("#ffffff", "#0b111e")        # Sidebar background
+CTK_BG_MAIN = ("#f8fafc", "#060b13")        # Main window background
+CTK_ACCENT = ("#e2e8f0", "#1e293b")         # Borders & dividers
+CTK_PRIMARY = ("#2563eb", "#38bdf8")        # Brand / Highlight blue
+CTK_SUCCESS = ("#16a34a", "#22c55e")        # Success green
+CTK_DANGER = ("#ef4444", "#f87171")         # Danger red
+CTK_WARNING = ("#f59e0b", "#fbbf24")        # Warning yellow / amber
+CTK_TEXT = ("#0f172a", "#f8fafc")           # Text primary (Dark slate in light / Crisp white in dark)
+CTK_TEXT_DIM = ("#64748b", "#94a3b8")       # Text secondary (Muted slate)
+CTK_CARD = ("#ffffff", "#0d1522")           # Card surface (White in light / Dark navy in dark)
+CTK_SIDEBAR_HOVER = ("#f1f5f9", "#172033")  # Hover on sidebar items
+CTK_BTN_ACTIVE = ("#2563eb", "#2563eb")     # Active nav pill
+
 
 
 # ============================================
@@ -87,12 +88,14 @@ KIOSK_WINDOW_NAME = "KIOSK - Nhan dien khuon mat"
 # ============================================
 # CẤU HÌNH ADMIN PANEL WINDOW
 # ============================================
-ADMIN_WINDOW_WIDTH = 1200
-ADMIN_WINDOW_HEIGHT = 700
+ADMIN_WINDOW_WIDTH = 1320
+ADMIN_WINDOW_HEIGHT = 780
 ADMIN_SIDEBAR_WIDTH = 250
-ADMIN_CAMERA_WIDTH = 480
-ADMIN_CAMERA_HEIGHT = 360
+ADMIN_CAMERA_WIDTH = 520
+ADMIN_CAMERA_HEIGHT = 350
 ADMIN_CAMERA_FPS_DELAY = 15    # ms giữa mỗi frame
+
+
 
 
 # ============================================

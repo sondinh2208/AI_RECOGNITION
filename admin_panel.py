@@ -48,8 +48,9 @@ from ekyc_renderer import (
 # ============================================
 # CustomTkinter Theme
 # ============================================
-ctk.set_appearance_mode("light")
+ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
 
 
 # ============================================
@@ -67,10 +68,10 @@ class AdminPanel(ctk.CTk):
         # --- Cấu hình cửa sổ ---
         self.title("HỆ THỐNG QUẢN TRỊ AI - NHẬN DIỆN KHUÔN MẶT")
         self.geometry(f"{ADMIN_WINDOW_WIDTH}x{ADMIN_WINDOW_HEIGHT}")
-        self.minsize(1000, 600)
+        self.minsize(1100, 680)
         self.configure(fg_color=CTK_BG_MAIN)
         
-        # --- Biến trạng thái Camera ---
+        # --- Biến trạng thái Camera & Telemetry ---
         self.camera_cap = None
         self.camera_running = False
         self.current_frame = None       # Frame gốc (sạch, không HUD)
@@ -78,6 +79,8 @@ class AdminPanel(ctk.CTk):
         self.camera_thread = None
         self.current_page = "add_employee"
         self.photo_image = None
+        self.current_fps = 0
+        self.current_conf = 0.0
         
         # --- Biến trạng thái AI ---
         self.is_face_valid = False
@@ -128,35 +131,53 @@ class AdminPanel(ctk.CTk):
     # SIDEBAR (Thanh điều hướng trái)
     # ============================================
     def _build_sidebar(self):
-        """Xây dựng thanh sidebar bên trái."""
+        """Xây dựng thanh sidebar bên trái chuẩn SaaS."""
         self.sidebar = ctk.CTkFrame(
             self,
             width=ADMIN_SIDEBAR_WIDTH,
             corner_radius=0,
             fg_color=CTK_BG_DARK,
+            border_width=1,
+            border_color=CTK_ACCENT,
         )
         self.sidebar.grid(row=0, column=0, sticky="nswe")
         self.sidebar.grid_propagate(False)
         
         # --- Logo / Tiêu đề ---
-        logo_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        logo_frame.pack(fill="x", padx=20, pady=(25, 5))
+        logo_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        logo_container.pack(fill="x", padx=18, pady=(22, 14))
+        
+        # Icon tròn badge bên trái
+        badge_box = ctk.CTkFrame(
+            logo_container, width=42, height=42, corner_radius=21,
+            fg_color=("#eff6ff", "#101d30"), border_width=1, border_color=("#bfdbfe", "#1e3a5f")
+        )
+        badge_box.pack(side="left", padx=(0, 12))
+        badge_box.pack_propagate(False)
+        ctk.CTkLabel(
+            badge_box, text="⚙", font=ctk.CTkFont(size=20),
+            text_color=("#2563eb", "#38bdf8")
+        ).place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Text Header
+        logo_text_frame = ctk.CTkFrame(logo_container, fg_color="transparent")
+        logo_text_frame.pack(side="left", fill="both", expand=True)
         
         ctk.CTkLabel(
-            logo_frame, text="⚙  HỆ THỐNG",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            logo_text_frame, text="HỆ THỐNG",
+            font=ctk.CTkFont(size=11, weight="bold"),
             text_color=CTK_TEXT_DIM, anchor="w",
         ).pack(fill="x")
         
         ctk.CTkLabel(
-            logo_frame, text="QUẢN TRỊ AI",
-            font=ctk.CTkFont(size=22, weight="bold"),
-            text_color=CTK_PRIMARY, anchor="w",
+            logo_text_frame, text="QUẢN TRỊ AI",
+            font=ctk.CTkFont(size=17, weight="bold"),
+            text_color=("#2563eb", "#38bdf8"), anchor="w",
         ).pack(fill="x")
         
         # --- Separator ---
-        ctk.CTkFrame(self.sidebar, height=2, fg_color=CTK_ACCENT).pack(
-            fill="x", padx=20, pady=(15, 20))
+        ctk.CTkFrame(self.sidebar, height=1, fg_color=CTK_ACCENT).pack(
+            fill="x", padx=18, pady=(0, 14))
         
         # --- Nav buttons ---
         self.nav_buttons = {}
@@ -165,13 +186,13 @@ class AdminPanel(ctk.CTk):
             ("add_employee",  "👤  Quét khuôn mặt"),
             ("attendance",    "📍  Nhận diện điểm danh"),
             ("database",      "📁  Người đăng ký"),
-            ("history",       "📋  Lịch sử ra vào"),
+            ("history",       "📑  Lịch sử ra vào"),
         ]
         
         for page_id, label in nav_items:
             btn = ctk.CTkButton(
                 self.sidebar, text=label,
-                font=ctk.CTkFont(size=14), height=42, anchor="w",
+                font=ctk.CTkFont(size=13), height=40, anchor="w",
                 corner_radius=8, fg_color="transparent",
                 text_color=CTK_TEXT, hover_color=CTK_SIDEBAR_HOVER,
                 command=lambda pid=page_id: self._navigate(pid),
@@ -184,25 +205,33 @@ class AdminPanel(ctk.CTk):
         # --- Footer ---
         ctk.CTkFrame(self.sidebar, fg_color="transparent").pack(fill="both", expand=True)
         ctk.CTkFrame(self.sidebar, height=1, fg_color=CTK_ACCENT).pack(
-            fill="x", padx=20, pady=(0, 10))
+            fill="x", padx=18, pady=(0, 12))
         
+        # Theme switcher menu
         self.appearance_mode_menu = ctk.CTkOptionMenu(
-            self.sidebar, values=["Light", "Dark"],
+            self.sidebar, values=["Dark", "Light"],
             command=self._change_appearance_mode_event,
-            fg_color=CTK_CARD, button_color=CTK_ACCENT, text_color=CTK_TEXT
+            fg_color=("#f1f5f9", "#111c2e"), button_color=CTK_ACCENT,
+            text_color=CTK_TEXT, corner_radius=8, height=34
         )
-        self.appearance_mode_menu.pack(padx=20, pady=(0, 10))
-        self.appearance_mode_menu.set("Light")
+        self.appearance_mode_menu.pack(fill="x", padx=18, pady=(0, 10))
+        self.appearance_mode_menu.set("Dark")
         
         ctk.CTkLabel(
-            self.sidebar, text="AI Recognition v2.0",
-            font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM,
-        ).pack(pady=(0, 5))
+            self.sidebar, text="❄  AI Recognition v2.0",
+            font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w"
+        ).pack(fill="x", padx=20, pady=(0, 4))
         
+        cuda_row = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        cuda_row.pack(fill="x", padx=20, pady=(0, 18))
         ctk.CTkLabel(
-            self.sidebar, text="CUDA GPU-Accelerated",
-            font=ctk.CTkFont(size=10), text_color=CTK_TEXT_DIM,
-        ).pack(pady=(0, 20))
+            cuda_row, text="● ", font=ctk.CTkFont(size=10, weight="bold"),
+            text_color=CTK_SUCCESS
+        ).pack(side="left")
+        ctk.CTkLabel(
+            cuda_row, text="CUDA GPU-Accelerated",
+            font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM
+        ).pack(side="left")
     
 
     def _highlight_nav(self, active_page_id):
@@ -211,12 +240,12 @@ class AdminPanel(ctk.CTk):
             if pid == active_page_id:
                 btn.configure(
                     fg_color=CTK_BTN_ACTIVE, text_color=("#ffffff", "#ffffff"),
-                    font=ctk.CTkFont(size=14, weight="bold"),
+                    font=ctk.CTkFont(size=13, weight="bold"),
                 )
             else:
                 btn.configure(
                     fg_color="transparent", text_color=CTK_TEXT,
-                    font=ctk.CTkFont(size=14),
+                    font=ctk.CTkFont(size=13),
                 )
                 
     def _change_appearance_mode_event(self, new_appearance_mode: str):
@@ -231,17 +260,14 @@ class AdminPanel(ctk.CTk):
         
     def _show_page(self, page_id):
         """Hiển thị frame được chọn và xử lý camera."""
-        # Ẩn tất cả các trang
         for pid, frame in getattr(self, "page_frames", {}).items():
             frame.grid_remove()
             
-        # Hiển thị trang hiện tại
         if page_id in self.page_frames:
             self.page_frames[page_id].grid()
             if page_id == "database" and hasattr(self, "search_entry"):
                 self._load_database_to_scrollable(self.search_entry.get().lower())
             
-        # Quản lý vòng lặp camera để tiết kiệm tài nguyên
         if page_id == "add_employee" or page_id == "attendance":
             if not self.camera_running and self.camera_cap is not None:
                 self._toggle_camera()
@@ -257,7 +283,7 @@ class AdminPanel(ctk.CTk):
     def _build_main_area(self):
         """Xây dựng khu vực chính (Gồm nhiều trang thay đổi)."""
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_container.grid(row=0, column=1, sticky="nswe", padx=15, pady=15)
+        self.main_container.grid(row=0, column=1, sticky="nswe", padx=16, pady=16)
         
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -294,163 +320,202 @@ class AdminPanel(ctk.CTk):
     # ============================================
     def _build_form_column(self):
         """Xây dựng form đăng ký nhân viên mới."""
-        form_frame = ctk.CTkFrame(self.main_frame, fg_color=CTK_CARD, corner_radius=12)
-        form_frame.grid(row=0, column=0, sticky="nswe", padx=(0, 12))
+        form_card = ctk.CTkFrame(
+            self.main_frame, fg_color=CTK_CARD, corner_radius=12,
+            border_width=1, border_color=CTK_ACCENT
+        )
+        form_card.grid(row=0, column=0, sticky="nswe", padx=(0, 14))
         
         # --- Header ---
-        header = ctk.CTkFrame(form_frame, fg_color="transparent")
-        header.pack(fill="x", padx=25, pady=(25, 5))
+        header = ctk.CTkFrame(form_card, fg_color="transparent")
+        header.pack(fill="x", padx=24, pady=(24, 10))
         
         ctk.CTkLabel(
             header, text="ĐĂNG KÝ KHUÔN MẶT MỚI",
             font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=CTK_PRIMARY, anchor="w",
+            text_color=CTK_TEXT, anchor="w",
         ).pack(fill="x")
         
         ctk.CTkLabel(
             header, text="Nhập thông tin nhân viên và chụp ảnh khuôn mặt",
             font=ctk.CTkFont(size=12), text_color=CTK_TEXT_DIM, anchor="w",
-        ).pack(fill="x", pady=(3, 0))
+        ).pack(fill="x", pady=(4, 0))
         
-        ctk.CTkFrame(form_frame, height=2, fg_color=CTK_ACCENT).pack(
-            fill="x", padx=25, pady=(15, 20))
+        # --- Fields Frame ---
+        fields = ctk.CTkFrame(form_card, fg_color="transparent")
+        fields.pack(fill="x", padx=24, pady=(12, 10))
         
-        # --- Fields ---
-        fields = ctk.CTkFrame(form_frame, fg_color="transparent")
-        fields.pack(fill="x", padx=25)
-        
-        # Họ và tên
-        ctk.CTkLabel(fields, text="HỌ VÀ TÊN NHÂN VIÊN",
-                     font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=CTK_TEXT_DIM, anchor="w").pack(fill="x", pady=(0, 5))
-        self.entry_name = ctk.CTkEntry(
-            fields, placeholder_text="VD: Nguyễn Văn A", height=42,
-            font=ctk.CTkFont(size=14), corner_radius=8,
-            border_color=CTK_ACCENT, fg_color=("#ffffff", "#0d1b2a"),
-            text_color=CTK_TEXT, placeholder_text_color=CTK_TEXT_DIM,
+        # Helper: Input có icon bên trái
+        def create_icon_input(parent, label_text, icon_symbol, placeholder):
+            ctk.CTkLabel(
+                parent, text=label_text,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=CTK_TEXT_DIM, anchor="w"
+            ).pack(fill="x", pady=(0, 6))
+            
+            input_box = ctk.CTkFrame(
+                parent, height=42, corner_radius=8,
+                border_width=1, border_color=CTK_ACCENT,
+                fg_color=("#ffffff", "#080e1a")
+            )
+            input_box.pack(fill="x", pady=(0, 16))
+            input_box.pack_propagate(False)
+            
+            icon_lbl = ctk.CTkLabel(
+                input_box, text=icon_symbol,
+                font=ctk.CTkFont(size=14), text_color=CTK_TEXT_DIM,
+                width=34
+            )
+            icon_lbl.pack(side="left", padx=(8, 0))
+            
+            entry = ctk.CTkEntry(
+                input_box, placeholder_text=placeholder,
+                font=ctk.CTkFont(size=13),
+                fg_color="transparent", border_width=0,
+                text_color=CTK_TEXT, placeholder_text_color=CTK_TEXT_DIM
+            )
+            entry.pack(side="left", fill="both", expand=True, padx=(4, 10))
+            return entry
+            
+        # 1. Họ và tên
+        self.entry_name = create_icon_input(
+            fields, "HỌ VÀ TÊN NHÂN VIÊN", "👤", "Nguyễn Văn A"
         )
-        self.entry_name.pack(fill="x", pady=(0, 18))
         
-        # Mã nhân viên
-        ctk.CTkLabel(fields, text="MÃ NHÂN VIÊN",
-                     font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=CTK_TEXT_DIM, anchor="w").pack(fill="x", pady=(0, 5))
-        self.entry_id = ctk.CTkEntry(
-            fields, placeholder_text="VD: NV001", height=42,
-            font=ctk.CTkFont(size=14), corner_radius=8,
-            border_color=CTK_ACCENT, fg_color=("#ffffff", "#0d1b2a"),
-            text_color=CTK_TEXT, placeholder_text_color=CTK_TEXT_DIM,
+        # 2. Mã nhân viên
+        self.entry_id = create_icon_input(
+            fields, "MÃ NHÂN VIÊN", "🪪", "NV001"
         )
-        self.entry_id.pack(fill="x", pady=(0, 18))
         
-        # Chức vụ
-        ctk.CTkLabel(fields, text="CHỨC VỤ / PHÒNG BAN",
-                     font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=CTK_TEXT_DIM, anchor="w").pack(fill="x", pady=(0, 5))
-        self.entry_role = ctk.CTkEntry(
-            fields, placeholder_text="VD: Kỹ sư phần mềm - Phòng IT", height=42,
-            font=ctk.CTkFont(size=14), corner_radius=8,
-            border_color=CTK_ACCENT, fg_color=("#ffffff", "#0d1b2a"),
-            text_color=CTK_TEXT, placeholder_text_color=CTK_TEXT_DIM,
+        # 3. Chức vụ / Phòng ban
+        self.entry_role = create_icon_input(
+            fields, "CHỨC VỤ / PHÒNG BAN", "✉", "Kỹ sư phần mềm - Phòng IT"
         )
-        self.entry_role.pack(fill="x", pady=(0, 25))
         
-        ctk.CTkFrame(form_frame, height=1, fg_color=CTK_ACCENT).pack(
-            fill="x", padx=25, pady=(0, 20))
-        
-        # --- Buttons ---
-        btn_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=25, pady=(0, 15))
+        # --- Buttons Frame ---
+        btn_frame = ctk.CTkFrame(form_card, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=24, pady=(6, 12))
         
         self.btn_capture = ctk.CTkButton(
-            btn_frame, text="📸  CHỤP ẢNH KHUÔN MẶT",
-            font=ctk.CTkFont(size=14, weight="bold"), height=46,
-            corner_radius=8, fg_color=("#2563eb", "#3b82f6"), hover_color=("#1d4ed8", "#2563eb"),
+            btn_frame, text="📷   CHỤP ẢNH KHUÔN MẶT",
+            font=ctk.CTkFont(size=13, weight="bold"), height=44,
+            corner_radius=8,
+            fg_color=("#2563eb", "#2563eb"),
+            hover_color=("#1d4ed8", "#1d4ed8"),
             text_color=("#ffffff", "#ffffff"),
             command=self._capture_face,
         )
         self.btn_capture.pack(fill="x", pady=(0, 10))
         
         self.btn_save = ctk.CTkButton(
-            btn_frame, text="💾  LƯU DỮ LIỆU (ONE-SHOT)",
-            font=ctk.CTkFont(size=14, weight="bold"), height=48,
-            corner_radius=8, fg_color=("#10b981", "#059669"), hover_color=("#059669", "#047857"),
-            text_color=("#ffffff", "#ffffff"),
+            btn_frame, text="💾   LƯU DỮ LIỆU (ONE-SHOT)",
+            font=ctk.CTkFont(size=13, weight="bold"), height=44,
+            corner_radius=8,
+            fg_color=("#f0fdf4", "#081c18"),
+            hover_color=("#dcfce7", "#0d2e27"),
+            border_width=1.5,
+            border_color=("#10b981", "#059669"),
+            text_color=("#15803d", "#10b981"),
             command=self._save_employee,
         )
-        self.btn_save.pack(fill="x", pady=(0, 10))
+        self.btn_save.pack(fill="x", pady=(0, 12))
         
-        # --- Status ---
+        # --- Alert / Guideline Box ---
+        alert_box = ctk.CTkFrame(
+            form_card, height=44, corner_radius=8,
+            border_width=1, border_color=CTK_ACCENT,
+            fg_color=("#f8fafc", "#080e1a")
+        )
+        alert_box.pack(fill="x", padx=24, pady=(0, 10))
+        alert_box.pack_propagate(False)
+        
+        ctk.CTkLabel(
+            alert_box,
+            text="ⓘ  Hãy đảm bảo khuôn mặt nằm chính giữa khung hình và đủ ánh sáng.",
+            font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM,
+            anchor="w"
+        ).pack(side="left", padx=14)
+        
+        # --- Status & Preview ---
         self.status_label = ctk.CTkLabel(
-            form_frame, text="⏳ Sẵn sàng đăng ký nhân viên mới",
+            form_card, text="",
             font=ctk.CTkFont(size=12), text_color=CTK_TEXT_DIM, anchor="w",
         )
-        self.status_label.pack(fill="x", padx=25, pady=(0, 20))
+        self.status_label.pack(fill="x", padx=24, pady=(0, 6))
         
-        # --- Preview ---
-        self.preview_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        self.preview_frame.pack(fill="x", padx=25, pady=(0, 15))
-        self.preview_label = ctk.CTkLabel(self.preview_frame, text="", width=160, height=120)
+        self.preview_frame = ctk.CTkFrame(form_card, fg_color="transparent")
+        self.preview_frame.pack(fill="x", padx=24, pady=(0, 10))
+        self.preview_label = ctk.CTkLabel(self.preview_frame, text="", width=120, height=90)
         self.captured_photo = None
     
 
     # ============================================
-    # CAMERA COLUMN (Cột phải)
+    # CAMERA & SYSTEM TELEMETRY (Cột phải)
     # ============================================
     def _build_camera_column(self):
-        """Xây dựng vùng hiển thị camera trực tiếp."""
-        camera_frame = ctk.CTkFrame(
-            self.main_frame, fg_color=CTK_CARD, corner_radius=12,
-            width=ADMIN_CAMERA_WIDTH + 40,
+        """Xây dựng vùng hiển thị camera trực tiếp & thông tin hệ thống."""
+        right_container = ctk.CTkFrame(
+            self.main_frame, fg_color="transparent",
+            width=ADMIN_CAMERA_WIDTH + 36,
         )
-        camera_frame.grid(row=0, column=1, sticky="nswe")
-        camera_frame.grid_propagate(False)
+        right_container.grid(row=0, column=1, sticky="nswe")
+        right_container.grid_propagate(False)
         
-        # --- Header ---
-        cam_header = ctk.CTkFrame(camera_frame, fg_color="transparent")
-        cam_header.pack(fill="x", padx=20, pady=(20, 10))
+        # ==========================================
+        # CARD 1: CAMERA TRỰC TIẾP
+        # ==========================================
+        cam_card = ctk.CTkFrame(
+            right_container, fg_color=CTK_CARD, corner_radius=12,
+            border_width=1, border_color=CTK_ACCENT
+        )
+        cam_card.pack(fill="x", pady=(0, 12))
+        
+        # Header
+        cam_header = ctk.CTkFrame(cam_card, fg_color="transparent")
+        cam_header.pack(fill="x", padx=18, pady=(16, 10))
         
         title_row = ctk.CTkFrame(cam_header, fg_color="transparent")
         title_row.pack(fill="x")
         
         ctk.CTkLabel(
-            title_row, text="📹  CAMERA TRỰC TIẾP",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            title_row, text="🎥  CAMERA TRỰC TIẾP",
+            font=ctk.CTkFont(size=13, weight="bold"),
             text_color=CTK_TEXT, anchor="w",
         ).pack(side="left")
         
         self.cam_status_dot = ctk.CTkLabel(
             title_row, text="● LIVE",
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=11, weight="bold"),
             text_color=CTK_SUCCESS, anchor="e",
         )
         self.cam_status_dot.pack(side="right")
         
-        # --- Camera label ---
+        # Camera Feed Box
         self.camera_label = ctk.CTkLabel(
-            camera_frame, text="Đang khởi tạo camera...",
-            font=ctk.CTkFont(size=14), text_color=CTK_TEXT_DIM,
+            cam_card, text="Đang khởi tạo camera...",
+            font=ctk.CTkFont(size=13), text_color=CTK_TEXT_DIM,
             width=ADMIN_CAMERA_WIDTH, height=ADMIN_CAMERA_HEIGHT,
             fg_color="#000000", corner_radius=8,
         )
-        self.camera_label.pack(padx=20, pady=(0, 10))
+        self.camera_label.pack(padx=18, pady=(0, 8))
         
-        # --- Info ---
-        self.cam_info_label = ctk.CTkLabel(
-            camera_frame, text="Đang kết nối camera...",
-            font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM,
+        # Live sub-status line
+        self.cam_live_status = ctk.CTkLabel(
+            cam_card, text="● ĐANG CHỜ KHUÔN MẶT",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=CTK_SUCCESS, anchor="w"
         )
-        self.cam_info_label.pack(pady=(0, 5))
+        self.cam_live_status.pack(fill="x", padx=18, pady=(0, 10))
         
-        # --- Control buttons ---
-        cam_btn_frame = ctk.CTkFrame(camera_frame, fg_color="transparent")
-        cam_btn_frame.pack(fill="x", padx=20, pady=(0, 20))
+        # Control buttons row
+        cam_btn_frame = ctk.CTkFrame(cam_card, fg_color="transparent")
+        cam_btn_frame.pack(fill="x", padx=18, pady=(0, 14))
         
         self.btn_toggle_cam = ctk.CTkButton(
             cam_btn_frame, text="⏸  Tạm dừng",
-            font=ctk.CTkFont(size=12, weight="bold"), height=36, corner_radius=8,
-            fg_color=("#f1f5f9", "#1e293b"), hover_color=("#e2e8f0", "#334155"),
-            border_width=1, border_color=("#cbd5e1", "#334155"),
+            font=ctk.CTkFont(size=12, weight="bold"), height=34, corner_radius=8,
+            fg_color=("#f1f5f9", "#080e1a"), hover_color=CTK_SIDEBAR_HOVER,
+            border_width=1, border_color=CTK_ACCENT,
             text_color=CTK_TEXT,
             command=self._toggle_camera,
         )
@@ -458,13 +523,66 @@ class AdminPanel(ctk.CTk):
         
         self.btn_restart_cam = ctk.CTkButton(
             cam_btn_frame, text="🔄  Khởi động lại",
-            font=ctk.CTkFont(size=12, weight="bold"), height=36, corner_radius=8,
-            fg_color=("#f1f5f9", "#1e293b"), hover_color=("#e2e8f0", "#334155"),
-            border_width=1, border_color=("#cbd5e1", "#334155"),
+            font=ctk.CTkFont(size=12, weight="bold"), height=34, corner_radius=8,
+            fg_color=("#f1f5f9", "#080e1a"), hover_color=CTK_SIDEBAR_HOVER,
+            border_width=1, border_color=CTK_ACCENT,
             text_color=CTK_TEXT,
             command=self._restart_camera,
         )
         self.btn_restart_cam.pack(side="right", expand=True, fill="x", padx=(5, 0))
+        
+        # ==========================================
+        # CARD 2: THÔNG TIN HỆ THỐNG
+        # ==========================================
+        sys_card = ctk.CTkFrame(
+            right_container, fg_color=CTK_CARD, corner_radius=12,
+            border_width=1, border_color=CTK_ACCENT
+        )
+        sys_card.pack(fill="both", expand=True)
+        
+        # Header
+        sys_header = ctk.CTkFrame(sys_card, fg_color="transparent")
+        sys_header.pack(fill="x", padx=18, pady=(14, 8))
+        
+        ctk.CTkLabel(
+            sys_header, text="⏳  THÔNG TIN HỆ THỐNG",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=CTK_TEXT, anchor="w",
+        ).pack(side="left")
+        
+        # Helper: Tạo dòng thông tin hệ thống
+        def create_telemetry_row(parent, icon, title, initial_val, is_highlight=False):
+            row = ctk.CTkFrame(parent, fg_color="transparent", height=26)
+            row.pack(fill="x", padx=18, pady=3)
+            row.pack_propagate(False)
+            
+            left = ctk.CTkFrame(row, fg_color="transparent")
+            left.pack(side="left")
+            ctk.CTkLabel(
+                left, text=f"{icon}  {title}",
+                font=ctk.CTkFont(size=12), text_color=CTK_TEXT_DIM, anchor="w"
+            ).pack(side="left")
+            
+            val_lbl = ctk.CTkLabel(
+                row, text=initial_val,
+                font=ctk.CTkFont(size=12, weight="bold" if is_highlight else "normal"),
+                text_color=CTK_SUCCESS if is_highlight else CTK_TEXT,
+                anchor="e"
+            )
+            val_lbl.pack(side="right")
+            return val_lbl
+            
+        sys_rows = ctk.CTkFrame(sys_card, fg_color="transparent")
+        sys_rows.pack(fill="x", pady=(0, 14))
+        
+        self.lbl_stat_model = create_telemetry_row(sys_rows, "🤖", "Model", "YOLOv8 + FaceMesh")
+        self.lbl_stat_conf = create_telemetry_row(sys_rows, "🎯", "Độ tin cậy (Face)", "0.00")
+        self.lbl_stat_fps = create_telemetry_row(sys_rows, "⏱", "FPS", "30")
+        self.lbl_stat_status = create_telemetry_row(sys_rows, "🩺", "Trạng thái", "● Hoạt động tốt", is_highlight=True)
+        
+        device_text = "NVIDIA GPU" if self.device in ['cuda', '0'] else "CPU"
+        self.lbl_stat_device = create_telemetry_row(sys_rows, "🖥", "Thiết bị", device_text)
+
     
 
     # ============================================
@@ -656,7 +774,7 @@ class AdminPanel(ctk.CTk):
             row_idx += 1
 
     def _render_employee_row(self, emp_data, row_index):
-        bg_color = ("#ffffff", "#1e2a3a") if row_index % 2 == 0 else ("#f8fafc", "#253447") 
+        bg_color = ("#ffffff", "#0d1522") if row_index % 2 == 0 else ("#f8fafc", "#111c2e") 
         
         row_frame = ctk.CTkFrame(self.db_scroll, fg_color=bg_color, corner_radius=6)
         row_frame.pack(fill="x", pady=2, padx=5)
@@ -666,7 +784,7 @@ class AdminPanel(ctk.CTk):
             row_frame.grid_columnconfigure(i, weight=w, uniform="table_col")
             
         # 0. Checkbox
-        checkbox = ctk.CTkCheckBox(row_frame, text="", width=24, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1.5, border_color="#D1D5DB", fg_color="#2563EB")
+        checkbox = ctk.CTkCheckBox(row_frame, text="", width=24, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1.5, border_color=CTK_ACCENT, fg_color="#2563EB")
         checkbox.grid(row=0, column=0, pady=8, padx=(10, 0), sticky="w")
         
         # 1. Ảnh
@@ -712,15 +830,15 @@ class AdminPanel(ctk.CTk):
         action_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
         action_frame.grid(row=0, column=6, sticky="w", padx=10)
         
-        btn_view = ctk.CTkButton(action_frame, text="👁", width=30, height=28, fg_color="transparent", corner_radius=4, border_width=1, border_color=("#e5e7eb", "#334155"), text_color=("#3b82f6", "#60a5fa"), hover_color=CTK_SIDEBAR_HOVER)
+        btn_view = ctk.CTkButton(action_frame, text="👁", width=30, height=28, fg_color="transparent", corner_radius=4, border_width=1, border_color=CTK_ACCENT, text_color=("#3b82f6", "#60a5fa"), hover_color=CTK_SIDEBAR_HOVER)
         btn_view.pack(side="left", padx=2)
         
-        btn_edit = ctk.CTkButton(action_frame, text="📝", width=30, height=28, fg_color="transparent", corner_radius=4, border_width=1, border_color=("#e5e7eb", "#334155"), text_color=("#6b7280", "#cbd5e1"), hover_color=CTK_SIDEBAR_HOVER)
+        btn_edit = ctk.CTkButton(action_frame, text="📝", width=30, height=28, fg_color="transparent", corner_radius=4, border_width=1, border_color=CTK_ACCENT, text_color=("#6b7280", "#cbd5e1"), hover_color=CTK_SIDEBAR_HOVER)
         btn_edit.pack(side="left", padx=2)
         
         btn_del = ctk.CTkButton(
             action_frame, text="🗑", width=30, height=28,
-            fg_color="transparent", corner_radius=4, border_width=1, border_color=("#e5e7eb", "#334155"), text_color=("#ef4444", "#fca5a5"), hover_color=("#fee2e2", "#7f1d1d"),
+            fg_color="transparent", corner_radius=4, border_width=1, border_color=CTK_ACCENT, text_color=("#ef4444", "#fca5a5"), hover_color=("#fee2e2", "#7f1d1d"),
             command=lambda: self._delete_single_employee(emp_data["img_path"], row_frame)
         )
         btn_del.pack(side="left", padx=2)
@@ -762,10 +880,11 @@ class AdminPanel(ctk.CTk):
                         self.frame_width, self.frame_height,
                         self.shape_rect, corner_radius)
                     
-                    self.cam_info_label.configure(
-                        text=f"Camera ID: {cam_id}  |  {self.frame_width}x{self.frame_height}  |  AI Active",
-                        text_color=CTK_SUCCESS)
                     self.cam_status_dot.configure(text="● LIVE", text_color=CTK_SUCCESS)
+                    if hasattr(self, 'lbl_stat_status'):
+                        self.lbl_stat_status.configure(text="● Hoạt động tốt", text_color=CTK_SUCCESS)
+                    if hasattr(self, 'cam_live_status'):
+                        self.cam_live_status.configure(text="● ĐANG CHỜ KHUÔN MẶT", text_color=CTK_SUCCESS)
                     print(f"[CAMERA] Đã kết nối camera ID={cam_id} ({self.frame_width}x{self.frame_height})")
                     
                     self.camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
@@ -776,8 +895,11 @@ class AdminPanel(ctk.CTk):
                 else:
                     cap.release()
         
-        self.cam_info_label.configure(text="❌ Không tìm thấy camera!", text_color=CTK_DANGER)
         self.cam_status_dot.configure(text="● OFFLINE", text_color=CTK_DANGER)
+        if hasattr(self, 'lbl_stat_status'):
+            self.lbl_stat_status.configure(text="● Mất kết nối", text_color=CTK_DANGER)
+        if hasattr(self, 'cam_live_status'):
+            self.cam_live_status.configure(text="● KHÔNG CÓ TÍN HIỆU CAMERA", text_color=CTK_DANGER)
         self.camera_label.configure(text="Không thể kết nối camera.\nKiểm tra thiết bị.")
         print("[CAMERA] KHÔNG TÌM THẤY CAMERA!")
     
@@ -813,11 +935,8 @@ class AdminPanel(ctk.CTk):
             
             # --- AI Inference ---
             faces = detect_faces(self.face_model, frame, self.device)
-            # Tối ưu FPS: Tắt detect_persons vì hiện tại không dùng tới để hiển thị UI
-            # persons = detect_persons(self.person_model, frame, self.device)
             
             mp_results = None
-            # Tối ưu FPS cấp độ 2: Chỉ chạy MediaPipe (tính góc nghiêng) khi YOLO phát hiện có khuôn mặt!
             if self.face_detector is not None and len(faces) > 0:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
@@ -836,7 +955,6 @@ class AdminPanel(ctk.CTk):
                 red_streak += 1
                 green_streak = 0
                 
-            # Cập nhật trạng thái hiển thị dựa trên streak
             if green_streak >= 5:       # Phải ổn định 5 frames mới cho Xanh (Hợp lệ)
                 display_locked = True
                 display_color = current_color
@@ -845,11 +963,18 @@ class AdminPanel(ctk.CTk):
                 display_locked = False
                 display_color = current_color
                 display_text = status_text
-            # Nếu chưa đủ streak, GIỮ NGUYÊN trạng thái của display_color và display_text
             
             # Cập nhật biến trạng thái (Atomic)
             self.is_face_valid = display_locked
             self.ai_status_text = display_text
+            
+            # Lưu telemetry
+            highest_conf = 0.0
+            for (fx1, fy1, fx2, fy2, fconf) in faces:
+                if fconf > highest_conf:
+                    highest_conf = fconf
+            self.current_fps = smoothed_fps
+            self.current_conf = highest_conf
             
             # Log terminal
             if display_text != self.prev_status:
@@ -886,7 +1011,6 @@ class AdminPanel(ctk.CTk):
             instant_fps = 1.0 / (curr_time - prev_time) if curr_time > prev_time else 0
             prev_time = curr_time
             
-            # Làm mượt FPS bằng Exponential Moving Average (tránh nhảy số liên tục)
             if smoothed_fps == 0.0:
                 smoothed_fps = instant_fps
             else:
@@ -896,7 +1020,7 @@ class AdminPanel(ctk.CTk):
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
                 
             self.latest_processed_frame = output
-            time.sleep(0.001)  # Giảm sleep xuống 1ms để giải phóng tối đa FPS
+            time.sleep(0.001)
 
     def _update_frame(self):
         """
@@ -909,13 +1033,10 @@ class AdminPanel(ctk.CTk):
             output = self.latest_processed_frame
             
             # --- Convert → Tkinter Image ---
-            # Dùng INTER_LINEAR siêu nhanh
             output_resized = cv2.resize(output, (ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT), interpolation=cv2.INTER_LINEAR)
             frame_rgb = cv2.cvtColor(output_resized, cv2.COLOR_BGR2RGB)
             pil_image = Image.fromarray(frame_rgb)
             
-            # Khôi phục CTkImage để hỗ trợ HighDPI Scaling (giải quyết lỗi khung hình bị nhỏ lại hoặc sai lệch mask)
-            # Vì ta đã chạy đa luồng và cv2.resize siêu nhanh nên CTkImage lúc này không còn là bottle-neck quá lớn.
             ctk_image = ctk.CTkImage(
                 light_image=pil_image, dark_image=pil_image,
                 size=(ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT),
@@ -923,6 +1044,31 @@ class AdminPanel(ctk.CTk):
             
             self.camera_label.configure(image=ctk_image, text="")
             self.photo_image = ctk_image
+        
+        # --- Cập nhật Telemetry Metrics ---
+        if hasattr(self, 'lbl_stat_fps'):
+            self.lbl_stat_fps.configure(text=f"{int(getattr(self, 'current_fps', 0))}")
+            
+        if hasattr(self, 'lbl_stat_conf'):
+            c_val = getattr(self, 'current_conf', 0.0)
+            self.lbl_stat_conf.configure(text=f"{c_val:.2f}" if c_val > 0 else "0.00")
+            
+        if hasattr(self, 'cam_live_status'):
+            if self.is_face_valid:
+                self.cam_live_status.configure(
+                    text="● KHUÔN MẶT ĐƯỢC NHẬN DIỆN",
+                    text_color=CTK_SUCCESS
+                )
+            elif getattr(self, 'current_conf', 0.0) > 0:
+                self.cam_live_status.configure(
+                    text=f"● {self.ai_status_text.upper()}",
+                    text_color=CTK_WARNING
+                )
+            else:
+                self.cam_live_status.configure(
+                    text="● CHƯA PHÁT HIỆN KHUÔN MẶT",
+                    text_color=CTK_DANGER
+                )
         
         self.after(ADMIN_CAMERA_FPS_DELAY, self._update_frame)
     
@@ -933,12 +1079,16 @@ class AdminPanel(ctk.CTk):
             self.camera_running = False
             self.btn_toggle_cam.configure(text="▶  Tiếp tục")
             self.cam_status_dot.configure(text="● PAUSED", text_color=CTK_WARNING)
-            self.cam_info_label.configure(text="Camera đã tạm dừng", text_color=CTK_WARNING)
+            if hasattr(self, 'lbl_stat_status'):
+                self.lbl_stat_status.configure(text="● Tạm dừng", text_color=CTK_WARNING)
+            if hasattr(self, 'cam_live_status'):
+                self.cam_live_status.configure(text="● TẠM DỪNG CAMERA", text_color=CTK_WARNING)
         else:
             self.camera_running = True
             self.btn_toggle_cam.configure(text="⏸  Tạm dừng")
             self.cam_status_dot.configure(text="● LIVE", text_color=CTK_SUCCESS)
-            self.cam_info_label.configure(text="Camera đang hoạt động", text_color=CTK_SUCCESS)
+            if hasattr(self, 'lbl_stat_status'):
+                self.lbl_stat_status.configure(text="● Hoạt động tốt", text_color=CTK_SUCCESS)
             
             if self.camera_thread is None or not self.camera_thread.is_alive():
                 self.camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
@@ -954,7 +1104,13 @@ class AdminPanel(ctk.CTk):
             self.camera_cap.release()
             self.camera_cap = None
         self.camera_label.configure(image=None, text="Đang khởi động lại camera...")
+        self.cam_status_dot.configure(text="● RESTARTING", text_color=CTK_WARNING)
+        if hasattr(self, 'lbl_stat_status'):
+            self.lbl_stat_status.configure(text="● Đang khởi động...", text_color=CTK_WARNING)
+        if hasattr(self, 'cam_live_status'):
+            self.cam_live_status.configure(text="● ĐANG KẾT NỐI LẠI...", text_color=CTK_WARNING)
         self.after(500, self._start_camera)
+
     
 
     # ============================================
