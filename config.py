@@ -18,7 +18,10 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # ============================================
 FACE_MODEL_PATH = "models/model.pt"
 MP_FACE_MODEL_PATH = "models/blaze_face_short_range.tflite"
-DEEPFACE_MODEL_NAME = "Facenet512"   # Facenet512: Vector đặc trưng 512 chiều (512-d embedding)
+DEEPFACE_MODEL_NAME = "ArcFace"   # ArcFace: Vector đặc trưng 512 chiều (512-d embedding)
+ARCFACE_THRESHOLD = 0.68          # Ngưỡng Cosine distance: nhỏ hơn 0.68 là cùng một người
+KIOSK_MIN_FACE_WIDTH = 100        # Kích thước mặt tối thiểu (px) để kích hoạt nhận diện
+KIOSK_RESET_DELAY_MS = 3000       # Thời gian giữ kết quả (3s) trước khi reset quét người tiếp theo
 
 FACE_CONFIDENCE = 0.45
 PERSON_CONFIDENCE = 0.5
@@ -95,7 +98,7 @@ ADMIN_WINDOW_HEIGHT = 780
 ADMIN_SIDEBAR_WIDTH = 250
 ADMIN_CAMERA_WIDTH = 520
 ADMIN_CAMERA_HEIGHT = 350
-ADMIN_CAMERA_FPS_DELAY = 15    # ms giữa mỗi frame
+ADMIN_CAMERA_FPS_DELAY = 28    # ms giữa mỗi frame (~35 FPS chuẩn camera, tối ưu CPU/GPU)
 
 
 

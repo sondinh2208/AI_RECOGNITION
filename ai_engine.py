@@ -404,3 +404,53 @@ def check_face_constraints(faces, constraint_box, mp_results, frame_width, frame
         break
     
     return color, status_text, is_locked
+
+
+# ============================================
+# KIOSK FACE RECOGNITION HELPERS
+# ============================================
+def calculate_cosine_distance(vec1, vec2):
+    """
+    Tính khoảng cách Cosine giữa 2 vector đặc trưng (ArcFace/DeepFace).
+    Metric Cosine: distance = 1 - (A . B) / (||A|| * ||B||)
+    Returns:
+        float: 0.0 (giống hệt) đến 2.0 (hoàn toàn khác). Nhỏ hơn 0.68 là cùng một người.
+    """
+    v1 = np.asarray(vec1, dtype=np.float32).flatten()
+    v2 = np.asarray(vec2, dtype=np.float32).flatten()
+    if v1.shape[0] != v2.shape[0] or v1.shape[0] == 0:
+        return 1.0
+    norm1 = np.linalg.norm(v1)
+    norm2 = np.linalg.norm(v2)
+    if norm1 == 0 or norm2 == 0:
+        return 1.0
+    cos_sim = float(np.dot(v1, v2) / (norm1 * norm2))
+    cos_sim = max(-1.0, min(1.0, cos_sim))
+    return float(1.0 - cos_sim)
+
+
+def draw_kiosk_face_box(frame, x1, y1, x2, y2, color=(100, 255, 100), thickness=3, corner_ratio=0.25):
+    """
+    Vẽ khung bounding box hiện đại dạng Corner Brackets [ ] bám theo khuôn mặt,
+    phù hợp giao diện Kiosk Điểm danh công nghệ cao (không dùng mask tối).
+    """
+    w = x2 - x1
+    h = y2 - y1
+    corner_len = max(18, int(min(w, h) * corner_ratio))
+    
+    # Top-Left
+    cv2.line(frame, (x1, y1), (x1 + corner_len, y1), color, thickness)
+    cv2.line(frame, (x1, y1), (x1, y1 + corner_len), color, thickness)
+    
+    # Top-Right
+    cv2.line(frame, (x2, y1), (x2 - corner_len, y1), color, thickness)
+    cv2.line(frame, (x2, y1), (x2, y1 + corner_len), color, thickness)
+    
+    # Bottom-Left
+    cv2.line(frame, (x1, y2), (x1 + corner_len, y2), color, thickness)
+    cv2.line(frame, (x1, y2), (x1, y2 - corner_len), color, thickness)
+    
+    # Bottom-Right
+    cv2.line(frame, (x2, y2), (x2 - corner_len, y2), color, thickness)
+    cv2.line(frame, (x2, y2), (x2, y2 - corner_len), color, thickness)
+
