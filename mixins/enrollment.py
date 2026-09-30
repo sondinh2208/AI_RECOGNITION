@@ -209,7 +209,7 @@ class EnrollmentMixin:
             cam_card, text="Đang khởi tạo camera...",
             font=ctk.CTkFont(size=13), text_color=CTK_TEXT_DIM,
             width=ADMIN_CAMERA_WIDTH, height=ADMIN_CAMERA_HEIGHT,
-            fg_color=("#0f172a", "#080e1a"), corner_radius=8,
+            fg_color=("#e2e8f0", "#080e1a"), corner_radius=8,
         )
         self.camera_label.pack(padx=18, pady=(0, 8))
         

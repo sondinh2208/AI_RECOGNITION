@@ -21,7 +21,7 @@ import customtkinter as ctk
 
 from config import (
     CTK_CARD, CTK_ACCENT, CTK_TEXT, CTK_TEXT_DIM, CTK_PRIMARY,
-    CTK_SUCCESS, CTK_SIDEBAR_HOVER, ADMIN_CAMERA_FPS_DELAY,
+    CTK_SUCCESS, CTK_SIDEBAR_HOVER, CTK_BG_MAIN, ADMIN_CAMERA_FPS_DELAY,
     DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, KIOSK_MIN_FACE_WIDTH,
 )
 from ai_engine import (
@@ -41,7 +41,7 @@ class AttendanceMixin:
           - Bottom Row: Bảng Lịch sử điểm danh gần đây (Recent Attendance History).
         """
         print("[ATTENDANCE] page create start")
-        self.attendance_frame = ctk.CTkFrame(self.pages_container, fg_color="transparent")
+        self.attendance_frame = ctk.CTkFrame(self.pages_container, fg_color=CTK_BG_MAIN)
         self.attendance_frame.grid_columnconfigure(0, weight=1)
         self.attendance_frame.grid_rowconfigure(0, weight=0)
         self.attendance_frame.grid_rowconfigure(1, weight=1)
@@ -79,14 +79,8 @@ class AttendanceMixin:
         # Camera Loading Overlay (Minimal, Non-blocking, Clean)
         # Camera Loading Overlay (Minimal, Non-blocking, Clean)
         print("[ATTENDANCE] placeholder start")
-        mode = ctk.get_appearance_mode()
-        print(f"[THEME] current appearance mode: {mode}")
-        placeholder_bg = "#f1f5f9" if mode == "Light" else "#080d19"
-        cam_bg = "#e2e8f0" if mode == "Light" else "#09101d"
-        print(f"[ATTENDANCE] placeholder background: {placeholder_bg}")
-        print(f"[ATTENDANCE] camera placeholder background: {cam_bg}")
         self.kiosk_cam_overlay = ctk.CTkFrame(
-            cam_display_box, fg_color=("#f1f5f9", "#080d19"), corner_radius=10
+            cam_display_box, fg_color="#080d19", corner_radius=10
         )
         overlay_content = ctk.CTkFrame(self.kiosk_cam_overlay, fg_color="transparent")
         overlay_content.place(relx=0.5, rely=0.5, anchor="center")
@@ -417,6 +411,15 @@ class AttendanceMixin:
         for child in self.kiosk_history_rows_container.winfo_children():
             child.destroy()
             
+        if not self.attendance_history:
+            empty_lbl = ctk.CTkLabel(
+                self.kiosk_history_rows_container,
+                text="Chưa có lượt điểm danh nào",
+                font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM
+            )
+            empty_lbl.pack(pady=10)
+            return
+
         for i, item in enumerate(self.attendance_history[:5]):
             bg = ("#ffffff", "#0d1522") if i % 2 == 0 else ("#f8fafc", "#111c2e")
             row = ctk.CTkFrame(
@@ -468,11 +471,17 @@ class AttendanceMixin:
             b.pack(side="left", padx=8)
 
     def _add_attendance_record(self, record):
-        """Thêm bản ghi điểm danh mới và cập nhật bảng."""
+        """Thêm bản ghi điểm danh mới và cập nhật cả 2 bảng (Recent & Full History)."""
         self.attendance_history.insert(0, record)
-        if len(self.attendance_history) > 20:
+        if len(self.attendance_history) > 100:
             self.attendance_history.pop()
         self._render_recent_attendance_table()
+        if hasattr(self, '_reload_full_history'):
+            self._reload_full_history()
+        if hasattr(self, '_save_attendance_history'):
+            self._save_attendance_history()
+        if hasattr(self, '_reload_dashboard_stats'):
+            self._reload_dashboard_stats()
 
     def _start_kiosk_worker(self):
         """Khởi động luồng đọc camera Kiosk với token bảo vệ chống xung đột luồng cũ."""
@@ -577,8 +586,7 @@ class AttendanceMixin:
                 new_w = max(1, int(fw * scale))
                 new_h = max(1, int(fh * scale))
                 resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-                is_light = (ctk.get_appearance_mode() == "Light")
-                bg_bgr = (240, 232, 226) if is_light else (29, 16, 9)
+                bg_bgr = (29, 16, 9)
                 canvas = np.full((lbl_h, lbl_w, 3), bg_bgr, dtype=np.uint8)
                 pad_x = (lbl_w - new_w) // 2
                 pad_y = (lbl_h - new_h) // 2
@@ -628,19 +636,19 @@ class AttendanceMixin:
 
     def _show_kiosk_cam_loading(self, text="Đang khởi động camera..."):
         """Hiển thị overlay loading tối giản trên khung camera khi đang khởi tạo hoặc chưa có frame."""
-        mode = ctk.get_appearance_mode()
-        placeholder_bg = "#f1f5f9" if mode == "Light" else "#080d19"
-        cam_bg = "#e2e8f0" if mode == "Light" else "#09101d"
         if hasattr(self, 'kiosk_cam_overlay') and self.kiosk_cam_overlay.winfo_exists():
+            self.kiosk_cam_overlay.configure(fg_color="#080d19")
             if hasattr(self, 'kiosk_cam_overlay_text'):
-                self.kiosk_cam_overlay_text.configure(text=text)
+                self.kiosk_cam_overlay_text.configure(text=text, text_color=CTK_TEXT)
+            if hasattr(self, 'kiosk_cam_overlay_sub'):
+                self.kiosk_cam_overlay_sub.configure(text_color=CTK_TEXT_DIM)
             self.kiosk_cam_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
             self.kiosk_cam_overlay.lift()
             if not getattr(self, '_kiosk_loading_state_visible', False):
                 self._kiosk_loading_state_visible = True
                 print("[ATTENDANCE] loading state shown")
             if hasattr(self, 'lbl_kiosk_cam_status'):
-                self.lbl_kiosk_cam_status.configure(text="Đang khởi động camera...")
+                self.lbl_kiosk_cam_status.configure(text="Đang khởi động camera...", text_color=("#0f172a", "#f8fafc"))
             if hasattr(self, 'lbl_kiosk_cam_dot'):
                 self.lbl_kiosk_cam_dot.configure(text="◌ ", text_color=("#2563eb", "#38bdf8"))
 
@@ -941,7 +949,7 @@ class AttendanceMixin:
             circ_img = make_circular_avatar(pil_img, size=size, border_color=border_color, border_width=3)
             ctk_img = ctk.CTkImage(light_image=circ_img, dark_image=circ_img, size=size)
         else:
-            if not hasattr(self, '_cached_default_avatar_ctk') or border_color != "#cbd5e1":
+            if getattr(self, '_cached_default_avatar_ctk', None) is None or border_color != "#cbd5e1":
                 light_border = "#cbd5e1" if border_color == "#cbd5e1" else border_color
                 dark_border = "#334155" if border_color == "#cbd5e1" else border_color
                 light_avatar = create_default_avatar(size=size, bg_color="#e2e8f0", border_color=light_border)
@@ -953,5 +961,6 @@ class AttendanceMixin:
             else:
                 ctk_img = self._cached_default_avatar_ctk
             
-        self.kiosk_avatar_label.configure(image=ctk_img, text="")
-        self.kiosk_avatar_label.image = ctk_img
+        if ctk_img is not None:
+            self.kiosk_avatar_label.configure(image=ctk_img, text="")
+            self.kiosk_avatar_label.image = ctk_img

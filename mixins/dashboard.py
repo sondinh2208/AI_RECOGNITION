@@ -13,7 +13,7 @@ import customtkinter as ctk
 
 from config import (
     CTK_CARD, CTK_ACCENT, CTK_TEXT, CTK_TEXT_DIM, CTK_SIDEBAR_HOVER,
-    DATA_FACES_DIR,
+    CTK_BG_MAIN, DATA_FACES_DIR,
 )
 
 
@@ -22,7 +22,7 @@ class DashboardMixin:
 
     def _build_dashboard_page(self):
         """Trang tổng quan (Dashboard) hệ thống."""
-        self.dashboard_frame = ctk.CTkFrame(self.pages_container, fg_color="transparent")
+        self.dashboard_frame = ctk.CTkFrame(self.pages_container, fg_color=CTK_BG_MAIN)
         
         # Stats row
         stats_frame = ctk.CTkFrame(self.dashboard_frame, fg_color="transparent")
@@ -44,8 +44,9 @@ class DashboardMixin:
             ctk.CTkLabel(tbox, text=sub, font=ctk.CTkFont(size=10), text_color=CTK_TEXT_DIM, anchor="w").pack(fill="x")
             return lbl_v
             
+        total_db = len(list(Path(DATA_FACES_DIR).glob("*.jpg"))) if Path(DATA_FACES_DIR).exists() else 0
         self.lbl_dash_kiosk = create_dash_card(0, "🔲", "Kiosk Điểm danh", "Hoạt động", "YOLOv8 + ArcFace", "#10b981")
-        self.lbl_dash_users = create_dash_card(1, "👥", "Người đăng ký", "9 hồ sơ", "Đã số hóa khuôn mặt", "#3b82f6")
+        self.lbl_dash_users = create_dash_card(1, "👥", "Người đăng ký", f"{total_db} hồ sơ", "Đã số hóa khuôn mặt", "#3b82f6")
         self.lbl_dash_att = create_dash_card(2, "🕒", "Lượt điểm danh", f"{len(self.attendance_history)} lượt", "Trong phiên làm việc", "#f59e0b")
         self.lbl_dash_engine = create_dash_card(3, "⚡", "Ngưỡng AI", "0.68", "ArcFace Cosine Metric", "#8b5cf6")
         

@@ -6,6 +6,7 @@ warm-up ngầm và giải phóng tài nguyên hệ thống.
 ==============================================================
 """
 
+import json
 import pickle
 import threading
 from pathlib import Path
@@ -54,41 +55,9 @@ class CoreMixin:
         self.kiosk_reset_timer = None
         self.kiosk_thread = None
         
-        # --- Dữ liệu lịch sử điểm danh gần đây ---
-        self.attendance_history = [
-            {
-                "time": "09:24:17 22/09/2025",
-                "name": "Nguyễn Văn A",
-                "id": "NV001",
-                "role": "Kỹ sư phần mềm",
-                "dept": "Phòng IT",
-                "status": "Thành công"
-            },
-            {
-                "time": "08:56:03 22/09/2025",
-                "name": "Trần Thị B",
-                "id": "NV015",
-                "role": "Nhân viên kinh doanh",
-                "dept": "Phòng Kinh doanh",
-                "status": "Thành công"
-            },
-            {
-                "time": "08:52:11 22/09/2025",
-                "name": "Lê Văn C",
-                "id": "NV023",
-                "role": "Kỹ thuật viên",
-                "dept": "Phòng Kỹ thuật",
-                "status": "Thành công"
-            },
-            {
-                "time": "08:47:36 22/09/2025",
-                "name": "Phạm Thị D",
-                "id": "NV034",
-                "role": "Nhân viên Marketing",
-                "dept": "Phòng Marketing",
-                "status": "Thành công"
-            }
-        ]
+        # --- Dữ liệu lịch sử điểm danh thực tế (lưu bền vững trên đĩa) ---
+        self.attendance_history = []
+        self._load_attendance_history()
         
         # --- Biến trạng thái AI Enrollment ---
         self.is_face_valid = False
@@ -134,17 +103,67 @@ class CoreMixin:
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
     def _reload_embeddings_cache(self):
-        """Nạp dữ liệu vector embeddings vào RAM để truy vấn siêu tốc, tránh đọc file đĩa lặp đi lặp lại."""
+        """
+        Nạp dữ liệu vector embeddings vào RAM để truy vấn siêu tốc.
+        Tự động đối chiếu và dọn dẹp các vector mồ côi (nhân viên đã bị xóa ảnh khỏi database).
+        """
         try:
             p = Path("data/embeddings.pkl")
             if p.exists():
                 with open(p, "rb") as f:
-                    self.embeddings_cache = pickle.load(f)
+                    data = pickle.load(f)
+                    
+                # Quét các ID nhân viên còn ảnh hợp lệ trong DATA_FACES_DIR
+                faces_dir = Path(DATA_FACES_DIR)
+                active_ids = set()
+                if faces_dir.exists():
+                    for img_f in faces_dir.glob("*.jpg"):
+                        stem = img_f.stem
+                        e_id = stem.split("@")[0] if "@" in stem else stem.split("_")[0]
+                        active_ids.add(e_id.strip().lower())
+                        
+                cleaned_data = {}
+                need_resave = False
+                for emp_id, emp_val in data.items():
+                    if str(emp_id).strip().lower() in active_ids:
+                        cleaned_data[emp_id] = emp_val
+                    else:
+                        print(f"[AI CACHE] Tự động loại bỏ vector mồ côi của nhân viên đã xóa: {emp_id} ({emp_val.get('name')})")
+                        need_resave = True
+                        
+                if need_resave:
+                    with open(p, "wb") as f:
+                        pickle.dump(cleaned_data, f)
+                    print(f"[AI CACHE] Đã đồng bộ lại embeddings.pkl (còn {len(cleaned_data)} nhân viên hoạt động).")
+                    
+                self.embeddings_cache = cleaned_data
             else:
                 self.embeddings_cache = {}
         except Exception as e:
             print(f"[AI] Lỗi nạp embeddings cache: {e}")
             self.embeddings_cache = {}
+
+    def _load_attendance_history(self):
+        """Nạp lịch sử điểm danh từ file data/attendance_history.json."""
+        hist_file = Path("data/attendance_history.json")
+        if hist_file.exists():
+            try:
+                with open(hist_file, "r", encoding="utf-8") as f:
+                    self.attendance_history = json.load(f)
+                    return
+            except Exception as e:
+                print(f"[HISTORY] Lỗi đọc file lịch sử: {e}")
+        self.attendance_history = []
+
+    def _save_attendance_history(self):
+        """Lưu lịch sử điểm danh bền vững vào file data/attendance_history.json."""
+        try:
+            hist_file = Path("data/attendance_history.json")
+            hist_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(hist_file, "w", encoding="utf-8") as f:
+                json.dump(self.attendance_history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[HISTORY] Lỗi lưu file lịch sử: {e}")
 
     def _warmup_deepface_async(self):
         """Khởi động sẵn ArcFace & YOLOv8 ngầm để tab Kiosk không bị đơ giật khi nhận diện lần đầu."""

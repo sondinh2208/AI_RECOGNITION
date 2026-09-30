@@ -11,7 +11,7 @@ from datetime import datetime
 import customtkinter as ctk
 
 from config import (
-    CTK_BG_DARK, CTK_ACCENT, CTK_PRIMARY, CTK_SUCCESS, CTK_TEXT,
+    CTK_BG_DARK, CTK_BG_MAIN, CTK_ACCENT, CTK_PRIMARY, CTK_SUCCESS, CTK_TEXT,
     CTK_TEXT_DIM, CTK_SIDEBAR_HOVER, CTK_BTN_ACTIVE, ADMIN_SIDEBAR_WIDTH,
 )
 
@@ -117,19 +117,6 @@ class NavigationMixin:
             font=ctk.CTkFont(size=10), text_color=CTK_TEXT_DIM
         ).pack(fill="x", padx=12, pady=(0, 10))
         
-        # Theme switcher
-        theme_row = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        theme_row.pack(fill="x", padx=14, pady=(0, 14))
-        
-        self.appearance_mode_menu = ctk.CTkOptionMenu(
-            theme_row, values=["Dark", "Light"],
-            command=self._change_appearance_mode_event,
-            fg_color=("#f1f5f9", "#111c2e"), button_color=CTK_ACCENT,
-            text_color=CTK_TEXT, corner_radius=8, height=30
-        )
-        self.appearance_mode_menu.pack(fill="x")
-        self.appearance_mode_menu.set("Dark")
-
     def _highlight_nav(self, active_page_id):
         """Đổi màu nút đang active trên sidebar."""
         for pid, btn in self.nav_buttons.items():
@@ -147,13 +134,6 @@ class NavigationMixin:
                     text_color=CTK_TEXT,
                     font=ctk.CTkFont(size=13),
                 )
-                
-    def _change_appearance_mode_event(self, new_appearance_mode: str):
-        ctk.set_appearance_mode(new_appearance_mode)
-        self._highlight_nav(self.current_page)
-        if self.current_page == "database" and hasattr(self, "search_entry"):
-            self._load_database_to_scrollable(self.search_entry.get().lower())
-
     def _navigate(self, page_id):
         """Xử lý chuyển trang."""
         self.current_page = page_id
@@ -177,7 +157,7 @@ class NavigationMixin:
             self._build_attendance_page()
             self.page_frames["attendance"] = self.attendance_frame
         elif page_id == "add_employee":
-            self.main_frame = ctk.CTkFrame(self.pages_container, fg_color="transparent")
+            self.main_frame = ctk.CTkFrame(self.pages_container, fg_color=CTK_BG_MAIN)
             self.main_frame.grid_columnconfigure(0, weight=1)
             self.main_frame.grid_columnconfigure(1, weight=0)
             self.main_frame.grid_rowconfigure(0, weight=1)
@@ -185,7 +165,7 @@ class NavigationMixin:
             self._build_camera_column()
             self.page_frames["add_employee"] = self.main_frame
         elif page_id == "database":
-            self.database_frame = ctk.CTkFrame(self.pages_container, fg_color="transparent")
+            self.database_frame = ctk.CTkFrame(self.pages_container, fg_color=CTK_BG_MAIN)
             self._build_database_page()
             self.page_frames["database"] = self.database_frame
         elif page_id == "history":
@@ -200,10 +180,8 @@ class NavigationMixin:
     def _show_page(self, page_id):
         """
         Hiển thị frame được chọn từ Page Cache mượt mà trong 0ms:
-        - Sử dụng Stacked Render-First (Grid + Lift trước, ẩn trang cũ sau qua after_idle).
-        - Loại bỏ 100% hiện tượng flash/black void khi chuyển tab.
-        - Không block UI Thread.
-        - Tách bạch rõ 3 mốc: GRID -> PAINT (after_idle) -> CAMERA START.
+        - Ẩn ngay trang cũ nếu có layout header khác biệt để chống bóng mờ/chồng lấn text.
+        - update_idletasks() vẽ tức thì bề mặt màu chuẩn, triệt tiêu 100% khung đen.
         """
         self.current_page = page_id
         
@@ -244,11 +222,21 @@ class NavigationMixin:
             else:
                 print("[ATTENDANCE] page CREATE")
 
-        # 3. Stacked Transition: Grid trang mới TRƯỚC và LIFT lên trên cùng
+        # 3. Chuyển trang dứt khoát không để lọt bóng trang cũ
         if target_page is not None:
             if page_id == "attendance":
                 print("[NAV] before attendance grid")
                 print("[NAV] Attendance page grid")
+
+            # Ẩn trang cũ ngay lập tức để không bị chồng chéo tiêu đề
+            if old_pid and old_pid != page_id:
+                old_frame = self.page_frames.get(old_pid)
+                if old_frame:
+                    old_frame.grid_remove()
+            else:
+                for pid, frame in self.page_frames.items():
+                    if pid != page_id:
+                        frame.grid_remove()
 
             target_page.grid(row=0, column=0, sticky="nswe")
             target_page.lift()
@@ -256,33 +244,29 @@ class NavigationMixin:
             if page_id == "attendance":
                 print("[NAV] after attendance grid")
                 print("[NAV] attendance grid complete")
+                if hasattr(self, '_render_recent_attendance_table'):
+                    self._render_recent_attendance_table()
+                if hasattr(self, 'set_idle_state'):
+                    self._is_kiosk_ui_idle = False
+                    self.set_idle_state()
+                if getattr(self, 'kiosk_latest_pil', None) is None and hasattr(self, '_show_kiosk_cam_loading'):
+                    self._show_kiosk_cam_loading("Đang khởi động camera...")
+            elif page_id == "history":
+                if hasattr(self, '_reload_full_history'):
+                    self._reload_full_history()
 
-            # Ẩn trang cũ một cách êm ái trên idle tick kế tiếp (sau khi trang mới đã vẽ phủ lên trên)
-            # Giúp triệt tiêu hoàn toàn khoảng hở màu đen (Black Void) do container transparent
-            if old_pid and old_pid != page_id:
-                old_frame = self.page_frames.get(old_pid)
-                if old_frame:
-                    def hide_old_frame(f=old_frame, pid=old_pid):
-                        if self.current_page != pid:
-                            f.grid_remove()
-                    self.after_idle(hide_old_frame)
-            else:
-                for pid, frame in self.page_frames.items():
-                    if pid != page_id:
-                        frame.grid_remove()
+            # Ép Tkinter repaint bề mặt ngay lập tức: 0ms visual delay, không vùng đen!
+            self.update_idletasks()
 
         self._active_visible_page = page_id
 
-        # 4. RENDER-FIRST: Nhường quyền ngay lập tức cho Tkinter Event Loop để repaint
-        #    khung giao diện hoàn chỉnh trước, sau đó mới kích hoạt các tác vụ hậu kỳ.
+        # 4. Hậu kỳ non-blocking
         if page_id == "attendance":
             print("[ATTENDANCE] page visible")
             self._first_valid_frame_logged = False
-            if getattr(self, 'kiosk_latest_pil', None) is None and hasattr(self, '_show_kiosk_cam_loading'):
-                self._show_kiosk_cam_loading("Đang khởi động camera...")
             print("[NAV] Attendance show end")
             
-            # Giai đoạn 2: Lắng nghe after_idle để biết chính xác thời điểm Tkinter hoàn thành repaint
+            # Giai đoạn 2: Lắng nghe after_idle để khởi động camera worker
             def _on_attendance_idle_repaint():
                 print("[NAV] attendance after_idle reached")
                 print("[NAV] Attendance deferred start")
@@ -326,6 +310,8 @@ class NavigationMixin:
                 self._load_database_to_scrollable(self.search_entry.get().lower())
         elif page_id == "dashboard" and hasattr(self, "_reload_dashboard_stats"):
             self._reload_dashboard_stats()
+        elif page_id == "history" and hasattr(self, "_reload_full_history"):
+            self._reload_full_history()
             
         # Điều phối luồng Camera Non-blocking
         if page_id == "attendance":
@@ -355,7 +341,7 @@ class NavigationMixin:
 
     def _build_main_area(self):
         """Xây dựng khu vực chính gồm Header Bar và Container các Trang."""
-        self.main_container = ctk.CTkFrame(self, fg_color="transparent")
+        self.main_container = ctk.CTkFrame(self, fg_color=CTK_BG_MAIN)
         self.main_container.grid(row=0, column=1, sticky="nswe", padx=18, pady=(16, 16))
         
         self.grid_columnconfigure(1, weight=1)
@@ -368,7 +354,7 @@ class NavigationMixin:
         # ==========================================
         # TOP APP BAR (Tiêu đề, Đồng hồ, Profile Admin)
         # ==========================================
-        self.header_bar = ctk.CTkFrame(self.main_container, fg_color="transparent", height=56)
+        self.header_bar = ctk.CTkFrame(self.main_container, fg_color=CTK_BG_MAIN, height=56)
         self.header_bar.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         self.header_bar.grid_columnconfigure(0, weight=1)
         self.header_bar.grid_columnconfigure(1, weight=0)
@@ -427,7 +413,7 @@ class NavigationMixin:
         # ==========================================
         # PAGES CONTAINER & PAGE CACHE
         # ==========================================
-        self.pages_container = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.pages_container = ctk.CTkFrame(self.main_container, fg_color=CTK_BG_MAIN)
         self.pages_container.grid(row=1, column=0, sticky="nswe")
         self.pages_container.grid_columnconfigure(0, weight=1)
         self.pages_container.grid_rowconfigure(0, weight=1)
@@ -435,9 +421,16 @@ class NavigationMixin:
         # Cache các trang (Create Once)
         self.page_frames = {}
         
-        # Lazy Initialization: Chỉ dựng trước trang Kiosk Điểm danh để ứng dụng khởi động tức thì
+        # Lazy Initialization: Dựng trước trang Kiosk Điểm danh để ứng dụng khởi động tức thì
         self._get_or_create_page("attendance")
         self._show_page("attendance")
+        
+        # Pre-warm các trang còn lại trong background/idle để chuyển tab tức thì
+        def _prewarm_other_pages():
+            for pid in ["dashboard", "database", "history", "add_employee"]:
+                if pid not in self.page_frames:
+                    self._get_or_create_page(pid)
+        self.after(200, _prewarm_other_pages)
 
     def _update_live_clock(self):
         """Cập nhật ngày và đồng hồ số thời gian thực trên Top Header Bar."""

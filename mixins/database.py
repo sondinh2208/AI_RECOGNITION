@@ -11,6 +11,7 @@ Quản lý cơ sở dữ liệu nhân viên / người đăng ký:
 
 import os
 import re
+import pickle
 import threading
 from pathlib import Path
 from PIL import Image
@@ -309,16 +310,91 @@ class DatabaseMixin:
         btn_del = ctk.CTkButton(
             action_frame, text="🗑", width=30, height=28,
             fg_color="transparent", corner_radius=4, border_width=1, border_color=CTK_ACCENT, text_color=("#ef4444", "#fca5a5"), hover_color=("#fee2e2", "#7f1d1d"),
-            command=lambda: self._delete_single_employee(emp_data["img_path"], row_frame)
+            command=lambda: self._delete_single_employee(emp_data, row_frame)
         )
         btn_del.pack(side="left", padx=2)
 
-    def _delete_single_employee(self, img_path, row_frame):
-        try:
-            if img_path.exists():
-                os.remove(img_path)
-                print(f"[DB] Đã xóa: {img_path}")
-            # Tải lại danh sách để tự động cập nhật số liệu trên thẻ Stats
-            self._load_database_to_scrollable(self.search_entry.get().lower())
-        except Exception as e:
-            print(f"[DB] Lỗi xóa file {img_path}: {e}")
+    def _delete_single_employee(self, emp_info, row_frame=None):
+        """
+        Xóa hoàn toàn hồ sơ nhân viên:
+        - Xóa ảnh trên đĩa ở tất cả các thư mục: data/faces, database/images, images.
+        - Xóa vector đặc trưng khỏi file data/embeddings.pkl.
+        - Đồng bộ ngay lập tức bộ nhớ RAM self.embeddings_cache.
+        - Reset màn hình điểm danh nếu đang hiển thị người này.
+        - Tải lại bảng danh sách và cập nhật số liệu thống kê.
+        """
+        emp_id = None
+        img_path = None
+        emp_name = "Nhân viên"
+        
+        if isinstance(emp_info, dict):
+            emp_id = emp_info.get("id")
+            img_path = emp_info.get("img_path")
+            emp_name = emp_info.get("name", "Nhân viên")
+        elif isinstance(emp_info, (str, Path)):
+            p = Path(emp_info)
+            if p.suffix.lower() in [".jpg", ".jpeg", ".png"]:
+                img_path = p
+                stem = p.stem
+                emp_id = stem.split("@")[0] if "@" in stem else stem.split("_")[0]
+            else:
+                emp_id = str(emp_info)
+        
+        print(f"[DB] Bắt đầu xóa nhân viên: ID={emp_id} ({emp_name})")
+        
+        # 1. Xóa tất cả các file ảnh liên quan ở các thư mục
+        target_folders = [DATA_FACES_DIR, "database/images", "images"]
+        for fld in target_folders:
+            f_dir = Path(fld)
+            if f_dir.exists() and emp_id and emp_id != "Unknown":
+                for f in f_dir.glob(f"{emp_id}*"):
+                    try:
+                        f.unlink(missing_ok=True)
+                        print(f"[DB] Đã xóa file ảnh: {f}")
+                    except Exception as fe:
+                        print(f"[DB] Lỗi xóa file ảnh {f}: {fe}")
+                        
+        if img_path:
+            p_img = Path(img_path)
+            if p_img.exists():
+                try:
+                    p_img.unlink(missing_ok=True)
+                    print(f"[DB] Đã xóa ảnh gốc: {p_img}")
+                except Exception as fe:
+                    print(f"[DB] Lỗi xóa ảnh gốc {p_img}: {fe}")
+
+        # 2. Xóa vector embedding khỏi data/embeddings.pkl
+        emb_file = Path("data/embeddings.pkl")
+        if emb_file.exists() and emp_id:
+            try:
+                with open(emb_file, "rb") as f:
+                    embeddings_data = pickle.load(f)
+                
+                modified = False
+                for k in list(embeddings_data.keys()):
+                    if str(k).strip().lower() == str(emp_id).strip().lower():
+                        del embeddings_data[k]
+                        modified = True
+                        print(f"[DB] Đã xóa vector của {k} ({emp_name}) khỏi data/embeddings.pkl")
+                
+                if modified:
+                    with open(emb_file, "wb") as f:
+                        pickle.dump(embeddings_data, f)
+            except Exception as pe:
+                print(f"[DB] Lỗi cập nhật embeddings.pkl: {pe}")
+
+        # 3. Đồng bộ lại bộ nhớ RAM self.embeddings_cache ngay lập tức
+        if hasattr(self, '_reload_embeddings_cache'):
+            self._reload_embeddings_cache()
+
+        # 4. Nếu Kiosk đang nhận diện người này, reset ngay về Idle
+        if hasattr(self, 'current_page') and self.current_page == "attendance":
+            if hasattr(self, 'set_idle_state'):
+                self._is_kiosk_ui_idle = False
+                self.set_idle_state()
+
+        # 5. Tải lại danh sách để tự động cập nhật số liệu trên thẻ Stats và Bảng
+        query = self.search_entry.get().lower() if hasattr(self, 'search_entry') else ""
+        self._load_database_to_scrollable(query)
+        if hasattr(self, '_reload_dashboard_stats'):
+            self._reload_dashboard_stats()

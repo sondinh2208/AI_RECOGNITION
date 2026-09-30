@@ -12,7 +12,7 @@ import customtkinter as ctk
 
 from config import (
     CTK_CARD, CTK_ACCENT, CTK_TEXT, CTK_TEXT_DIM, CTK_SUCCESS,
-    CTK_SIDEBAR_HOVER,
+    CTK_SIDEBAR_HOVER, CTK_BG_MAIN,
 )
 
 
@@ -21,7 +21,7 @@ class HistoryMixin:
 
     def _build_history_page(self):
         """Trang xem toàn bộ lịch sử điểm danh nhân sự."""
-        self.history_frame = ctk.CTkFrame(self.pages_container, fg_color="transparent")
+        self.history_frame = ctk.CTkFrame(self.pages_container, fg_color=CTK_BG_MAIN)
         
         card = ctk.CTkFrame(self.history_frame, fg_color=CTK_CARD, corner_radius=12, border_width=1, border_color=CTK_ACCENT)
         card.pack(fill="both", expand=True, padx=4, pady=4)
@@ -65,10 +65,19 @@ class HistoryMixin:
 
     def _reload_full_history(self):
         """Tải lại danh sách lịch sử điểm danh đầy đủ."""
-        if not hasattr(self, 'history_full_scroll'):
+        if not hasattr(self, 'history_full_scroll') or not self.history_full_scroll.winfo_exists():
             return
         for w in self.history_full_scroll.winfo_children():
             w.destroy()
+            
+        if not self.attendance_history:
+            empty_box = ctk.CTkFrame(self.history_full_scroll, fg_color="transparent")
+            empty_box.pack(fill="both", expand=True, pady=40)
+            ctk.CTkLabel(
+                empty_box, text="Chưa có lượt điểm danh nào được ghi nhận trong hệ thống",
+                font=ctk.CTkFont(size=13), text_color=CTK_TEXT_DIM
+            ).pack()
+            return
             
         for idx, rec in enumerate(self.attendance_history):
             bg_c = ("#ffffff", "#0e1828") if idx % 2 == 0 else ("#f8fafc", "#080f1b")
@@ -88,10 +97,14 @@ class HistoryMixin:
             ctk.CTkLabel(row, text=rec.get("role", ""), font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w").grid(row=0, column=3, padx=12, pady=10, sticky="w")
             ctk.CTkLabel(row, text=rec.get("dept", ""), font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w").grid(row=0, column=4, padx=12, pady=10, sticky="w")
             
+            is_success = "Thành công" in rec.get("status", "")
+            badge_fg = ("#ecfdf5", "#064e3b") if is_success else ("#fee2e2", "#7f1d1d")
+            badge_tx = CTK_SUCCESS if is_success else ("#ef4444", "#fca5a5")
+            icon = "● " if is_success else "✕ "
             badge = ctk.CTkLabel(
-                row, text="● " + rec.get("status", "Thành công"),
+                row, text=icon + rec.get("status", "Thành công"),
                 font=ctk.CTkFont(size=11, weight="bold"),
-                text_color=CTK_SUCCESS, fg_color=("#ecfdf5", "#064e3b"),
+                text_color=badge_tx, fg_color=badge_fg,
                 corner_radius=12, width=100, height=24
             )
             badge.grid(row=0, column=5, padx=12, pady=10, sticky="w")
