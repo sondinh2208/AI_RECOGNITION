@@ -64,7 +64,7 @@ class AttendanceMixin:
         cam_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         
         # Khung hiển thị Video với overlay badge (Chuẩn tỉ lệ camera, không méo, không phóng to mặt)
-        cam_display_box = ctk.CTkFrame(cam_card, fg_color=("#0f172a", "#09101d"), corner_radius=10, height=315)
+        cam_display_box = ctk.CTkFrame(cam_card, fg_color=("#e2e8f0", "#09101d"), corner_radius=10, height=315)
         cam_display_box.pack(fill="x", padx=12, pady=(12, 10))
         cam_display_box.pack_propagate(False)
         
@@ -77,65 +77,89 @@ class AttendanceMixin:
         self.kiosk_camera_label.place(relx=0, rely=0, relwidth=1, relheight=1)
         
         # Camera Loading Overlay (Minimal, Non-blocking, Clean)
+        # Camera Loading Overlay (Minimal, Non-blocking, Clean)
         print("[ATTENDANCE] placeholder start")
+        mode = ctk.get_appearance_mode()
+        print(f"[THEME] current appearance mode: {mode}")
+        placeholder_bg = "#f1f5f9" if mode == "Light" else "#080d19"
+        cam_bg = "#e2e8f0" if mode == "Light" else "#09101d"
+        print(f"[ATTENDANCE] placeholder background: {placeholder_bg}")
+        print(f"[ATTENDANCE] camera placeholder background: {cam_bg}")
         self.kiosk_cam_overlay = ctk.CTkFrame(
-            cam_display_box, fg_color=("#0a0f1d", "#080d19"), corner_radius=10
+            cam_display_box, fg_color=("#f1f5f9", "#080d19"), corner_radius=10
         )
         overlay_content = ctk.CTkFrame(self.kiosk_cam_overlay, fg_color="transparent")
         overlay_content.place(relx=0.5, rely=0.5, anchor="center")
         
-        self.kiosk_cam_spinner = ctk.CTkLabel(
-            overlay_content, text="◌",
-            font=ctk.CTkFont(size=26), text_color=("#38bdf8", "#38bdf8")
+        # Camera Icon Badge (Minimalist & Clean)
+        cam_icon_badge = ctk.CTkFrame(
+            overlay_content, width=52, height=52, corner_radius=26,
+            fg_color=("#e2e8f0", "#131f37"), border_width=1, border_color=("#cbd5e1", "#1e293b")
         )
-        self.kiosk_cam_spinner.pack(pady=(0, 4))
+        cam_icon_badge.pack(pady=(0, 10))
+        cam_icon_badge.pack_propagate(False)
+        
+        self.kiosk_cam_spinner = ctk.CTkLabel(
+            cam_icon_badge, text="📷",
+            font=ctk.CTkFont(size=22), text_color=("#2563eb", "#38bdf8")
+        )
+        self.kiosk_cam_spinner.place(relx=0.5, rely=0.5, anchor="center")
         
         self.kiosk_cam_overlay_text = ctk.CTkLabel(
-            overlay_content, text="Đang kết nối camera...",
-            font=ctk.CTkFont(size=12, weight="bold"), text_color=CTK_TEXT_DIM
+            overlay_content, text="Đang khởi động camera...",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color=CTK_TEXT
         )
-        self.kiosk_cam_overlay_text.pack()
+        self.kiosk_cam_overlay_text.pack(pady=(0, 3))
+        
+        self.kiosk_cam_overlay_sub = ctk.CTkLabel(
+            overlay_content, text="Vui lòng chờ trong giây lát",
+            font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM
+        )
+        self.kiosk_cam_overlay_sub.pack()
         
         # Hiển thị loading overlay mặc định nếu camera chưa có frame
         if getattr(self, 'kiosk_latest_frame', None) is None:
             self.kiosk_cam_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
             self.kiosk_cam_overlay.lift()
+            self._kiosk_loading_state_visible = True
+            print("[ATTENDANCE] loading state shown")
         print("[ATTENDANCE] placeholder end")
         
         # Overlay top bar (Camera đang hoạt động & FPS / Settings)
         overlay_bar = ctk.CTkFrame(cam_display_box, fg_color="transparent")
         overlay_bar.place(relx=0.02, rely=0.03, relwidth=0.96)
         
-        # Badge Camera đang hoạt động (Green pill)
+        # Badge Camera đang hoạt động / khởi động (Theme-aware Pill)
         status_pill = ctk.CTkFrame(
             overlay_bar, corner_radius=14,
-            fg_color=("#0f172a", "#0f172a"), border_width=1, border_color=("#334155", "#334155")
+            fg_color=("#ffffff", "#0f172a"), border_width=1, border_color=("#cbd5e1", "#334155")
         )
         status_pill.pack(side="left")
-        ctk.CTkLabel(
-            status_pill, text="● ", font=ctk.CTkFont(size=10, weight="bold"),
-            text_color="#10b981"
-        ).pack(side="left", padx=(8, 0), pady=3)
+        self.lbl_kiosk_cam_dot = ctk.CTkLabel(
+            status_pill, text="◌ ", font=ctk.CTkFont(size=10, weight="bold"),
+            text_color=("#2563eb", "#38bdf8")
+        )
+        self.lbl_kiosk_cam_dot.pack(side="left", padx=(8, 0), pady=3)
         self.lbl_kiosk_cam_status = ctk.CTkLabel(
-            status_pill, text="Camera đang hoạt động",
-            font=ctk.CTkFont(size=11, weight="bold"), text_color="#f8fafc"
+            status_pill, text="Đang khởi động camera...",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color=("#0f172a", "#f8fafc")
         )
         self.lbl_kiosk_cam_status.pack(side="left", padx=(0, 10), pady=3)
         
         # Right: FPS & Gear icon
         fps_pill = ctk.CTkFrame(
             overlay_bar, corner_radius=14,
-            fg_color=("#0f172a", "#0f172a"), border_width=1, border_color=("#334155", "#334155")
+            fg_color=("#ffffff", "#0f172a"), border_width=1, border_color=("#cbd5e1", "#334155")
         )
         fps_pill.pack(side="right")
         self.lbl_kiosk_fps = ctk.CTkLabel(
-            fps_pill, text="FPS: 15",
-            font=ctk.CTkFont(size=11, weight="bold"), text_color="#f8fafc"
+            fps_pill, text="FPS: --",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color=("#0f172a", "#f8fafc")
         )
         self.lbl_kiosk_fps.pack(side="left", padx=(10, 4), pady=3)
         ctk.CTkLabel(
             fps_pill, text="⚙",
-            font=ctk.CTkFont(size=11), text_color="#94a3b8"
+            font=ctk.CTkFont(size=11), text_color=("#64748b", "#94a3b8")
         ).pack(side="left", padx=(0, 8), pady=3)
         
         # Banner hướng dẫn quét khuôn mặt (dưới video)
@@ -553,7 +577,9 @@ class AttendanceMixin:
                 new_w = max(1, int(fw * scale))
                 new_h = max(1, int(fh * scale))
                 resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-                canvas = np.zeros((lbl_h, lbl_w, 3), dtype=np.uint8)
+                is_light = (ctk.get_appearance_mode() == "Light")
+                bg_bgr = (240, 232, 226) if is_light else (29, 16, 9)
+                canvas = np.full((lbl_h, lbl_w, 3), bg_bgr, dtype=np.uint8)
                 pad_x = (lbl_w - new_w) // 2
                 pad_y = (lbl_h - new_h) // 2
                 canvas[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = resized
@@ -585,9 +611,9 @@ class AttendanceMixin:
                 
             pil_img = getattr(self, 'kiosk_latest_pil', None)
             if pil_img is not None:
-                if not getattr(self, '_first_ui_frame_logged', False):
-                    print("[ATTENDANCE] first UI frame")
-                    self._first_ui_frame_logged = True
+                if not getattr(self, '_first_valid_frame_logged', False):
+                    print("[ATTENDANCE] first valid frame received")
+                    self._first_valid_frame_logged = True
                 self._hide_kiosk_cam_loading()
                 ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(cur_w, cur_h))
                 self.kiosk_camera_label.configure(image=ctk_img, text="")
@@ -602,16 +628,33 @@ class AttendanceMixin:
 
     def _show_kiosk_cam_loading(self, text="Đang khởi động camera..."):
         """Hiển thị overlay loading tối giản trên khung camera khi đang khởi tạo hoặc chưa có frame."""
+        mode = ctk.get_appearance_mode()
+        placeholder_bg = "#f1f5f9" if mode == "Light" else "#080d19"
+        cam_bg = "#e2e8f0" if mode == "Light" else "#09101d"
         if hasattr(self, 'kiosk_cam_overlay') and self.kiosk_cam_overlay.winfo_exists():
             if hasattr(self, 'kiosk_cam_overlay_text'):
                 self.kiosk_cam_overlay_text.configure(text=text)
             self.kiosk_cam_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
             self.kiosk_cam_overlay.lift()
+            if not getattr(self, '_kiosk_loading_state_visible', False):
+                self._kiosk_loading_state_visible = True
+                print("[ATTENDANCE] loading state shown")
+            if hasattr(self, 'lbl_kiosk_cam_status'):
+                self.lbl_kiosk_cam_status.configure(text="Đang khởi động camera...")
+            if hasattr(self, 'lbl_kiosk_cam_dot'):
+                self.lbl_kiosk_cam_dot.configure(text="◌ ", text_color=("#2563eb", "#38bdf8"))
 
     def _hide_kiosk_cam_loading(self):
         """Ẩn overlay loading khi frame camera đầu tiên đã sẵn sàng."""
         if hasattr(self, 'kiosk_cam_overlay') and self.kiosk_cam_overlay.winfo_exists():
             self.kiosk_cam_overlay.place_forget()
+            if getattr(self, '_kiosk_loading_state_visible', False):
+                self._kiosk_loading_state_visible = False
+                print("[ATTENDANCE] loading state hidden")
+            if hasattr(self, 'lbl_kiosk_cam_status'):
+                self.lbl_kiosk_cam_status.configure(text="Camera đang hoạt động")
+            if hasattr(self, 'lbl_kiosk_cam_dot'):
+                self.lbl_kiosk_cam_dot.configure(text="● ", text_color="#10b981")
 
     def _toggle_kiosk_camera(self):
         """Tạm dừng / Tiếp tục quét camera Kiosk."""
@@ -829,6 +872,7 @@ class AttendanceMixin:
         
         # Tránh re-configure 15 widgets thừa thãi nếu UI vốn đã ở trạng thái IDLE
         if getattr(self, '_is_kiosk_ui_idle', False):
+            print("[ATTENDANCE] idle state applied")
             print("[ATTENDANCE] set_idle_state end")
             return
             
@@ -858,6 +902,7 @@ class AttendanceMixin:
         
         self._is_kiosk_ui_idle = True
         print("[KIOSK] Đã mở khóa nhận diện (self.is_recognizing = False) - Sẵn sàng quét người tiếp theo.")
+        print("[ATTENDANCE] idle state applied")
         print("[ATTENDANCE] set_idle_state end")
 
     def _reset_kiosk_ui(self):
@@ -897,8 +942,11 @@ class AttendanceMixin:
             ctk_img = ctk.CTkImage(light_image=circ_img, dark_image=circ_img, size=size)
         else:
             if not hasattr(self, '_cached_default_avatar_ctk') or border_color != "#cbd5e1":
-                circ_img = create_default_avatar(size=size, bg_color="#e2e8f0", border_color=border_color)
-                temp_ctk = ctk.CTkImage(light_image=circ_img, dark_image=circ_img, size=size)
+                light_border = "#cbd5e1" if border_color == "#cbd5e1" else border_color
+                dark_border = "#334155" if border_color == "#cbd5e1" else border_color
+                light_avatar = create_default_avatar(size=size, bg_color="#e2e8f0", border_color=light_border)
+                dark_avatar = create_default_avatar(size=size, bg_color="#1e293b", border_color=dark_border)
+                temp_ctk = ctk.CTkImage(light_image=light_avatar, dark_image=dark_avatar, size=size)
                 if border_color == "#cbd5e1":
                     self._cached_default_avatar_ctk = temp_ctk
                 ctk_img = temp_ctk

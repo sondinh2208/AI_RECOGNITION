@@ -276,6 +276,10 @@ class NavigationMixin:
         # 4. RENDER-FIRST: Nhường quyền ngay lập tức cho Tkinter Event Loop để repaint
         #    khung giao diện hoàn chỉnh trước, sau đó mới kích hoạt các tác vụ hậu kỳ.
         if page_id == "attendance":
+            print("[ATTENDANCE] page visible")
+            self._first_valid_frame_logged = False
+            if getattr(self, 'kiosk_latest_pil', None) is None and hasattr(self, '_show_kiosk_cam_loading'):
+                self._show_kiosk_cam_loading("Đang khởi động camera...")
             print("[NAV] Attendance show end")
             
             # Giai đoạn 2: Lắng nghe after_idle để biết chính xác thời điểm Tkinter hoàn thành repaint
@@ -331,6 +335,8 @@ class NavigationMixin:
             self.enrollment_running = True
             self.kiosk_latest_frame = None
             self.kiosk_latest_pil = None
+            self._first_valid_frame_logged = False
+            self._kiosk_loading_state_visible = False
             
             if self.camera_cap is None:
                 self._start_camera()
@@ -344,6 +350,8 @@ class NavigationMixin:
             self.enrollment_running = False
             self.kiosk_latest_frame = None
             self.kiosk_latest_pil = None
+            self._first_valid_frame_logged = False
+            self._kiosk_loading_state_visible = False
 
     def _build_main_area(self):
         """Xây dựng khu vực chính gồm Header Bar và Container các Trang."""
