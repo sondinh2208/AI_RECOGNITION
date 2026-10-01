@@ -15,6 +15,7 @@ import customtkinter as ctk
 
 from config import (
     ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, ADMIN_CAMERA_FPS_DELAY,
+    ENROLLMENT_DETECTION_INTERVAL_SECONDS,
     CTK_SUCCESS, CTK_DANGER, CTK_WARNING,
 )
 from ai_engine import detect_faces, check_face_constraints
@@ -95,6 +96,10 @@ class CameraMixin:
         display_color = (50, 50, 255)  # Mặc định Đỏ
         display_text = "Dua mat vao khung hinh"
         display_locked = False
+        current_color = display_color
+        faces = []
+        mp_results = None
+        last_detection_at = 0.0
         
         while self.enrollment_running and self.camera_running:
             if self.camera_cap is None:
@@ -110,36 +115,38 @@ class CameraMixin:
             
             fw, fh = self.frame_width, self.frame_height
             
-            # --- AI Inference ---
-            faces = detect_faces(self.face_model, frame, self.device)
-            
-            mp_results = None
-            if self.face_detector is not None and len(faces) > 0:
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-                mp_results = self.face_detector.detect(mp_image)
-            
-            # --- Kiểm tra ràng buộc ---
-            current_color, status_text, is_locked = check_face_constraints(
-                faces, self.constraint_box, mp_results, fw, fh
-            )
-            
-            # --- State Machine Chống nhiễu (Debouncer) ---
-            if is_locked:
-                green_streak += 1
-                red_streak = 0
-            else:
-                red_streak += 1
-                green_streak = 0
-                
-            if green_streak >= 5:       # Phải ổn định 5 frames mới cho Xanh (Hợp lệ)
-                display_locked = True
-                display_color = current_color
-                display_text = status_text
-            elif red_streak >= 2:       # Chỉ cần 2 frames là báo Đỏ ngay (Lỗi)
-                display_locked = False
-                display_color = current_color
-                display_text = status_text
+            # --- AI Inference có giới hạn tần suất; video vẫn dùng frame mới nhất ---
+            detection_now = time.perf_counter()
+            if detection_now - last_detection_at >= ENROLLMENT_DETECTION_INTERVAL_SECONDS:
+                last_detection_at = detection_now
+                faces = detect_faces(self.face_model, frame, self.device)
+
+                mp_results = None
+                if self.face_detector is not None and len(faces) > 0:
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+                    mp_results = self.face_detector.detect(mp_image)
+
+                current_color, status_text, is_locked = check_face_constraints(
+                    faces, self.constraint_box, mp_results, fw, fh
+                )
+
+                # State machine chỉ đếm kết quả AI mới, không đếm frame video lặp.
+                if is_locked:
+                    green_streak += 1
+                    red_streak = 0
+                else:
+                    red_streak += 1
+                    green_streak = 0
+
+                if green_streak >= 5:
+                    display_locked = True
+                    display_color = current_color
+                    display_text = status_text
+                elif red_streak >= 2:
+                    display_locked = False
+                    display_color = current_color
+                    display_text = status_text
             
             # Cập nhật biến trạng thái (Atomic)
             self.is_face_valid = display_locked

@@ -100,7 +100,15 @@ ADMIN_WINDOW_HEIGHT = 780
 ADMIN_SIDEBAR_WIDTH = 250
 ADMIN_CAMERA_WIDTH = 520
 ADMIN_CAMERA_HEIGHT = 350
-ADMIN_CAMERA_FPS_DELAY = 28    # ms giữa mỗi frame (~35 FPS chuẩn camera, tối ưu CPU/GPU)
+ADMIN_CAMERA_FPS_DELAY = 50    # UI camera ~20 FPS: đủ mượt và giảm tải Tkinter đáng kể
+KIOSK_DETECTION_INTERVAL_SECONDS = 0.08  # YOLO tối đa ~12.5 lần/giây
+ENROLLMENT_DETECTION_INTERVAL_SECONDS = 0.10  # AI đăng ký tối đa 10 lần/giây
+KIOSK_FACE_STABLE_SECONDS = 0.7     # Khuôn mặt phải ổn định trước khi tự nhận diện
+KIOSK_FACE_LEAVE_SECONDS = 1.5      # Thời gian rời khung để mở lượt tiếp theo
+KIOSK_ATTENDANCE_COOLDOWN_SECONDS = 60  # Không ghi trùng cùng nhân viên trong khoảng này
+KIOSK_MIN_FACE_CONFIDENCE = 0.70    # Độ tin cậy YOLO tối thiểu trước khi chạy ArcFace
+KIOSK_FACE_EDGE_MARGIN_RATIO = 0.04 # Loại khuôn mặt bị cắt sát mép camera
+KIOSK_UNKNOWN_CONFIRMATIONS = 2     # Số lần không khớp hợp lệ trước khi báo người lạ
 
 
 

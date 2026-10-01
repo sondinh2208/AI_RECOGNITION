@@ -139,8 +139,16 @@ class DatabaseMixin:
                 ).grid(row=0, column=i, pady=10, sticky="w", padx=10)
 
     def _on_search_change(self, event=None):
+        """Debounce tìm kiếm để không tạo một worker đọc ảnh cho mỗi phím gõ."""
+        if getattr(self, '_db_search_timer', None):
+            try:
+                self.after_cancel(self._db_search_timer)
+            except Exception:
+                pass
         query = self.search_entry.get().lower()
-        self._load_database_to_scrollable(query)
+        self._db_search_timer = self.after(
+            250, lambda value=query: self._load_database_to_scrollable(value)
+        )
 
     def _load_database_to_scrollable(self, query=""):
         """Đọc file từ background thread và nạp vào UI mượt mà không block UI Thread."""

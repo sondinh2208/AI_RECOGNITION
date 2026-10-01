@@ -54,9 +54,16 @@ class CoreMixin:
         self.kiosk_face_count = 0
         self.kiosk_reset_timer = None
         self.kiosk_thread = None
+        self._kiosk_waiting_for_departure = False
+        self._kiosk_idle_reset_pending = False
+        self._kiosk_face_stable_since = None
+        self._kiosk_face_absent_since = None
+        self._kiosk_unknown_attempts = 0
+        self._attendance_cooldowns = {}
         
         # --- Dữ liệu lịch sử điểm danh thực tế (lưu bền vững trên đĩa) ---
         self.attendance_history = []
+        self._attendance_history_version = 0
         self._load_attendance_history()
         
         # --- Biến trạng thái AI Enrollment ---

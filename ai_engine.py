@@ -24,6 +24,7 @@ from config import (
     FACE_MODEL_PATH, MP_FACE_MODEL_PATH,
     FACE_CONFIDENCE, PERSON_CONFIDENCE, PERSON_CLASS_ID,
     FACE_MIN_SIZE_RATIO, FACE_MAX_SIZE_RATIO, FACE_MAX_TILT_ANGLE,
+    KIOSK_MIN_FACE_CONFIDENCE, KIOSK_FACE_EDGE_MARGIN_RATIO,
     CV_COLOR_DEFAULT, CV_COLOR_RED, CV_COLOR_GREEN,
 )
 
@@ -429,6 +430,58 @@ def calculate_cosine_distance(vec1, vec2):
     return float(1.0 - cos_sim)
 
 
+def validate_kiosk_face_candidate(face_box, confidence, frame, face_detector):
+    """Kiểm tra khuôn mặt đủ đầy và rõ trước khi chuyển sang ArcFace."""
+    if frame is None or frame.size == 0:
+        return False, "Không đọc được hình ảnh camera"
+
+    frame_h, frame_w = frame.shape[:2]
+    fx1, fy1, fx2, fy2 = face_box
+    face_w = fx2 - fx1
+    face_h = fy2 - fy1
+
+    if confidence < KIOSK_MIN_FACE_CONFIDENCE:
+        return False, "Vui lòng nhìn rõ và hướng mặt vào camera"
+
+    margin_x = max(8, int(frame_w * KIOSK_FACE_EDGE_MARGIN_RATIO))
+    margin_y = max(8, int(frame_h * KIOSK_FACE_EDGE_MARGIN_RATIO))
+    if fx1 <= margin_x or fy1 <= margin_y or fx2 >= frame_w - margin_x or fy2 >= frame_h - margin_y:
+        return False, "Vui lòng đưa toàn bộ khuôn mặt vào khung"
+
+    if face_h <= 0:
+        return False, "Khuôn mặt chưa rõ ràng"
+    aspect_ratio = face_w / face_h
+    if aspect_ratio < 0.62 or aspect_ratio > 1.18:
+        return False, "Vui lòng đưa toàn bộ khuôn mặt vào khung"
+
+    if face_detector is None:
+        return False, "Bộ kiểm tra khuôn mặt chưa sẵn sàng"
+
+    try:
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        mp_results = face_detector.detect(mp_img)
+        is_valid, error = analyze_face_quality(
+            face_box,
+            mp_results,
+            frame_w,
+            frame_h,
+            frame=frame,
+            strict_mode=False,
+        )
+        if not is_valid:
+            message_map = {
+                "Khuon mat chua ro rang": "Vui lòng đưa toàn bộ khuôn mặt vào khung",
+                "Giu thang mat voi khung hinh": "Vui lòng giữ thẳng khuôn mặt",
+                "Vui long nhin thang vao camera": "Vui lòng nhìn thẳng vào camera",
+            }
+            return False, message_map.get(error, "Vui lòng căn chỉnh lại khuôn mặt")
+        return True, ""
+    except Exception as exc:
+        print(f"[KIOSK QUALITY] Không thể kiểm tra khuôn mặt: {exc}")
+        return False, "Vui lòng đưa toàn bộ khuôn mặt vào khung"
+
+
 def draw_kiosk_face_box(frame, x1, y1, x2, y2, color=(100, 255, 100), thickness=3, corner_ratio=0.25):
     """
     Vẽ khung bounding box hiện đại dạng Corner Brackets [ ] bám theo khuôn mặt,
@@ -506,5 +559,4 @@ def align_face_crop(face_crop, face_detector):
     except Exception as e:
         print(f"[ALIGN ERROR]: {e}")
         return face_crop, 0.0
-
 

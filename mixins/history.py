@@ -79,6 +79,19 @@ class HistoryMixin:
         if not hasattr(self, 'history_rows_container') or not self.history_rows_container.winfo_exists():
             return
 
+        first_record = self.attendance_history[0] if self.attendance_history else {}
+        render_signature = (
+            getattr(self, '_attendance_history_version', 0),
+            getattr(self, 'history_page', 1),
+            getattr(self, 'history_page_size', 10),
+            len(self.attendance_history),
+            first_record.get("time"),
+            first_record.get("id"),
+        )
+        if render_signature == getattr(self, '_history_render_signature', None):
+            return
+        self._history_render_signature = render_signature
+
         for w in self.history_rows_container.winfo_children():
             w.destroy()
 
