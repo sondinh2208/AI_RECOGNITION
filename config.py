@@ -66,20 +66,22 @@ CV_COLOR_CYAN = (255, 255, 0)      # Bounding box (nếu cần)
 
 
 # ============================================
-# CẤU HÌNH GIAO DIỆN ADMIN PANEL (CustomTkinter)
+# CẤU HÌNH GIAO DIỆN ADMIN PANEL (Enterprise HR / Attendance Palette)
 # ============================================
-CTK_BG_DARK = ("#ffffff", "#0b111e")        # Sidebar background
-CTK_BG_MAIN = ("#f8fafc", "#060b13")        # Main window background
-CTK_ACCENT = ("#cbd5e1", "#1e293b")         # Borders & dividers (rõ nét #cbd5e1 ở bản sáng)
-CTK_PRIMARY = ("#2563eb", "#38bdf8")        # Brand / Highlight blue
-CTK_SUCCESS = ("#16a34a", "#22c55e")        # Success green
-CTK_DANGER = ("#ef4444", "#f87171")         # Danger red
-CTK_WARNING = ("#d97706", "#fbbf24")        # Warning yellow / amber (đậm hơn ở light mode)
-CTK_TEXT = ("#0f172a", "#f8fafc")           # Text primary (Đen than ở light / Trắng sáng ở dark)
-CTK_TEXT_DIM = ("#475569", "#94a3b8")       # Text secondary (Xám đậm ở light / Xám sáng ở dark)
-CTK_CARD = ("#ffffff", "#0d1522")           # Card surface (Trắng ở light / Xanh đen ở dark)
-CTK_SIDEBAR_HOVER = ("#e2e8f0", "#172033")  # Hover on sidebar items
-CTK_BTN_ACTIVE = ("#2563eb", "#2563eb")     # Active nav pill
+CTK_BG_MAIN = ("#F6F7F9", "#0F172A")        # Main background: Clean light gray / Dark slate
+CTK_BG_DARK = ("#FFFFFF", "#1E293B")        # Sidebar background: Clean white / Dark slate surface
+CTK_CARD = ("#FFFFFF", "#1E293B")           # Card/Surface: Clean white / Dark slate surface
+CTK_ACCENT = ("#E5E7EB", "#334155")         # Borders & dividers: Soft gray #E5E7EB / Slate border #334155
+CTK_PRIMARY = ("#2563EB", "#3B82F6")        # Primary Blue
+CTK_PRIMARY_HOVER = ("#1D4ED8", "#2563EB")  # Primary Blue Hover
+CTK_SUCCESS = ("#16A34A", "#22C55E")        # Success Green
+CTK_DANGER = ("#DC2626", "#EF4444")         # Danger Red
+CTK_WARNING = ("#D97706", "#F59E0B")        # Warning Amber
+CTK_TEXT = ("#1F2937", "#F8FAFC")           # Text primary: Dark slate #1F2937 / Off-white #F8FAFC
+CTK_TEXT_DIM = ("#6B7280", "#94A3B8")       # Text secondary: Slate-500 #6B7280 / Slate-400 #94A3B8
+CTK_SIDEBAR_HOVER = ("#F3F4F6", "#334155")  # Sidebar item hover
+CTK_BTN_ACTIVE = ("#0284C7", "#00A3E0")     # Active nav item background: Sky blue / Bright cyan
+CTK_BTN_ACTIVE_TEXT = ("#FFFFFF", "#FFFFFF")# Active nav item text: Pure white
 
 
 

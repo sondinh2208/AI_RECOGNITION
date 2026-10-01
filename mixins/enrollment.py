@@ -23,7 +23,7 @@ from config import (
     CTK_SUCCESS, CTK_WARNING, CTK_DANGER, CTK_SIDEBAR_HOVER,
     ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, DATA_FACES_DIR, DEEPFACE_MODEL_NAME,
 )
-from ai_engine import detect_faces
+from ai_engine import detect_faces, align_face_crop
 
 
 class EnrollmentMixin:
@@ -405,7 +405,14 @@ class EnrollmentMixin:
         try:
             from deepface import DeepFace
             
-            # --- 1. Trích xuất Vector AI (Facenet512 512-dim) ---
+            # --- 1. Tự động căn chỉnh xoay thẳng mặt (Face Alignment) ---
+            detector = getattr(self, 'face_detector', None)
+            aligned_crop, tilt_angle = align_face_crop(face_crop, detector)
+            if abs(tilt_angle) > 2.0:
+                print(f"[ENROLLMENT AI] Đã căn chỉnh xoay mặt {tilt_angle:.1f}° khi đăng ký")
+                face_crop = aligned_crop
+
+            # --- 2. Trích xuất Vector AI (ArcFace 512-dim) ---
             reps = DeepFace.represent(
                 img_path=face_crop,
                 model_name=DEEPFACE_MODEL_NAME,

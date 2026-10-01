@@ -20,14 +20,18 @@ from PIL import Image
 import customtkinter as ctk
 
 from config import (
-    CTK_CARD, CTK_ACCENT, CTK_TEXT, CTK_TEXT_DIM, CTK_PRIMARY,
-    CTK_SUCCESS, CTK_SIDEBAR_HOVER, CTK_BG_MAIN, ADMIN_CAMERA_FPS_DELAY,
+    CTK_CARD, CTK_ACCENT, CTK_TEXT, CTK_TEXT_DIM, CTK_PRIMARY, CTK_PRIMARY_HOVER,
+    CTK_SUCCESS, CTK_DANGER, CTK_SIDEBAR_HOVER, CTK_BG_MAIN, ADMIN_CAMERA_FPS_DELAY,
     DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, KIOSK_MIN_FACE_WIDTH,
 )
 from ai_engine import (
     detect_faces, calculate_cosine_distance, draw_kiosk_face_box,
+    align_face_crop,
 )
-from .ui_helpers import make_circular_avatar, create_default_avatar
+from .ui_helpers import (
+    make_circular_avatar,
+    create_default_avatar,
+)
 
 
 class AttendanceMixin:
@@ -35,10 +39,11 @@ class AttendanceMixin:
 
     def _build_attendance_page(self):
         """
-        Xây dựng giao diện Kiosk Điểm danh công nghệ cao (chuẩn thiết kế screenshot).
-        Gồm 2 phần:
-          - Top Row: Cột Camera bên trái + Cột Kết quả nhận diện (Result Card) bên phải.
-          - Bottom Row: Bảng Lịch sử điểm danh gần đây (Recent Attendance History).
+        Xây dựng giao diện Điểm danh chuẩn Enterprise HR:
+        - Layout tinh gọn, loại bỏ card lồng nhau, màu sắc nhã nhặn.
+        - Camera chiếm ~62% bề ngang, hiển thị rõ nét, không HUD/badge kỹ thuật.
+        - Panel kết quả bên phải chiếm ~38%, thông tin rõ ràng, không khối xanh lá choán màn hình.
+        - Bảng lịch sử điểm danh bên dưới dạng data table phẳng chuẩn doanh nghiệp.
         """
         print("[ATTENDANCE] page create start")
         self.attendance_frame = ctk.CTkFrame(self.pages_container, fg_color=CTK_BG_MAIN)
@@ -47,25 +52,25 @@ class AttendanceMixin:
         self.attendance_frame.grid_rowconfigure(1, weight=1)
         
         # ==========================================
-        # TOP ROW: CAMERA (Trái) & RESULT CARD (Phải)
+        # TOP ROW: CAMERA (Trái ~62%) & RESULT PANEL (Phải ~38%)
         # ==========================================
         top_row = ctk.CTkFrame(self.attendance_frame, fg_color="transparent")
         top_row.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
-        top_row.grid_columnconfigure(0, weight=57, uniform="top_cards")   # Camera Left (~57%)
-        top_row.grid_columnconfigure(1, weight=43, uniform="top_cards")   # Result Right (~43%)
+        top_row.grid_columnconfigure(0, weight=62, uniform="top_cards")
+        top_row.grid_columnconfigure(1, weight=38, uniform="top_cards")
         
         # ------------------------------------------
-        # 1. CỘT TRÁI: CAMERA VÀ ĐIỀU KHIỂN
+        # 1. CỘT TRÁI: CAMERA VÀ KHUNG HƯỚNG DẪN
         # ------------------------------------------
         cam_card = ctk.CTkFrame(
-            top_row, fg_color=CTK_CARD, corner_radius=14,
+            top_row, fg_color=CTK_CARD, corner_radius=10,
             border_width=1, border_color=CTK_ACCENT
         )
         cam_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         
-        # Khung hiển thị Video với overlay badge (Chuẩn tỉ lệ camera, không méo, không phóng to mặt)
-        cam_display_box = ctk.CTkFrame(cam_card, fg_color=("#e2e8f0", "#09101d"), corner_radius=10, height=315)
-        cam_display_box.pack(fill="x", padx=12, pady=(12, 10))
+        # Khung hiển thị Video (chuẩn tỉ lệ 4:3, theme-aware)
+        cam_display_box = ctk.CTkFrame(cam_card, fg_color=("#F1F5F9", "#0F172A"), corner_radius=8, height=365)
+        cam_display_box.pack(fill="both", expand=True, padx=12, pady=12)
         cam_display_box.pack_propagate(False)
         
         # Video feed label
@@ -76,34 +81,32 @@ class AttendanceMixin:
         )
         self.kiosk_camera_label.place(relx=0, rely=0, relwidth=1, relheight=1)
         
-        # Camera Loading Overlay (Minimal, Non-blocking, Clean)
-        # Camera Loading Overlay (Minimal, Non-blocking, Clean)
+        # Camera Loading Overlay (Theme-aware, Clean & Minimal)
         print("[ATTENDANCE] placeholder start")
         self.kiosk_cam_overlay = ctk.CTkFrame(
-            cam_display_box, fg_color="#080d19", corner_radius=10
+            cam_display_box, fg_color=("#F8FAFC", "#0F172A"), corner_radius=8
         )
         overlay_content = ctk.CTkFrame(self.kiosk_cam_overlay, fg_color="transparent")
         overlay_content.place(relx=0.5, rely=0.5, anchor="center")
         
-        # Camera Icon Badge (Minimalist & Clean)
         cam_icon_badge = ctk.CTkFrame(
-            overlay_content, width=52, height=52, corner_radius=26,
-            fg_color=("#e2e8f0", "#131f37"), border_width=1, border_color=("#cbd5e1", "#1e293b")
+            overlay_content, width=42, height=42, corner_radius=21,
+            fg_color=("#EFF6FF", "#1E293B"), border_width=1, border_color=("#DBEAFE", "#334155")
         )
         cam_icon_badge.pack(pady=(0, 10))
         cam_icon_badge.pack_propagate(False)
         
         self.kiosk_cam_spinner = ctk.CTkLabel(
             cam_icon_badge, text="📷",
-            font=ctk.CTkFont(size=22), text_color=("#2563eb", "#38bdf8")
+            font=ctk.CTkFont(size=18), text_color=CTK_PRIMARY
         )
         self.kiosk_cam_spinner.place(relx=0.5, rely=0.5, anchor="center")
         
         self.kiosk_cam_overlay_text = ctk.CTkLabel(
             overlay_content, text="Đang khởi động camera...",
-            font=ctk.CTkFont(size=14, weight="bold"), text_color=CTK_TEXT
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=CTK_TEXT
         )
-        self.kiosk_cam_overlay_text.pack(pady=(0, 3))
+        self.kiosk_cam_overlay_text.pack(pady=(0, 2))
         
         self.kiosk_cam_overlay_sub = ctk.CTkLabel(
             overlay_content, text="Vui lòng chờ trong giây lát",
@@ -111,7 +114,6 @@ class AttendanceMixin:
         )
         self.kiosk_cam_overlay_sub.pack()
         
-        # Hiển thị loading overlay mặc định nếu camera chưa có frame
         if getattr(self, 'kiosk_latest_frame', None) is None:
             self.kiosk_cam_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
             self.kiosk_cam_overlay.lift()
@@ -119,108 +121,38 @@ class AttendanceMixin:
             print("[ATTENDANCE] loading state shown")
         print("[ATTENDANCE] placeholder end")
         
-        # Overlay top bar (Camera đang hoạt động & FPS / Settings)
-        overlay_bar = ctk.CTkFrame(cam_display_box, fg_color="transparent")
-        overlay_bar.place(relx=0.02, rely=0.03, relwidth=0.96)
-        
-        # Badge Camera đang hoạt động / khởi động (Theme-aware Pill)
-        status_pill = ctk.CTkFrame(
-            overlay_bar, corner_radius=14,
-            fg_color=("#ffffff", "#0f172a"), border_width=1, border_color=("#cbd5e1", "#334155")
-        )
-        status_pill.pack(side="left")
-        self.lbl_kiosk_cam_dot = ctk.CTkLabel(
-            status_pill, text="◌ ", font=ctk.CTkFont(size=10, weight="bold"),
-            text_color=("#2563eb", "#38bdf8")
-        )
-        self.lbl_kiosk_cam_dot.pack(side="left", padx=(8, 0), pady=3)
-        self.lbl_kiosk_cam_status = ctk.CTkLabel(
-            status_pill, text="Đang khởi động camera...",
-            font=ctk.CTkFont(size=11, weight="bold"), text_color=("#0f172a", "#f8fafc")
-        )
-        self.lbl_kiosk_cam_status.pack(side="left", padx=(0, 10), pady=3)
-        
-        # Right: FPS & Gear icon
-        fps_pill = ctk.CTkFrame(
-            overlay_bar, corner_radius=14,
-            fg_color=("#ffffff", "#0f172a"), border_width=1, border_color=("#cbd5e1", "#334155")
-        )
-        fps_pill.pack(side="right")
-        self.lbl_kiosk_fps = ctk.CTkLabel(
-            fps_pill, text="FPS: --",
-            font=ctk.CTkFont(size=11, weight="bold"), text_color=("#0f172a", "#f8fafc")
-        )
-        self.lbl_kiosk_fps.pack(side="left", padx=(10, 4), pady=3)
-        ctk.CTkLabel(
-            fps_pill, text="⚙",
-            font=ctk.CTkFont(size=11), text_color=("#64748b", "#94a3b8")
-        ).pack(side="left", padx=(0, 8), pady=3)
-        
-        # Banner hướng dẫn quét khuôn mặt (dưới video)
-        guide_banner = ctk.CTkFrame(
-            cam_card, corner_radius=10,
-            fg_color=("#eff6ff", "#0e1a2f"), border_width=1, border_color=("#bfdbfe", "#1e3a5f"),
-            height=48
-        )
-        guide_banner.pack(fill="x", padx=12, pady=(0, 12))
-        guide_banner.pack_propagate(False)
-        
-        icon_scan_box = ctk.CTkFrame(
-            guide_banner, width=30, height=30, corner_radius=15,
-            fg_color=("#dbeafe", "#172554")
-        )
-        icon_scan_box.pack(side="left", padx=(10, 8))
-        icon_scan_box.pack_propagate(False)
-        ctk.CTkLabel(
-            icon_scan_box, text="🔲", font=ctk.CTkFont(size=13),
-            text_color="#2563eb"
-        ).place(relx=0.5, rely=0.5, anchor="center")
-        
-        guide_text_box = ctk.CTkFrame(guide_banner, fg_color="transparent")
-        guide_text_box.pack(side="left", fill="both", expand=True)
-        
-        self.kiosk_status_title = ctk.CTkLabel(
-            guide_text_box, text="Đang quét khuôn mặt...",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=CTK_TEXT, anchor="w"
-        )
-        self.kiosk_status_title.pack(fill="x", pady=(4, 0))
-        
-        self.kiosk_status_desc = ctk.CTkLabel(
-            guide_text_box, text="Vui lòng đứng thẳng, nhìn vào camera",
-            font=ctk.CTkFont(size=10), text_color=CTK_TEXT_DIM, anchor="w"
-        )
-        self.kiosk_status_desc.pack(fill="x")
-        
-        # Soundwave icon
-        ctk.CTkLabel(
-            guide_banner, text="ılı", font=ctk.CTkFont(size=15, weight="bold"),
-            text_color=("#2563eb", "#38bdf8")
-        ).pack(side="right", padx=12)
+        # Dummy widgets (ẩn, không hiển thị lên giao diện) để tương thích mã nguồn backend
+        self.lbl_kiosk_cam_dot = ctk.CTkLabel(cam_card, text="")
+        self.lbl_kiosk_cam_status = ctk.CTkLabel(cam_card, text="")
+        self.lbl_kiosk_fps = ctk.CTkLabel(cam_card, text="")
+        self.kiosk_status_title = ctk.CTkLabel(cam_card, text="")
+        self.kiosk_status_desc = ctk.CTkLabel(cam_card, text="")
+        self.kiosk_status_time = ctk.CTkLabel(cam_card, text="")
+        self.kiosk_guide_icon = ctk.CTkLabel(cam_card, text="")
 
         # ------------------------------------------
-        # 2. CỘT PHẢI: KẾT QUẢ NHẬN DIỆN (RESULT CARD)
+        # 2. CỘT PHẢI: KẾT QUẢ ĐIỂM DANH (ENTERPRISE PANEL)
         # ------------------------------------------
         self.kiosk_result_card = ctk.CTkFrame(
-            top_row, fg_color=CTK_CARD, corner_radius=14,
+            top_row, fg_color=CTK_CARD, corner_radius=10,
             border_width=1, border_color=CTK_ACCENT
         )
         self.kiosk_result_card.grid(row=0, column=1, sticky="nsew")
         
-        # A. Status Banner (Xanh lá / Đỏ)
+        # A. Status Banner Trạng thái
         self.kiosk_res_banner_frame = ctk.CTkFrame(
-            self.kiosk_result_card, corner_radius=10,
-            fg_color=("#f8fafc", "#0b1322"), border_width=1, border_color=CTK_ACCENT,
-            height=54
+            self.kiosk_result_card, corner_radius=8,
+            fg_color=("#F8FAFC", "#111C2E"), border_width=1, border_color=CTK_ACCENT,
+            height=50
         )
         self.kiosk_res_banner_frame.pack(fill="x", padx=14, pady=(12, 10))
         self.kiosk_res_banner_frame.pack_propagate(False)
         
         self.kiosk_res_icon = ctk.CTkLabel(
-            self.kiosk_res_banner_frame, text="🔍",
-            font=ctk.CTkFont(size=17, weight="bold"),
-            width=36, height=36, corner_radius=18,
-            fg_color=("#e2e8f0", "#172338"), text_color=("#2563eb", "#38bdf8")
+            self.kiosk_res_banner_frame, text="⏱",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            width=34, height=34, corner_radius=17,
+            fg_color=("#EFF6FF", "#1E293B"), text_color=CTK_PRIMARY
         )
         self.kiosk_res_icon.pack(side="left", padx=10)
         
@@ -228,46 +160,45 @@ class AttendanceMixin:
         banner_text_col.pack(side="left", fill="both", expand=True)
         
         self.kiosk_res_title = ctk.CTkLabel(
-            banner_text_col, text="Đang chờ nhận diện...",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            banner_text_col, text="Chờ nhận diện",
+            font=ctk.CTkFont(size=13, weight="bold"),
             text_color=CTK_TEXT, anchor="w"
         )
-        self.kiosk_res_title.pack(fill="x", pady=(6, 0))
+        self.kiosk_res_title.pack(fill="x", pady=(4, 0))
         
         self.kiosk_res_sub = ctk.CTkLabel(
-            banner_text_col, text="Sẵn sàng quét khuôn mặt tự động",
+            banner_text_col, text="Hệ thống tự động ghi nhận khi có nhân viên",
             font=ctk.CTkFont(size=10), text_color=CTK_TEXT_DIM, anchor="w"
         )
         self.kiosk_res_sub.pack(fill="x")
         
-        # B. Profile Info Section (Avatar + Họ tên + Mã NV + Chức vụ + Phòng ban)
+        # B. Thông tin Nhân sự (Avatar + Họ tên + Mã NV + Chức vụ)
         profile_section = ctk.CTkFrame(self.kiosk_result_card, fg_color="transparent")
         profile_section.pack(fill="x", padx=14, pady=(0, 10))
         
-        # Avatar (Tròn 74x74)
-        self.kiosk_avatar_label = ctk.CTkLabel(profile_section, text="", width=74, height=74)
+        # Avatar (Tròn 72x72)
+        self.kiosk_avatar_label = ctk.CTkLabel(profile_section, text="", width=72, height=72)
         self.kiosk_avatar_label.pack(side="left", padx=(0, 12))
-        self._set_kiosk_avatar(None, None, border_color="#cbd5e1", size=(74, 74))
+        self._set_kiosk_avatar(None, None, border_color="#E5E7EB", size=(72, 72))
         
-        # Info stack
         info_col = ctk.CTkFrame(profile_section, fg_color="transparent")
         info_col.pack(side="left", fill="both", expand=True)
         
         self.kiosk_name_label = ctk.CTkLabel(
-            info_col, text="Chưa có dữ liệu",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            info_col, text="Chưa có lượt quét",
+            font=ctk.CTkFont(size=17, weight="bold"),
             text_color=CTK_TEXT, anchor="w"
         )
         self.kiosk_name_label.pack(fill="x", pady=(0, 2))
         
         id_row = ctk.CTkFrame(info_col, fg_color="transparent")
-        id_row.pack(fill="x", pady=(0, 4))
+        id_row.pack(fill="x", pady=(0, 3))
         
         self.kiosk_id_badge = ctk.CTkLabel(
             id_row, text="Mã NV: ---",
-            font=ctk.CTkFont(size=10, weight="bold"),
-            fg_color=("#f1f5f9", "#1e293b"), text_color=CTK_TEXT_DIM,
-            corner_radius=10, padx=8, pady=2
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#EFF6FF", "#1E3A8A"), text_color=("#2563EB", "#93C5FD"),
+            corner_radius=6, padx=8, pady=2
         )
         self.kiosk_id_badge.pack(side="left")
         
@@ -283,39 +214,35 @@ class AttendanceMixin:
         )
         self.kiosk_dept_label.pack(fill="x", pady=1)
         
-        # C. Congratulatory / Greeting Box (Màu xanh dịu chuẩn screenshot)
+        # C. Thông điệp / Chào mừng (Có icon loa 📢 chuẩn Mockup)
         self.kiosk_greeting_card = ctk.CTkFrame(
-            self.kiosk_result_card, corner_radius=10,
-            fg_color=("#f0fdf4", "#052312"), border_width=1, border_color=("#bbf7d0", "#0c4a25"),
-            height=54
+            self.kiosk_result_card, corner_radius=8,
+            fg_color=("#F0F7FF", "#111C2E"), border_width=1, border_color=("#DBEAFE", "#1E293B"),
+            height=48
         )
         self.kiosk_greeting_card.pack(fill="x", padx=14, pady=(0, 8))
         self.kiosk_greeting_card.pack_propagate(False)
         
-        ctk.CTkLabel(
-            self.kiosk_greeting_card, text="🎉",
-            font=ctk.CTkFont(size=16)
-        ).pack(side="left", padx=(10, 6))
-        
+        self.kiosk_greeting_icon = ctk.CTkLabel(
+            self.kiosk_greeting_card, text="📢",
+            font=ctk.CTkFont(size=14), text_color=CTK_PRIMARY
+        )
+        self.kiosk_greeting_icon.pack(side="left", padx=(10, 6))
+
         self.kiosk_greeting_text = ctk.CTkLabel(
             self.kiosk_greeting_card,
             text="Vui lòng đứng thẳng, nhìn vào camera để điểm danh.\nChúc bạn một ngày làm việc hiệu quả!",
-            font=ctk.CTkFont(size=10), text_color=("#166534", "#86efac"),
+            font=ctk.CTkFont(size=10), text_color=CTK_TEXT_DIM,
             anchor="w", justify="left"
         )
-        self.kiosk_greeting_text.pack(side="left", fill="both", expand=True)
+        self.kiosk_greeting_text.pack(side="left", fill="both", expand=True, padx=(0, 8))
         
-        ctk.CTkLabel(
-            self.kiosk_greeting_card, text="😊",
-            font=ctk.CTkFont(size=14)
-        ).pack(side="right", padx=10)
-        
-        # D. Bottom Timestamp Row
+        # D. Thời gian (Khớp thiết kế 1 dòng thanh lịch)
         time_row = ctk.CTkFrame(self.kiosk_result_card, fg_color="transparent")
         time_row.pack(fill="x", padx=14, pady=(0, 8))
         
         self.kiosk_time_label = ctk.CTkLabel(
-            time_row, text="🕒 Trạng thái: Chờ quét",
+            time_row, text="🕒 Thời gian: Chờ quét",
             font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w"
         )
         self.kiosk_time_label.pack(side="left")
@@ -323,41 +250,57 @@ class AttendanceMixin:
         self.kiosk_saved_badge = ctk.CTkLabel(
             time_row, text="● Sẵn sàng",
             font=ctk.CTkFont(size=10, weight="bold"),
-            fg_color=("#f1f5f9", "#1e293b"), text_color=CTK_TEXT_DIM,
-            corner_radius=10, padx=8, pady=2
+            fg_color=("#F1F5F9", "#1E293B"), text_color=CTK_TEXT_DIM,
+            corner_radius=6, padx=8, pady=2
         )
-        self.kiosk_saved_badge.pack(side="right")
+        # Giữ widget trong bộ nhớ nhưng không pack để khớp 100% hình ảnh
+        self.kiosk_saved_badge.pack_forget()
 
-        # E. Nút bấm Thủ công: "Quét người tiếp theo" (Theo yêu cầu chống UI Freeze)
+        # E. Nút bấm: "Quét người tiếp theo" (Chuẩn Mockup Enterprise Blue ⛶)
         self.btn_scan_next = ctk.CTkButton(
             self.kiosk_result_card,
-            text="🔄  Quét người tiếp theo",
+            text="⛶  Quét người tiếp theo",
             font=ctk.CTkFont(size=13, weight="bold"),
-            height=38,
+            height=40,
             corner_radius=8,
-            fg_color="#2563EB",
-            hover_color="#1D4ED8",
+            fg_color=CTK_PRIMARY,
+            hover_color=CTK_PRIMARY_HOVER,
             text_color="#ffffff",
             command=self._reset_for_next_scan
         )
-        # Mặc định ở trạng thái chờ (Idle) -> ẨN nút đi
         self.btn_scan_next.pack_forget()
 
+        # Nút bấm phụ: "+ Đăng ký nhân viên này" khi phát hiện người lạ
+        self.btn_kiosk_register = ctk.CTkButton(
+            self.kiosk_result_card,
+            text="+ Đăng ký nhân viên này",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            height=38,
+            corner_radius=8,
+            fg_color=("#10B981", "#059669"),
+            hover_color=("#059669", "#047857"),
+            text_color="#ffffff",
+            command=lambda: self._navigate("add_employee")
+        )
+        self.btn_kiosk_register.pack_forget()
+
         # ==========================================
-        # BOTTOM ROW: LỊCH SỬ ĐIỂM DANH GẦN ĐÂY
+        # BOTTOM ROW: BẢNG LỊCH SỬ ĐIỂM DANH HÔM NAY
         # ==========================================
         history_card = ctk.CTkFrame(
-            self.attendance_frame, fg_color=CTK_CARD, corner_radius=14,
+            self.attendance_frame, fg_color=CTK_CARD, corner_radius=10,
             border_width=1, border_color=CTK_ACCENT
         )
         history_card.grid(row=1, column=0, sticky="nsew")
+        history_card.grid_columnconfigure(0, weight=1)
+        history_card.grid_rowconfigure(2, weight=1)
         
         # Header Lịch sử
         hist_header = ctk.CTkFrame(history_card, fg_color="transparent")
-        hist_header.pack(fill="x", padx=18, pady=(10, 6))
+        hist_header.grid(row=0, column=0, sticky="ew", padx=18, pady=(10, 6))
         
         ctk.CTkLabel(
-            hist_header, text="🕒  Lịch sử điểm danh gần đây",
+            hist_header, text="🕒 Lịch sử điểm danh hôm nay",
             font=ctk.CTkFont(size=13, weight="bold"), text_color=CTK_TEXT, anchor="w"
         ).pack(side="left")
         
@@ -369,49 +312,52 @@ class AttendanceMixin:
         )
         btn_view_all.pack(side="right")
         
-        # Table Header Row
+        # Table Header Row (Căn chỉnh theo tỉ lệ cột chuẩn doanh nghiệp)
         tbl_head = ctk.CTkFrame(
-            history_card, height=30, corner_radius=6,
-            fg_color=("#f8fafc", "#0b121e")
+            history_card, height=32, corner_radius=6,
+            fg_color=("#F8FAFC", "#111C2E")
         )
-        tbl_head.pack(fill="x", padx=18, pady=(0, 4))
+        tbl_head.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 4))
         tbl_head.pack_propagate(False)
         
-        cols = [
-            ("Thời gian", 0.18),
-            ("Nhân viên", 0.22),
-            ("Mã NV", 0.12),
-            ("Chức vụ", 0.22),
-            ("Phòng ban", 0.14),
-            ("Trạng thái", 0.12)
+        self._kiosk_col_defs = [
+            ("Thời gian", 18),
+            ("Nhân viên", 20),
+            ("Mã NV", 12),
+            ("Chức vụ", 20),
+            ("Phòng ban", 16),
+            ("Trạng thái", 14),
         ]
         
-        for name, relw in cols:
-            f = ctk.CTkFrame(tbl_head, fg_color="transparent")
-            f.pack(side="left", fill="both", expand=True)
-            ctk.CTkLabel(
-                f, text=name, font=ctk.CTkFont(size=11, weight="bold"),
+        for col_idx, (name, w) in enumerate(self._kiosk_col_defs):
+            tbl_head.grid_columnconfigure(
+                col_idx, weight=w, uniform="kiosk_history_column"
+            )
+            lbl = ctk.CTkLabel(
+                tbl_head, text=name, font=ctk.CTkFont(size=11, weight="bold"),
                 text_color=CTK_TEXT_DIM, anchor="w"
-            ).pack(fill="both", expand=True, padx=8)
+            )
+            lbl.grid(row=0, column=col_idx, sticky="w", padx=10, pady=4)
             
-        # Table Scrollable / Dynamic Rows
+        # Table Dynamic Rows Container
         self.kiosk_history_rows_container = ctk.CTkFrame(history_card, fg_color="transparent")
-        self.kiosk_history_rows_container.pack(fill="both", expand=True, padx=18, pady=(0, 10))
-        
+        self.kiosk_history_rows_container.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 4))
+
         self._render_recent_attendance_table()
         
         print("[ATTENDANCE] page create end")
         return self.attendance_frame
 
     def _render_recent_attendance_table(self):
-        """Vẽ danh sách các lượt điểm danh gần đây."""
+        """Vẽ tối đa 5 lượt điểm danh mới nhất."""
         if not hasattr(self, 'kiosk_history_rows_container'):
             return
-            
+
         for child in self.kiosk_history_rows_container.winfo_children():
             child.destroy()
             
-        if not self.attendance_history:
+        total_items = len(self.attendance_history)
+        if not total_items:
             empty_lbl = ctk.CTkLabel(
                 self.kiosk_history_rows_container,
                 text="Chưa có lượt điểm danh nào",
@@ -420,55 +366,74 @@ class AttendanceMixin:
             empty_lbl.pack(pady=10)
             return
 
-        for i, item in enumerate(self.attendance_history[:5]):
+        recent_items = self.attendance_history[:5]
+
+        col_defs = getattr(self, '_kiosk_col_defs', [
+            ("Thời gian", 18),
+            ("Nhân viên", 20),
+            ("Mã NV", 12),
+            ("Chức vụ", 20),
+            ("Phòng ban", 16),
+            ("Trạng thái", 14),
+        ])
+
+        for i, item in enumerate(recent_items):
             bg = ("#ffffff", "#0d1522") if i % 2 == 0 else ("#f8fafc", "#111c2e")
             row = ctk.CTkFrame(
-                self.kiosk_history_rows_container, height=32, corner_radius=6,
+                self.kiosk_history_rows_container, height=34, corner_radius=6,
                 fg_color=bg
             )
             row.pack(fill="x", pady=1)
             row.pack_propagate(False)
+
+            for c_idx, (_, w) in enumerate(col_defs):
+                row.grid_columnconfigure(
+                    c_idx, weight=w, uniform="kiosk_history_column"
+                )
             
             # Thời gian
-            f1 = ctk.CTkFrame(row, fg_color="transparent")
-            f1.pack(side="left", fill="both", expand=True)
-            ctk.CTkLabel(f1, text=item.get("time", ""), font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w").pack(fill="both", expand=True, padx=8)
+            ctk.CTkLabel(
+                row, text=item.get("time", ""),
+                font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w"
+            ).grid(row=0, column=0, sticky="w", padx=10, pady=4)
             
             # Nhân viên
-            f2 = ctk.CTkFrame(row, fg_color="transparent")
-            f2.pack(side="left", fill="both", expand=True)
-            ctk.CTkLabel(f2, text=item.get("name", ""), font=ctk.CTkFont(size=11, weight="bold"), text_color=CTK_TEXT, anchor="w").pack(fill="both", expand=True, padx=8)
+            ctk.CTkLabel(
+                row, text=item.get("name", ""),
+                font=ctk.CTkFont(size=11, weight="bold"), text_color=CTK_TEXT, anchor="w"
+            ).grid(row=0, column=1, sticky="w", padx=10, pady=4)
             
             # Mã NV
-            f3 = ctk.CTkFrame(row, fg_color="transparent")
-            f3.pack(side="left", fill="both", expand=True)
-            ctk.CTkLabel(f3, text=item.get("id", ""), font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w").pack(fill="both", expand=True, padx=8)
+            ctk.CTkLabel(
+                row, text=item.get("id", ""),
+                font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w"
+            ).grid(row=0, column=2, sticky="w", padx=10, pady=4)
             
             # Chức vụ
-            f4 = ctk.CTkFrame(row, fg_color="transparent")
-            f4.pack(side="left", fill="both", expand=True)
-            ctk.CTkLabel(f4, text=item.get("role", ""), font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w").pack(fill="both", expand=True, padx=8)
+            ctk.CTkLabel(
+                row, text=item.get("role", ""),
+                font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w"
+            ).grid(row=0, column=3, sticky="w", padx=10, pady=4)
             
             # Phòng ban
-            f5 = ctk.CTkFrame(row, fg_color="transparent")
-            f5.pack(side="left", fill="both", expand=True)
-            ctk.CTkLabel(f5, text=item.get("dept", "Phòng Ban"), font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w").pack(fill="both", expand=True, padx=8)
+            ctk.CTkLabel(
+                row, text=item.get("dept", "Phòng Ban"),
+                font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w"
+            ).grid(row=0, column=4, sticky="w", padx=10, pady=4)
             
             # Trạng thái Badge
-            f6 = ctk.CTkFrame(row, fg_color="transparent")
-            f6.pack(side="left", fill="both", expand=True)
             is_success = "Thành công" in item.get("status", "")
             badge_fg = ("#dcfce7", "#064e3b") if is_success else ("#fee2e2", "#7f1d1d")
             badge_tx = ("#16a34a", "#86efac") if is_success else ("#ef4444", "#fca5a5")
             icon = "● " if is_success else "✕ "
             
             b = ctk.CTkLabel(
-                f6, text=icon + item.get("status", "Thành công"),
+                row, text=icon + item.get("status", "Thành công"),
                 font=ctk.CTkFont(size=10, weight="bold"),
                 fg_color=badge_fg, text_color=badge_tx,
                 corner_radius=10, padx=8, pady=2
             )
-            b.pack(side="left", padx=8)
+            b.grid(row=0, column=5, sticky="w", padx=10, pady=4)
 
     def _add_attendance_record(self, record):
         """Thêm bản ghi điểm danh mới và cập nhật cả 2 bảng (Recent & Full History)."""
@@ -509,7 +474,7 @@ class AttendanceMixin:
         prev_time = time.time()
         smoothed_fps = 0.0
         first_frame_logged = False
-        
+
         while self.kiosk_running and self.camera_running:
             if token is not None and getattr(self, '_kiosk_thread_token', None) != token:
                 break
@@ -535,7 +500,7 @@ class AttendanceMixin:
             faces = detect_faces(self.face_model, frame, self.device)
             self.kiosk_face_count = len(faces)
             
-            # 2. CHỈ vẽ khung bounding box bám theo khuôn mặt, KHÔNG dùng mask che tối
+            # 2. Vẽ khung góc nhẹ nhàng bám theo khuôn mặt (Xanh neon chuẩn Mockup)
             for (fx1, fy1, fx2, fy2, fconf) in faces:
                 draw_kiosk_face_box(frame, fx1, fy1, fx2, fy2, color=(100, 255, 100), thickness=3)
                 
@@ -548,8 +513,8 @@ class AttendanceMixin:
                 
                 # Điều kiện kích thước khung mặt đủ lớn (width >= 100px)
                 if face_w >= KIOSK_MIN_FACE_WIDTH:
-                    pad_x = int(face_w * 0.15)
-                    pad_y = int(face_h * 0.15)
+                    pad_x = int(face_w * 0.20)
+                    pad_y = int(face_h * 0.20)
                     cx1 = max(0, fx1 - pad_x)
                     cy1 = max(0, fy1 - pad_y)
                     cx2 = min(fw, fx2 + pad_x)
@@ -586,7 +551,8 @@ class AttendanceMixin:
                 new_w = max(1, int(fw * scale))
                 new_h = max(1, int(fh * scale))
                 resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-                bg_bgr = (29, 16, 9)
+                is_dark = ctk.get_appearance_mode().lower() == "dark"
+                bg_bgr = (42, 23, 15) if is_dark else (249, 245, 241)
                 canvas = np.full((lbl_h, lbl_w, 3), bg_bgr, dtype=np.uint8)
                 pad_x = (lbl_w - new_w) // 2
                 pad_y = (lbl_h - new_h) // 2
@@ -637,7 +603,7 @@ class AttendanceMixin:
     def _show_kiosk_cam_loading(self, text="Đang khởi động camera..."):
         """Hiển thị overlay loading tối giản trên khung camera khi đang khởi tạo hoặc chưa có frame."""
         if hasattr(self, 'kiosk_cam_overlay') and self.kiosk_cam_overlay.winfo_exists():
-            self.kiosk_cam_overlay.configure(fg_color="#080d19")
+            self.kiosk_cam_overlay.configure(fg_color=("#F8FAFC", "#0F172A"))
             if hasattr(self, 'kiosk_cam_overlay_text'):
                 self.kiosk_cam_overlay_text.configure(text=text, text_color=CTK_TEXT)
             if hasattr(self, 'kiosk_cam_overlay_sub'):
@@ -648,9 +614,9 @@ class AttendanceMixin:
                 self._kiosk_loading_state_visible = True
                 print("[ATTENDANCE] loading state shown")
             if hasattr(self, 'lbl_kiosk_cam_status'):
-                self.lbl_kiosk_cam_status.configure(text="Đang khởi động camera...", text_color=("#0f172a", "#f8fafc"))
+                self.lbl_kiosk_cam_status.configure(text="Đang khởi động camera...", text_color=CTK_TEXT)
             if hasattr(self, 'lbl_kiosk_cam_dot'):
-                self.lbl_kiosk_cam_dot.configure(text="◌ ", text_color=("#2563eb", "#38bdf8"))
+                self.lbl_kiosk_cam_dot.configure(text="◌ ", text_color=CTK_PRIMARY)
 
     def _hide_kiosk_cam_loading(self):
         """Ẩn overlay loading khi frame camera đầu tiên đã sẵn sàng."""
@@ -660,9 +626,9 @@ class AttendanceMixin:
                 self._kiosk_loading_state_visible = False
                 print("[ATTENDANCE] loading state hidden")
             if hasattr(self, 'lbl_kiosk_cam_status'):
-                self.lbl_kiosk_cam_status.configure(text="Camera đang hoạt động")
+                self.lbl_kiosk_cam_status.configure(text="Camera đang hoạt động", text_color=CTK_TEXT)
             if hasattr(self, 'lbl_kiosk_cam_dot'):
-                self.lbl_kiosk_cam_dot.configure(text="● ", text_color="#10b981")
+                self.lbl_kiosk_cam_dot.configure(text="● ", text_color=CTK_SUCCESS)
 
     def _toggle_kiosk_camera(self):
         """Tạm dừng / Tiếp tục quét camera Kiosk."""
@@ -684,9 +650,9 @@ class AttendanceMixin:
             self._update_kiosk_frame()
 
     def _on_kiosk_recognizing_started(self):
-        """Cập nhật trạng thái khi AI bắt đầu nhận diện."""
-        self.kiosk_status_title.configure(text="Đang nhận diện AI (ArcFace)...")
-        self.kiosk_status_desc.configure(text="Đang đối chiếu dữ liệu khuôn mặt nhân sự...")
+        """Cập nhật trạng thái khi bắt đầu nhận diện."""
+        self.kiosk_status_title.configure(text="● Đang nhận diện khuôn mặt...")
+        self.kiosk_status_desc.configure(text="Đang đối chiếu dữ liệu nhân sự...")
 
     def _ai_worker_recognize(self, cropped_img):
         """
@@ -699,9 +665,15 @@ class AttendanceMixin:
         try:
             from deepface import DeepFace
             
-            # 1. Trích xuất Vector khuôn mặt qua ArcFace
+            # 1. Tự động Căn chỉnh xoay thẳng mặt (Face Alignment) dựa vào 2 mắt
+            detector = getattr(self, 'face_detector', None)
+            aligned_img, tilt_angle = align_face_crop(cropped_img, detector)
+            if abs(tilt_angle) > 2.0:
+                print(f"[KIOSK AI] Face Alignment: Đã căn chỉnh xoay mặt {tilt_angle:.1f}° về thẳng")
+            
+            # 2. Trích xuất Vector khuôn mặt qua ArcFace trên ảnh đã căn chỉnh
             reps = DeepFace.represent(
-                img_path=cropped_img,
+                img_path=aligned_img,
                 model_name=DEEPFACE_MODEL_NAME, # "ArcFace"
                 detector_backend="skip",
                 enforce_detection=False
@@ -757,7 +729,7 @@ class AttendanceMixin:
         name = emp_info.get("name", "Nhân viên")
         emp_id = emp_info.get("id", "NV---")
         role_full = emp_info.get("role", "Nhân viên")
-        
+
         parts = role_full.split("-") if "-" in role_full else role_full.split("–")
         role_name = parts[0].strip()
         dept_name = parts[1].strip() if len(parts) > 1 else "Phòng IT"
@@ -768,35 +740,40 @@ class AttendanceMixin:
         
         self._is_kiosk_ui_idle = False
         
-        # 1. Đổi Badge trạng thái thành màu Xanh lá với text '✅ Nhận diện thành công'
-        self.kiosk_res_banner_frame.configure(fg_color=("#ecfdf5", "#042c16"), border_color=("#a7f3d0", "#059669"))
-        self.kiosk_res_icon.configure(text="✓", fg_color=("#10b981", "#10b981"), text_color="#ffffff")
-        self.kiosk_res_title.configure(text="Nhận diện thành công", text_color=("#15803d", "#4ade80"))
-        self.kiosk_res_sub.configure(text="Khuôn mặt đã được xác thực", text_color=("#166534", "#86efac"))
+        # 1. Đổi Status Header sang kiểu doanh nghiệp (Nền xanh dịu, icon tròn xanh lá tick trắng)
+        self.kiosk_res_banner_frame.configure(fg_color=("#F0FDF4", "#062E1B"), border_color=("#BBF7D0", "#14532D"))
+        self.kiosk_res_icon.configure(text="✓", fg_color=("#16A34A", "#16A34A"), text_color="#FFFFFF")
+        self.kiosk_res_title.configure(text="Điểm danh thành công", text_color=("#15803D", "#4ADE80"))
+        self.kiosk_res_sub.configure(text=f"Thời gian vào: {now_short}", text_color=CTK_TEXT_DIM)
         
-        # 2. Cập nhật text Họ Tên, Mã NV, Chức vụ, Phòng ban
+        # 2. Cập nhật thông tin Nhân viên
         self.kiosk_name_label.configure(text=name, text_color=CTK_TEXT)
-        self.kiosk_id_badge.configure(text=f"Mã NV: {emp_id}", fg_color=("#dcfce7", "#064e3b"), text_color=("#15803d", "#86efac"))
-        self.kiosk_role_label.configure(text=f"👤 Chức vụ: {role_name}")
-        self.kiosk_dept_label.configure(text=f"🏢 Phòng ban: {dept_name}")
+        self.kiosk_id_badge.configure(text=f"Mã NV: {emp_id}", fg_color=("#EFF6FF", "#1E3A8A"), text_color=("#2563EB", "#93C5FD"))
+        self.kiosk_role_label.configure(text=f"👤 Chức vụ:  {role_name}")
+        self.kiosk_dept_label.configure(text=f"🏢 Phòng ban:  {dept_name}")
         
-        # 3. Đổi ảnh Avatar sang ảnh của nhân viên đó (load từ database/images/)
-        self._set_kiosk_avatar(emp_info.get("image_path"), emp_id, border_color="#10b981")
+        # 3. Đổi ảnh Avatar sang ảnh nhân viên
+        self._set_kiosk_avatar(emp_info.get("image_path"), emp_id, border_color="#16A34A")
         
-        # 4. Hộp chúc mừng
-        self.kiosk_greeting_card.configure(fg_color=("#f0fdf4", "#052e16"), border_color=("#bbf7d0", "#14532d"))
+        # 4. Hộp chúc mừng thứ cấp (Icon loa 📢 trên nền xanh pastel nhẹ)
+        self.kiosk_greeting_card.configure(fg_color=("#F0F7FF", "#111C2E"), border_color=("#DBEAFE", "#1E293B"))
+        if hasattr(self, 'kiosk_greeting_icon'):
+            self.kiosk_greeting_icon.configure(text="📢", text_color=CTK_PRIMARY)
         self.kiosk_greeting_text.configure(
-            text=f"Chào mừng {name} đã điểm danh thành công!\nChúc bạn 1 ngày làm việc vui vẻ!",
-            text_color=("#166534", "#bbf7d0")
+            text=f"Chào mừng {name},\nChúc bạn một ngày làm việc hiệu quả!",
+            text_color=CTK_TEXT
         )
         
-        # 5. Cập nhật thời gian điểm danh
-        self.kiosk_time_label.configure(text=f"🕒 Thời gian điểm danh: {now_str}")
-        self.kiosk_saved_badge.configure(text="● Đã lưu", fg_color=("#dcfce7", "#064e3b"), text_color=("#15803d", "#86efac"))
+        # 5. Cập nhật thời gian điểm danh (Khớp định dạng 1 dòng thanh lịch)
+        self.kiosk_time_label.configure(text=f"🕒 Thời gian: {now_str}")
+        if hasattr(self, 'kiosk_saved_badge'):
+            self.kiosk_saved_badge.pack_forget()
         
-        # 6. Cập nhật banner dưới Camera
-        self.kiosk_status_title.configure(text=f"Đã xác nhận: {name} ({emp_id})")
-        self.kiosk_status_desc.configure(text=f"Điểm danh tự động thành công (Sai số: {distance:.2f})")
+        # 6. Cập nhật banner dưới Camera (Đã ghi nhận + timestamp)
+        self.kiosk_status_title.configure(text=f"Đã ghi nhận: {name} ({emp_id})")
+        self.kiosk_status_desc.configure(text="Điểm danh thành công vào hệ thống")
+        if hasattr(self, 'kiosk_status_time'):
+            self.kiosk_status_time.configure(text=now_short)
         
         # 7. Thêm vào bảng lịch sử điểm danh gần đây
         self._add_attendance_record({
@@ -808,62 +785,72 @@ class AttendanceMixin:
             "status": "Thành công"
         })
         
-        # 8. Hiển thị nút bấm "Quét người tiếp theo" (Thủ công, giữ cờ is_recognizing=True để chống freeze UI)
+        # 8. Hiển thị nút bấm "Quét người tiếp theo"
+        if hasattr(self, 'btn_kiosk_register'):
+            self.btn_kiosk_register.pack_forget()
         if hasattr(self, 'btn_scan_next'):
-            self.btn_scan_next.pack(fill="x", padx=14, pady=(2, 8))
+            self.btn_scan_next.pack(fill="x", padx=14, pady=(4, 8))
 
     def _on_kiosk_recognition_failed(self, distance):
         """
         Cập nhật Giao diện Cột Phải khi THẤT BẠI:
-        - Ảnh giữ nguyên/xám.
-        - Đổi Badge sang màu Đỏ với text '❌ Người lạ / Chưa đăng ký'.
-        - Hiển thị nút "Quét người tiếp theo" để người dùng chủ động bấm quét tiếp.
+        - Ảnh xám mặc định.
+        - Đổi Badge sang màu Đỏ dịu với text 'Chưa nhận diện được'.
+        - Hiển thị nút "Quét người tiếp theo".
         """
         now = datetime.now()
         now_str = now.strftime("%H:%M:%S - %d/%m/%Y")
+        now_short = now.strftime("%H:%M:%S %d/%m/%Y")
         
         self._is_kiosk_ui_idle = False
         
-        # 1. Đổi Badge sang màu Đỏ với text '❌ Người lạ / Chưa đăng ký'
-        self.kiosk_res_banner_frame.configure(fg_color=("#fef2f2", "#450a0a"), border_color=("#fca5a5", "#991b1b"))
-        self.kiosk_res_icon.configure(text="✕", fg_color=("#ef4444", "#ef4444"), text_color="#ffffff")
-        self.kiosk_res_title.configure(text="❌ Người lạ / Chưa đăng ký", text_color=("#b91c1c", "#f87171"))
-        self.kiosk_res_sub.configure(text="Khuôn mặt chưa được xác thực trong hệ thống", text_color=("#991b1b", "#fca5a5"))
+        # 1. Đổi Badge trạng thái sang màu cảnh báo dịu
+        self.kiosk_res_banner_frame.configure(fg_color=("#FEF2F2", "#381313"), border_color=("#FECACA", "#7F1D1D"))
+        self.kiosk_res_icon.configure(text="✕", fg_color=("#DC2626", "#DC2626"), text_color="#FFFFFF")
+        self.kiosk_res_title.configure(text="Chưa nhận diện được", text_color=("#B91C1C", "#F87171"))
+        self.kiosk_res_sub.configure(text="Khuôn mặt chưa có trong hệ thống", text_color=CTK_TEXT_DIM)
         
         # 2. Cập nhật thông tin Người lạ
-        self.kiosk_name_label.configure(text="Người lạ / Khách", text_color=("#b91c1c", "#f87171"))
-        self.kiosk_id_badge.configure(text="Mã NV: ---", fg_color=("#fee2e2", "#7f1d1d"), text_color=("#991b1b", "#fca5a5"))
-        self.kiosk_role_label.configure(text="👤 Chức vụ: Chưa đăng ký")
-        self.kiosk_dept_label.configure(text="🏢 Phòng ban: Vui lòng liên hệ quản trị viên")
+        self.kiosk_name_label.configure(text="Người lạ / Khách", text_color=CTK_TEXT)
+        self.kiosk_id_badge.configure(text="Mã NV: ---", fg_color=("#F1F5F9", "#1E293B"), text_color=CTK_TEXT_DIM)
+        self.kiosk_role_label.configure(text="👤 Chức vụ:  Chưa đăng ký")
+        self.kiosk_dept_label.configure(text="🏢 Phòng ban:  Vui lòng liên hệ quản trị viên")
         
-        # 3. Ảnh giữ nguyên / xám
-        self._set_kiosk_avatar(None, None, border_color="#ef4444")
+        # 3. Ảnh mặc định viền đỏ dịu
+        self._set_kiosk_avatar(None, None, border_color="#DC2626")
         
-        # 4. Hộp cảnh báo
-        self.kiosk_greeting_card.configure(fg_color=("#fff7ed", "#431407"), border_color=("#fed7aa", "#7c2d12"))
+        # 4. Hộp thông báo thứ cấp
+        self.kiosk_greeting_card.configure(fg_color=("#FEF2F2", "#381313"), border_color=("#FECACA", "#7F1D1D"))
+        if hasattr(self, 'kiosk_greeting_icon'):
+            self.kiosk_greeting_icon.configure(text="⚠️", text_color=CTK_DANGER)
         self.kiosk_greeting_text.configure(
-            text="⚠️ Cảnh báo: Khuôn mặt không khớp dữ liệu nhân sự!\nVui lòng đăng ký trước khi điểm danh.",
-            text_color=("#9a3412", "#fdba74")
+            text="Khuôn mặt chưa có trong hệ thống dữ liệu.\nVui lòng đăng ký trước khi điểm danh.",
+            text_color=CTK_TEXT_DIM
         )
         
         # 5. Thời gian
-        self.kiosk_time_label.configure(text=f"🕒 Thời gian phát hiện: {now_str}")
-        self.kiosk_saved_badge.configure(text="● Từ chối", fg_color=("#fee2e2", "#7f1d1d"), text_color=("#b91c1c", "#fca5a5"))
+        self.kiosk_time_label.configure(text=f"🕒 Thời gian: {now_str}")
+        if hasattr(self, 'kiosk_saved_badge'):
+            self.kiosk_saved_badge.pack_forget()
         
         # 6. Banner dưới camera
         self.kiosk_status_title.configure(text="Phát hiện người lạ")
         self.kiosk_status_desc.configure(text="Khuôn mặt chưa được đăng ký trong hệ thống")
+        if hasattr(self, 'kiosk_status_time'):
+            self.kiosk_status_time.configure(text=now_short)
         
-        # 7. Hiển thị nút bấm "Quét người tiếp theo" (Thủ công, giữ cờ is_recognizing=True để chống freeze UI)
+        # 7. Hiển thị nút bấm "Quét người tiếp theo" & "+ Đăng ký nhân viên này"
         if hasattr(self, 'btn_scan_next'):
-            self.btn_scan_next.pack(fill="x", padx=14, pady=(2, 8))
+            self.btn_scan_next.pack(fill="x", padx=14, pady=(4, 4))
+        if hasattr(self, 'btn_kiosk_register'):
+            self.btn_kiosk_register.pack(fill="x", padx=14, pady=(0, 8))
 
     def _reset_for_next_scan(self):
         """
-        Nút bấm thủ công "🔄 Quét người tiếp theo":
-        1. Ẩn chính nút bấm đó đi.
-        2. Dọn dẹp avatar, đưa text về lại trạng thái chờ "Đang chờ quét...".
-        3. Quan trọng nhất: Mở khóa cờ self.is_recognizing = False để vòng lặp Camera nhận diện người mới.
+        Nút bấm thủ công "Quét người tiếp theo":
+        1. Ẩn nút bấm.
+        2. Dọn dẹp avatar, đưa text về trạng thái chờ 'Chờ nhận diện'.
+        3. Mở khóa cờ self.is_recognizing = False để camera quét người mới.
         """
         if hasattr(self, 'btn_scan_next'):
             self.btn_scan_next.pack_forget()
@@ -875,38 +862,45 @@ class AttendanceMixin:
         print("[ATTENDANCE] set_idle_state start")
         if hasattr(self, 'btn_scan_next'):
             self.btn_scan_next.pack_forget()
+        if hasattr(self, 'btn_kiosk_register'):
+            self.btn_kiosk_register.pack_forget()
             
         self.is_recognizing = False
         
-        # Tránh re-configure 15 widgets thừa thãi nếu UI vốn đã ở trạng thái IDLE
+        # Tránh re-configure thừa thãi nếu UI vốn đã ở trạng thái IDLE
         if getattr(self, '_is_kiosk_ui_idle', False):
             print("[ATTENDANCE] idle state applied")
             print("[ATTENDANCE] set_idle_state end")
             return
             
-        self.kiosk_res_banner_frame.configure(fg_color=("#f8fafc", "#0b1322"), border_color=CTK_ACCENT)
-        self.kiosk_res_icon.configure(text="🔍", fg_color=("#e2e8f0", "#172338"), text_color=("#2563eb", "#38bdf8"))
-        self.kiosk_res_title.configure(text="Đang chờ nhận diện...", text_color=CTK_TEXT)
-        self.kiosk_res_sub.configure(text="Sẵn sàng quét khuôn mặt tự động", text_color=CTK_TEXT_DIM)
+        self.kiosk_res_banner_frame.configure(fg_color=("#F8FAFC", "#111C2E"), border_color=CTK_ACCENT)
+        self.kiosk_res_icon.configure(text="⏱", fg_color=("#EFF6FF", "#1E293B"), text_color=CTK_PRIMARY)
+        self.kiosk_res_title.configure(text="Chờ nhận diện", text_color=CTK_TEXT)
+        self.kiosk_res_sub.configure(text="Hệ thống tự động ghi nhận khi có nhân viên", text_color=CTK_TEXT_DIM)
         
-        self.kiosk_name_label.configure(text="Chưa có dữ liệu", text_color=CTK_TEXT)
-        self.kiosk_id_badge.configure(text="Mã NV: ---", fg_color=("#f1f5f9", "#1e293b"), text_color=CTK_TEXT_DIM)
+        self.kiosk_name_label.configure(text="Chưa có lượt quét", text_color=CTK_TEXT)
+        self.kiosk_id_badge.configure(text="Mã NV: ---", fg_color=("#F1F5F9", "#1E293B"), text_color=CTK_TEXT_DIM)
         self.kiosk_role_label.configure(text="👤 Chức vụ: ---")
         self.kiosk_dept_label.configure(text="🏢 Phòng ban: ---")
         
-        self._set_kiosk_avatar(None, None, border_color="#cbd5e1")
+        self._set_kiosk_avatar(None, None, border_color="#E5E7EB")
         
-        self.kiosk_greeting_card.configure(fg_color=("#f0fdf4", "#052312"), border_color=("#bbf7d0", "#0c4a25"))
+        self.kiosk_greeting_card.configure(fg_color=("#F0F7FF", "#111C2E"), border_color=("#DBEAFE", "#1E293B"))
+        if hasattr(self, 'kiosk_greeting_icon'):
+            self.kiosk_greeting_icon.configure(text="📢", text_color=CTK_PRIMARY)
         self.kiosk_greeting_text.configure(
             text="Vui lòng đứng thẳng, nhìn vào camera để điểm danh.\nChúc bạn một ngày làm việc hiệu quả!",
-            text_color=("#166534", "#86efac")
+            text_color=CTK_TEXT_DIM
         )
         
-        self.kiosk_time_label.configure(text="🕒 Trạng thái: Chờ quét")
-        self.kiosk_saved_badge.configure(text="● Sẵn sàng", fg_color=("#f1f5f9", "#1e293b"), text_color=CTK_TEXT_DIM)
+        self.kiosk_time_label.configure(text="🕒 Thời gian: Chờ quét")
+        if hasattr(self, 'kiosk_saved_badge'):
+            self.kiosk_saved_badge.pack_forget()
         
-        self.kiosk_status_title.configure(text="Đang quét khuôn mặt...")
-        self.kiosk_status_desc.configure(text="Vui lòng đứng thẳng, nhìn vào camera")
+        self.kiosk_status_title.configure(text="Sẵn sàng quét khuôn mặt")
+        self.kiosk_status_desc.configure(text="Vui lòng đứng thẳng, nhìn vào camera (cự ly 0.5m – 1.2m)")
+        if hasattr(self, 'kiosk_status_time'):
+            self.kiosk_status_time.configure(text="")
         
         self._is_kiosk_ui_idle = True
         print("[KIOSK] Đã mở khóa nhận diện (self.is_recognizing = False) - Sẵn sàng quét người tiếp theo.")
@@ -949,13 +943,13 @@ class AttendanceMixin:
             circ_img = make_circular_avatar(pil_img, size=size, border_color=border_color, border_width=3)
             ctk_img = ctk.CTkImage(light_image=circ_img, dark_image=circ_img, size=size)
         else:
-            if getattr(self, '_cached_default_avatar_ctk', None) is None or border_color != "#cbd5e1":
-                light_border = "#cbd5e1" if border_color == "#cbd5e1" else border_color
-                dark_border = "#334155" if border_color == "#cbd5e1" else border_color
-                light_avatar = create_default_avatar(size=size, bg_color="#e2e8f0", border_color=light_border)
-                dark_avatar = create_default_avatar(size=size, bg_color="#1e293b", border_color=dark_border)
+            if getattr(self, '_cached_default_avatar_ctk', None) is None or border_color not in ["#cbd5e1", "#E5E7EB"]:
+                light_border = "#E5E7EB" if border_color in ["#cbd5e1", "#E5E7EB"] else border_color
+                dark_border = "#334155" if border_color in ["#cbd5e1", "#E5E7EB"] else border_color
+                light_avatar = create_default_avatar(size=size, bg_color="#F1F5F9", border_color=light_border)
+                dark_avatar = create_default_avatar(size=size, bg_color="#1E293B", border_color=dark_border)
                 temp_ctk = ctk.CTkImage(light_image=light_avatar, dark_image=dark_avatar, size=size)
-                if border_color == "#cbd5e1":
+                if border_color in ["#cbd5e1", "#E5E7EB"]:
                     self._cached_default_avatar_ctk = temp_ctk
                 ctk_img = temp_ctk
             else:

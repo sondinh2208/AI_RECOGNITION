@@ -21,6 +21,7 @@ from config import (
     CTK_CARD, CTK_ACCENT, CTK_PRIMARY, CTK_TEXT, CTK_TEXT_DIM,
     CTK_DANGER, CTK_SIDEBAR_HOVER, DATA_FACES_DIR,
 )
+from .ui_helpers import render_pagination_controls
 
 
 class DatabaseMixin:
@@ -108,25 +109,11 @@ class DatabaseMixin:
         self.db_scroll.pack(fill="both", expand=True, padx=10, pady=5)
         
         # Pagination Footer
-        footer = ctk.CTkFrame(table_container, fg_color="transparent")
-        footer.pack(fill="x", padx=20, pady=(10, 15))
-        
-        # Left footer (Hiển thị)
-        show_frame = ctk.CTkFrame(footer, fg_color="transparent")
-        show_frame.pack(side="left")
-        ctk.CTkLabel(show_frame, text="Hiển thị", text_color=CTK_TEXT_DIM, font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 10))
-        dropdown = ctk.CTkOptionMenu(show_frame, values=["10", "20", "50"], width=60, height=28, fg_color=("#f1f5f9", "#111c2e"), button_color=CTK_ACCENT, text_color=CTK_TEXT)
-        dropdown.pack(side="left")
-        ctk.CTkLabel(show_frame, text="kết quả", text_color=CTK_TEXT_DIM, font=ctk.CTkFont(size=13)).pack(side="left", padx=(10, 0))
-        
-        # Right footer (Pagination buttons)
-        page_frame = ctk.CTkFrame(footer, fg_color="transparent")
-        page_frame.pack(side="right")
-        for text in ["<", "1", "2", "3", "...", "13", ">"]:
-            fg = "#2563eb" if text == "1" else "transparent"
-            tc = ("#ffffff", "#ffffff") if text == "1" else CTK_TEXT_DIM
-            btn = ctk.CTkButton(page_frame, text=text, width=30, height=30, fg_color=fg, text_color=tc, font=ctk.CTkFont(size=12, weight="bold"), hover_color=CTK_SIDEBAR_HOVER)
-            btn.pack(side="left", padx=2)
+        self.db_page = 1
+        self.db_page_size = 10
+        self.db_all_records = []
+        self.db_footer = ctk.CTkFrame(table_container, fg_color="transparent")
+        self.db_footer.pack(fill="x", padx=20, pady=(10, 15))
         
         # Render Header trước để khung bảng hiển thị ngay lập tức (0ms)
         self._render_table_header()
@@ -220,9 +207,24 @@ class DatabaseMixin:
         self._safe_after(0, self._apply_database_results, records, total_files, gen)
 
     def _apply_database_results(self, records, total_files, gen):
-        """Main UI Thread: Cập nhật stats và render các dòng dữ liệu."""
+        """Main UI Thread: Cập nhật stats và render các dòng dữ liệu với phân trang."""
         if getattr(self, '_db_load_gen', 0) != gen:
             return
+        if not hasattr(self, 'db_scroll') or not self.db_scroll.winfo_exists():
+            return
+            
+        if hasattr(self, 'lbl_total_emp'):
+            self.lbl_total_emp.configure(text=str(total_files))
+            self.lbl_registered.configure(text=str(total_files))
+            self.lbl_pending.configure(text="0")
+            self.lbl_new.configure(text=str(total_files))
+            
+        self.db_all_records = records
+        self._render_database_page()
+        self.db_data_loaded = True
+
+    def _render_database_page(self):
+        """Render các dòng thuộc trang hiện tại để tối ưu hiệu năng 0ms."""
         if not hasattr(self, 'db_scroll') or not self.db_scroll.winfo_exists():
             return
             
@@ -231,16 +233,41 @@ class DatabaseMixin:
             
         self._render_table_header()
         
-        if hasattr(self, 'lbl_total_emp'):
-            self.lbl_total_emp.configure(text=str(total_files))
-            self.lbl_registered.configure(text=str(total_files))
-            self.lbl_pending.configure(text="0")
-            self.lbl_new.configure(text=str(total_files))
+        records = getattr(self, 'db_all_records', [])
+        total_items = len(records)
+        page_size = getattr(self, 'db_page_size', 10)
+        total_pages = max(1, (total_items + page_size - 1) // page_size)
+        if not hasattr(self, 'db_page') or self.db_page > total_pages:
+            self.db_page = 1
+        elif self.db_page < 1:
+            self.db_page = 1
             
-        for row_idx, emp_data in enumerate(records):
+        start_idx = (self.db_page - 1) * page_size
+        end_idx = min(start_idx + page_size, total_items)
+        page_records = records[start_idx:end_idx]
+        
+        for row_idx, emp_data in enumerate(page_records):
             self._render_employee_row(emp_data, row_idx)
             
-        self.db_data_loaded = True
+        if hasattr(self, 'db_footer'):
+            render_pagination_controls(
+                parent=self.db_footer,
+                current_page=self.db_page,
+                total_pages=total_pages,
+                on_page_change=self._on_db_page_change,
+                page_size=self.db_page_size,
+                page_size_options=["10", "20", "50"],
+                on_size_change=self._on_db_size_change,
+            )
+
+    def _on_db_page_change(self, page_num):
+        self.db_page = page_num
+        self._render_database_page()
+
+    def _on_db_size_change(self, new_size):
+        self.db_page_size = new_size
+        self.db_page = 1
+        self._render_database_page()
 
     def _render_employee_row(self, emp_data, row_index):
         bg_color = ("#ffffff", "#0d1522") if row_index % 2 == 0 else ("#f8fafc", "#111c2e") 
