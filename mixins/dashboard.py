@@ -20,6 +20,13 @@ from config import (
 class DashboardMixin:
     """Mixin quản lý giao diện bảng điều khiển và số liệu thống kê tổng quan."""
 
+    def _successful_attendance_count(self):
+        """Không tính lượt xác thực thất bại là lượt điểm danh."""
+        return sum(
+            1 for record in self.attendance_history
+            if "Thành công" in record.get("status", "")
+        )
+
     def _build_dashboard_page(self):
         """Trang tổng quan (Dashboard) hệ thống."""
         self.dashboard_frame = ctk.CTkFrame(self.pages_container, fg_color=CTK_BG_MAIN)
@@ -47,7 +54,7 @@ class DashboardMixin:
         total_db = len(list(Path(DATA_FACES_DIR).glob("*.jpg"))) if Path(DATA_FACES_DIR).exists() else 0
         self.lbl_dash_kiosk = create_dash_card(0, "🔲", "Kiosk Điểm danh", "Hoạt động", "YOLOv8 + ArcFace", "#10b981")
         self.lbl_dash_users = create_dash_card(1, "👥", "Người đăng ký", f"{total_db} hồ sơ", "Đã số hóa khuôn mặt", "#3b82f6")
-        self.lbl_dash_att = create_dash_card(2, "🕒", "Lượt điểm danh", f"{len(self.attendance_history)} lượt", "Trong phiên làm việc", "#f59e0b")
+        self.lbl_dash_att = create_dash_card(2, "🕒", "Lượt điểm danh", f"{self._successful_attendance_count()} lượt", "Trong phiên làm việc", "#f59e0b")
         self.lbl_dash_engine = create_dash_card(3, "⚡", "Ngưỡng AI", "0.68", "ArcFace Cosine Metric", "#8b5cf6")
         
         # Shortcut action card
@@ -87,7 +94,7 @@ class DashboardMixin:
     def _reload_dashboard_stats(self):
         """Cập nhật lại số liệu trên Dashboard."""
         if hasattr(self, 'lbl_dash_att'):
-            self.lbl_dash_att.configure(text=f"{len(self.attendance_history)} lượt")
+            self.lbl_dash_att.configure(text=f"{self._successful_attendance_count()} lượt")
         try:
             total_db = len(list(Path(DATA_FACES_DIR).glob("*.jpg")))
             if hasattr(self, 'lbl_dash_users'):

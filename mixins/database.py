@@ -13,6 +13,8 @@ import os
 import re
 import pickle
 import threading
+import tkinter as tk
+from tkinter import messagebox
 from pathlib import Path
 from PIL import Image
 import customtkinter as ctk
@@ -69,7 +71,7 @@ class DatabaseMixin:
         # --- Stats Cards Section ---
         stats_frame = ctk.CTkFrame(self.database_frame, fg_color="transparent")
         stats_frame.pack(fill="x", padx=25, pady=(0, 20))
-        stats_frame.grid_columnconfigure((0,1,2,3), weight=1, uniform="card")
+        stats_frame.grid_columnconfigure((0, 1, 2), weight=1, uniform="card")
         
         # Helper to create card
         def create_stat_card(parent, col, icon, title, value, subtext, icon_color="#3b82f6"):
@@ -91,8 +93,7 @@ class DatabaseMixin:
             
         self.lbl_total_emp = create_stat_card(stats_frame, 0, "👥", "Tổng nhân viên", "0", "Dữ liệu thực tế", "#3b82f6")
         self.lbl_registered = create_stat_card(stats_frame, 1, "✅", "Đã đăng ký", "0", "Khuôn mặt đã lưu", "#10b981")
-        self.lbl_pending = create_stat_card(stats_frame, 2, "⏱", "Chưa cập nhật", "0", "Chưa có ảnh khuôn mặt", "#f59e0b")
-        self.lbl_new = create_stat_card(stats_frame, 3, "👤+", "Mới trong tháng", "0", "Đăng ký gần đây", "#6366f1")
+        self.lbl_new = create_stat_card(stats_frame, 2, "👤+", "Mới trong tháng", "0", "Đăng ký gần đây", "#6366f1")
             
         # --- Main Table Frame ---
         table_container = ctk.CTkFrame(self.database_frame, fg_color=CTK_CARD, corner_radius=12, border_width=1, border_color=CTK_ACCENT)
@@ -122,8 +123,8 @@ class DatabaseMixin:
         thead = ctk.CTkFrame(self.db_scroll, fg_color=("#f1f5f9", "#0b111e"), height=45, corner_radius=8, border_width=1, border_color=CTK_ACCENT)
         thead.pack(fill="x", padx=5, pady=(0, 6))
         
-        headers = ["", "Ảnh", "Mã NV", "Họ và tên", "Chức vụ", "Trạng thái", "Hành động"]
-        weights = [3, 5, 8, 24, 16, 14, 10]
+        headers = ["", "Ảnh", "Mã NV", "Họ và tên", "Chức vụ", "Phòng ban", "Trạng thái", "Hành động"]
+        weights = [3, 5, 8, 20, 14, 14, 12, 10]
         
         for i, w in enumerate(weights):
             thead.grid_columnconfigure(i, weight=w, uniform="table_col")
@@ -171,18 +172,34 @@ class DatabaseMixin:
         data_dir = Path(DATA_FACES_DIR)
         image_files = list(data_dir.glob("*.jpg")) if data_dir.exists() else []
         total_files = len(image_files)
+
+        # embeddings.pkl là nguồn metadata chuẩn; tên file chỉ là fallback
+        # để tiếp tục đọc được hồ sơ của phiên bản cũ.
+        profiles = {}
+        embeddings_file = Path("data/embeddings.pkl")
+        if embeddings_file.exists():
+            try:
+                with open(embeddings_file, "rb") as file:
+                    profiles = pickle.load(file)
+            except Exception:
+                profiles = {}
         
         records = []
         for img_path in image_files:
             filename = img_path.stem
             emp_id = "Unknown"
             emp_role = "Nhân viên"
+            emp_department = "Phòng IT"
             emp_name = "Unknown"
             
             if "@" in filename:
-                parts = filename.split("@")
+                parts = filename.split("@", 3)
                 emp_id = parts[0]
-                if len(parts) >= 3:
+                if len(parts) >= 4:
+                    emp_role = parts[1].replace("_", " ")
+                    emp_department = parts[2].replace("_", " ")
+                    emp_name = parts[3].replace("_", " ")
+                elif len(parts) >= 3:
                     emp_role = parts[1].replace("_", " ")
                     emp_name = parts[2].replace("_", " ")
                 elif len(parts) == 2:
@@ -193,8 +210,29 @@ class DatabaseMixin:
                 emp_name = parts[1].replace("_", " ") if len(parts) > 1 else "Unknown"
                 
             emp_name = re.sub(r'\s*\d{8}\s\d{6}.*$', '', emp_name).strip()
+
+            profile = next(
+                (
+                    value for key, value in profiles.items()
+                    if str(key).strip().casefold() == emp_id.strip().casefold()
+                ),
+                None,
+            )
+            if isinstance(profile, dict):
+                emp_name = profile.get("name") or emp_name
+                emp_role = profile.get("role") or emp_role
+                emp_department = (
+                    profile.get("department") or profile.get("dept") or emp_department
+                )
+
+            # Tương thích hồ sơ cũ từng gộp "Chức vụ - Phòng ban" trong role.
+            if not (isinstance(profile, dict) and (profile.get("department") or profile.get("dept"))):
+                legacy_parts = re.split(r"\s*[-–]\s*", emp_role, maxsplit=1)
+                if len(legacy_parts) == 2:
+                    emp_role, emp_department = legacy_parts[0], legacy_parts[1]
             
-            if query and query not in emp_id.lower() and query not in emp_name.lower() and query not in emp_role.lower():
+            if (query and query not in emp_id.lower() and query not in emp_name.lower()
+                    and query not in emp_role.lower() and query not in emp_department.lower()):
                 continue
                 
             pil_img = None
@@ -209,6 +247,7 @@ class DatabaseMixin:
                 "id": emp_id,
                 "name": emp_name,
                 "role": emp_role,
+                "department": emp_department,
                 "status": "Đã đăng ký"
             })
             
@@ -224,7 +263,6 @@ class DatabaseMixin:
         if hasattr(self, 'lbl_total_emp'):
             self.lbl_total_emp.configure(text=str(total_files))
             self.lbl_registered.configure(text=str(total_files))
-            self.lbl_pending.configure(text="0")
             self.lbl_new.configure(text=str(total_files))
             
         self.db_all_records = records
@@ -283,7 +321,7 @@ class DatabaseMixin:
         row_frame = ctk.CTkFrame(self.db_scroll, fg_color=bg_color, corner_radius=6)
         row_frame.pack(fill="x", pady=2, padx=5)
         
-        weights = [3, 5, 8, 24, 16, 14, 10]
+        weights = [3, 5, 8, 20, 14, 14, 12, 10]
         for i, w in enumerate(weights):
             row_frame.grid_columnconfigure(i, weight=w, uniform="table_col")
             
@@ -311,35 +349,50 @@ class DatabaseMixin:
         
         # 4. Chức vụ
         ctk.CTkLabel(row_frame, text=emp_data["role"], font=ctk.CTkFont(size=13), text_color=CTK_TEXT_DIM).grid(row=0, column=4, sticky="w", padx=10)
+
+        # 5. Phòng ban
+        ctk.CTkLabel(
+            row_frame, text=emp_data.get("department", "Phòng IT"),
+            font=ctk.CTkFont(size=13), text_color=CTK_TEXT_DIM,
+        ).grid(row=0, column=5, sticky="w", padx=10)
         
-        # 5. Trạng thái (Badge)
+        # 6. Trạng thái
         badge_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
-        badge_frame.grid(row=0, column=5, sticky="w", padx=10)
+        badge_frame.grid(row=0, column=6, sticky="w", padx=10)
         
         status_text = emp_data["status"]
         if "Chưa đăng ký" in status_text:
-            fg_col, text_col, icon = ("#fee2e2", "#7f1d1d"), ("#991b1b", "#fca5a5"), "❌ "
-        elif "Chưa cập nhật" in status_text:
-            fg_col, text_col, icon = ("#ffedd5", "#78350f"), ("#ea580c", "#fcd34d"), "⏱ "
+            text_col, icon = ("#dc2626", "#f87171"), "● "
         else:
-            fg_col, text_col, icon = ("#dcfce7", "#064e3b"), ("#16a34a", "#6ee7b7"), "✅ "
+            text_col, icon = ("#16a34a", "#4ade80"), "● "
             
         badge = ctk.CTkLabel(
             badge_frame, text=icon + status_text,
             font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=text_col, fg_color=fg_col,
-            corner_radius=15, padx=10, pady=4
+            text_color=text_col, fg_color="transparent",
         )
         badge.pack(side="left")
         
-        # 6. Hành động (3 nút)
+        # 7. Hành động
         action_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
-        action_frame.grid(row=0, column=6, sticky="w", padx=10)
+        action_frame.grid(row=0, column=7, sticky="w", padx=10)
         
-        btn_view = ctk.CTkButton(action_frame, text="👁", width=30, height=28, fg_color="transparent", corner_radius=4, border_width=1, border_color=CTK_ACCENT, text_color=("#3b82f6", "#60a5fa"), hover_color=CTK_SIDEBAR_HOVER)
+        btn_view = ctk.CTkButton(
+            action_frame, text="👁", width=30, height=28,
+            fg_color="transparent", corner_radius=4, border_width=1,
+            border_color=CTK_ACCENT, text_color=("#3b82f6", "#60a5fa"),
+            hover_color=CTK_SIDEBAR_HOVER,
+            command=lambda data=emp_data: self._view_employee_image(data),
+        )
         btn_view.pack(side="left", padx=2)
         
-        btn_edit = ctk.CTkButton(action_frame, text="📝", width=30, height=28, fg_color="transparent", corner_radius=4, border_width=1, border_color=CTK_ACCENT, text_color=("#6b7280", "#cbd5e1"), hover_color=CTK_SIDEBAR_HOVER)
+        btn_edit = ctk.CTkButton(
+            action_frame, text="📝", width=30, height=28,
+            fg_color="transparent", corner_radius=4, border_width=1,
+            border_color=CTK_ACCENT, text_color=("#6b7280", "#cbd5e1"),
+            hover_color=CTK_SIDEBAR_HOVER,
+            command=lambda data=emp_data: self._edit_employee(data),
+        )
         btn_edit.pack(side="left", padx=2)
         
         btn_del = ctk.CTkButton(
@@ -348,6 +401,273 @@ class DatabaseMixin:
             command=lambda: self._delete_single_employee(emp_data, row_frame)
         )
         btn_del.pack(side="left", padx=2)
+
+    def _open_database_dialog(self, title, width, height):
+        """Tạo cửa sổ con modal và đặt giữa cửa sổ chính."""
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.configure(bg=self._apply_appearance_mode(CTK_CARD))
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+        self.update_idletasks()
+        x = self.winfo_rootx() + max(0, (self.winfo_width() - width) // 2)
+        y = self.winfo_rooty() + max(0, (self.winfo_height() - height) // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        return dialog
+
+    def _view_employee_image(self, emp_info):
+        """Mở ảnh đăng ký kích thước lớn cùng thông tin nhân viên."""
+        image_path = Path(emp_info.get("img_path", ""))
+        if not image_path.exists():
+            messagebox.showerror(
+                "Không tìm thấy ảnh",
+                "Ảnh đăng ký của nhân viên không còn tồn tại.",
+                parent=self,
+            )
+            return
+
+        try:
+            with Image.open(image_path) as source:
+                preview = source.convert("RGB")
+            preview.thumbnail((650, 455), Image.Resampling.LANCZOS)
+        except Exception as exc:
+            messagebox.showerror(
+                "Không thể mở ảnh", f"Không thể đọc ảnh đăng ký:\n{exc}", parent=self
+            )
+            return
+
+        dialog = self._open_database_dialog("Ảnh khuôn mặt đã đăng ký", 720, 600)
+        header = ctk.CTkFrame(dialog, fg_color="transparent")
+        header.pack(fill="x", padx=24, pady=(20, 12))
+        ctk.CTkLabel(
+            header, text=emp_info.get("name", "Nhân viên"),
+            font=ctk.CTkFont(size=20, weight="bold"), text_color=CTK_TEXT,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            header,
+            text=(
+                f"{emp_info.get('id', '—')}  ·  {emp_info.get('role', 'Nhân viên')}"
+                f"  ·  {emp_info.get('department', 'Phòng IT')}"
+            ),
+            font=ctk.CTkFont(size=12), text_color=CTK_TEXT_DIM,
+        ).pack(anchor="w", pady=(3, 0))
+
+        image_card = ctk.CTkFrame(
+            dialog, fg_color=("#F8FAFC", "#0F172A"), corner_radius=10,
+            border_width=1, border_color=CTK_ACCENT,
+        )
+        image_card.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+        image = ctk.CTkImage(light_image=preview, dark_image=preview, size=preview.size)
+        image_label = ctk.CTkLabel(image_card, text="", image=image)
+        image_label.image = image
+        image_label.place(relx=0.5, rely=0.5, anchor="center")
+        dialog._preview_image = image
+
+        ctk.CTkButton(
+            dialog, text="Đóng", width=100, height=34, corner_radius=7,
+            fg_color=("#E2E8F0", "#1E293B"),
+            hover_color=("#CBD5E1", "#334155"), text_color=CTK_TEXT,
+            command=dialog.destroy,
+        ).pack(pady=(0, 18))
+
+    def _edit_employee(self, emp_info):
+        """Hiển thị biểu mẫu sửa mã, tên và chức vụ của nhân viên."""
+        dialog = self._open_database_dialog("Sửa thông tin nhân viên", 470, 510)
+
+        ctk.CTkLabel(
+            dialog, text="Sửa thông tin nhân viên",
+            font=ctk.CTkFont(size=20, weight="bold"), text_color=CTK_TEXT,
+        ).pack(anchor="w", padx=28, pady=(24, 4))
+        ctk.CTkLabel(
+            dialog, text="Thông tin mới sẽ được đồng bộ với dữ liệu nhận diện.",
+            font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM,
+        ).pack(anchor="w", padx=28, pady=(0, 18))
+
+        entries = {}
+        fields = (
+            ("id", "Mã nhân viên", emp_info.get("id", "")),
+            ("name", "Họ và tên", emp_info.get("name", "")),
+            ("role", "Chức vụ", emp_info.get("role", "")),
+            ("department", "Phòng ban", emp_info.get("department", "Phòng IT")),
+        )
+        for key, label, value in fields:
+            ctk.CTkLabel(
+                dialog, text=label, font=ctk.CTkFont(size=12, weight="bold"),
+                text_color=CTK_TEXT,
+            ).pack(anchor="w", padx=28)
+            entry = ctk.CTkEntry(
+                dialog, height=38, corner_radius=7,
+                border_color=CTK_ACCENT, fg_color=("#FFFFFF", "#0F172A"),
+                text_color=CTK_TEXT,
+            )
+            entry.pack(fill="x", padx=28, pady=(5, 13))
+            entry.insert(0, value)
+            entries[key] = entry
+
+        actions = ctk.CTkFrame(dialog, fg_color="transparent")
+        actions.pack(fill="x", padx=28, pady=(5, 22))
+        ctk.CTkButton(
+            actions, text="Hủy", width=100, height=36,
+            fg_color=("#E2E8F0", "#1E293B"),
+            hover_color=("#CBD5E1", "#334155"), text_color=CTK_TEXT,
+            command=dialog.destroy,
+        ).pack(side="right")
+        ctk.CTkButton(
+            actions, text="Lưu thay đổi", width=130, height=36,
+            fg_color=CTK_PRIMARY, hover_color=("#1D4ED8", "#1D4ED8"),
+            command=lambda: self._save_employee_edits(
+                emp_info,
+                entries["id"].get(),
+                entries["name"].get(),
+                entries["role"].get(),
+                entries["department"].get(),
+                dialog,
+            ),
+        ).pack(side="right", padx=(0, 10))
+        entries["name"].focus_set()
+
+    def _save_employee_edits(
+        self, emp_info, new_id, new_name, new_role, new_department, dialog
+    ):
+        """Đổi metadata, tên ảnh và embedding theo một giao dịch có hoàn tác."""
+        def clean_component(value, remove_spaces=False):
+            value = re.sub(r'[<>:"/\\|?*@]', "", value.strip())
+            value = re.sub(r"\s+", " ", value)
+            return value.replace(" ", "") if remove_spaces else value
+
+        new_id = clean_component(new_id, remove_spaces=True)
+        new_name = clean_component(new_name)
+        new_role = clean_component(new_role)
+        new_department = clean_component(new_department)
+        if not new_id or not new_name or not new_role or not new_department:
+            messagebox.showerror(
+                "Thiếu thông tin",
+                "Vui lòng nhập đầy đủ mã, họ tên, chức vụ và phòng ban.",
+                parent=dialog,
+            )
+            return
+
+        old_id = str(emp_info.get("id", "")).strip()
+        old_path = Path(emp_info.get("img_path", ""))
+        if not old_path.exists():
+            messagebox.showerror(
+                "Không tìm thấy dữ liệu", "Ảnh gốc của nhân viên không còn tồn tại.",
+                parent=dialog,
+            )
+            return
+
+        embeddings_file = Path("data/embeddings.pkl")
+        embeddings_data = {}
+        if embeddings_file.exists():
+            try:
+                with open(embeddings_file, "rb") as file:
+                    embeddings_data = pickle.load(file)
+            except Exception as exc:
+                messagebox.showerror(
+                    "Không thể đọc dữ liệu", f"Không thể đọc embeddings.pkl:\n{exc}",
+                    parent=dialog,
+                )
+                return
+
+        old_key = next(
+            (key for key in embeddings_data if str(key).strip().casefold() == old_id.casefold()),
+            None,
+        )
+        duplicate_key = next(
+            (
+                key for key in embeddings_data
+                if str(key).strip().casefold() == new_id.casefold() and key != old_key
+            ),
+            None,
+        )
+        if duplicate_key is not None:
+            messagebox.showerror(
+                "Mã nhân viên đã tồn tại",
+                f"Mã {new_id} đang thuộc một nhân viên khác.", parent=dialog,
+            )
+            return
+
+
+        timestamp_match = re.search(r"_(\d{8}_\d{6})$", old_path.stem)
+        timestamp = timestamp_match.group(1) if timestamp_match else "profile"
+        safe_name = new_name.replace(" ", "_")
+        safe_role = new_role.replace(" ", "_")
+        safe_department = new_department.replace(" ", "_")
+        new_filename = (
+            f"{new_id}@{safe_role}@{safe_department}@{safe_name}_{timestamp}"
+            f"{old_path.suffix.lower()}"
+        )
+
+        source_name = old_path.name
+        candidates = [
+            old_path,
+            Path(DATA_FACES_DIR) / source_name,
+            Path("images") / source_name,
+            Path("database/images") / source_name,
+        ]
+        sources = []
+        seen = set()
+        for source in candidates:
+            source_key = str(source.resolve()).casefold()
+            if source.exists() and source_key not in seen:
+                sources.append(source)
+                seen.add(source_key)
+
+        rename_pairs = [(source, source.with_name(new_filename)) for source in sources]
+        for source, target in rename_pairs:
+            if target.exists() and source.resolve() != target.resolve():
+                messagebox.showerror(
+                    "Dữ liệu đã tồn tại",
+                    f"Không thể lưu vì đã có tệp {target.name}.", parent=dialog,
+                )
+                return
+
+        renamed = []
+        try:
+            for source, target in rename_pairs:
+                if source.name != target.name:
+                    source.rename(target)
+                    renamed.append((source, target))
+
+            if old_key is not None:
+                profile = embeddings_data.pop(old_key)
+                profile.update({
+                    "id": new_id,
+                    "name": new_name,
+                    "role": new_role,
+                    "department": new_department,
+                    "image_path": str(Path(DATA_FACES_DIR) / new_filename),
+                })
+                embeddings_data[new_id] = profile
+
+            if embeddings_file.exists():
+                temp_file = embeddings_file.with_suffix(".pkl.tmp")
+                with open(temp_file, "wb") as file:
+                    pickle.dump(embeddings_data, file)
+                temp_file.replace(embeddings_file)
+        except Exception as exc:
+            for source, target in reversed(renamed):
+                try:
+                    if target.exists() and not source.exists():
+                        target.rename(source)
+                except Exception:
+                    pass
+            messagebox.showerror(
+                "Không thể lưu thay đổi", f"Dữ liệu chưa được cập nhật:\n{exc}",
+                parent=dialog,
+            )
+            return
+
+        self.embeddings_cache = embeddings_data
+        dialog.destroy()
+        query = self.search_entry.get().lower() if hasattr(self, "search_entry") else ""
+        self._load_database_to_scrollable(query)
+        if hasattr(self, "_reload_dashboard_stats"):
+            self._reload_dashboard_stats()
+        messagebox.showinfo(
+            "Đã cập nhật", f"Đã lưu thông tin của {new_name} ({new_id}).", parent=self
+        )
 
     def _delete_single_employee(self, emp_info, row_frame=None):
         """

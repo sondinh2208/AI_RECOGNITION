@@ -13,6 +13,7 @@ import cv2
 import time
 import threading
 import pickle
+import re
 from datetime import datetime
 from pathlib import Path
 from PIL import Image
@@ -110,9 +111,14 @@ class EnrollmentMixin:
             fields, "MÃ NHÂN VIÊN", "🪪", "NV001"
         )
         
-        # 3. Chức vụ / Phòng ban
+        # 3. Chức vụ
         self.entry_role = create_icon_input(
-            fields, "CHỨC VỤ / PHÒNG BAN", "✉", "Kỹ sư phần mềm - Phòng IT"
+            fields, "CHỨC VỤ", "💼", "Kỹ sư phần mềm"
+        )
+
+        # 4. Phòng ban
+        self.entry_department = create_icon_input(
+            fields, "PHÒNG BAN", "🏢", "Phòng IT"
         )
         
         # --- Buttons Frame ---
@@ -342,12 +348,22 @@ class EnrollmentMixin:
         name = self.entry_name.get().strip()
         emp_id = self.entry_id.get().strip()
         role = self.entry_role.get().strip()
+        department = self.entry_department.get().strip()
         
         if not name:
             self._set_status("❌ Vui lòng nhập HỌ VÀ TÊN!", CTK_DANGER)
             return
         if not emp_id:
             self._set_status("❌ Vui lòng nhập MÃ NHÂN VIÊN!", CTK_DANGER)
+            return
+        if re.search(r'[\s<>:"/\\|?*@]', emp_id):
+            self._set_status("❌ MÃ NHÂN VIÊN không được có khoảng trắng hoặc ký tự đặc biệt!", CTK_DANGER)
+            return
+        if not role:
+            self._set_status("❌ Vui lòng nhập CHỨC VỤ!", CTK_DANGER)
+            return
+        if not department:
+            self._set_status("❌ Vui lòng nhập PHÒNG BAN!", CTK_DANGER)
             return
         if self.current_frame is None or not self.camera_running:
             self._set_status("❌ Camera chưa sẵn sàng hoặc đang tạm dừng!", CTK_DANGER)
@@ -393,11 +409,11 @@ class EnrollmentMixin:
         # 5. Khởi chạy AI Thread chạy ngầm (Non-blocking UI)
         threading.Thread(
             target=self._ai_worker_save_face,
-            args=(face_crop, frame, name, emp_id, role),
+            args=(face_crop, frame, name, emp_id, role, department),
             daemon=True
         ).start()
 
-    def _ai_worker_save_face(self, face_crop, full_frame, name, emp_id, role):
+    def _ai_worker_save_face(self, face_crop, full_frame, name, emp_id, role, department):
         """
         Background Thread: Trích xuất Vector khuôn mặt qua DeepFace và lưu file.
         Không thao tác trực tiếp với UI ở đây.
@@ -422,10 +438,16 @@ class EnrollmentMixin:
             embedding_vector = reps[0]["embedding"] if reps and len(reps) > 0 else None
             
             # --- 2. Lưu ảnh ra các thư mục ---
-            safe_name = name.replace(" ", "_")
-            safe_role = role.replace(" ", "_") if role else "Nhân_viên"
+            def safe_component(value, fallback):
+                value = re.sub(r'[<>:"/\\|?*@]', "", value.strip())
+                value = re.sub(r"\s+", "_", value)
+                return value.strip("_") or fallback
+
+            safe_name = safe_component(name, "Nhan_vien")
+            safe_role = safe_component(role, "Nhan_vien")
+            safe_department = safe_component(department, "Phong_ban")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{emp_id}@{safe_role}@{safe_name}_{timestamp}.jpg"
+            filename = f"{emp_id}@{safe_role}@{safe_department}@{safe_name}_{timestamp}.jpg"
             
             Path(DATA_FACES_DIR).mkdir(parents=True, exist_ok=True)
             Path("images").mkdir(parents=True, exist_ok=True)
@@ -460,6 +482,7 @@ class EnrollmentMixin:
                 "id": emp_id,
                 "name": name,
                 "role": role,
+                "department": department,
                 "embedding": embedding_vector,
                 "image_path": str(filepath_main),
                 "timestamp": timestamp
@@ -499,6 +522,7 @@ class EnrollmentMixin:
             self.entry_name.delete(0, "end")
             self.entry_id.delete(0, "end")
             self.entry_role.delete(0, "end")
+            self.entry_department.delete(0, "end")
             
             # Cập nhật danh sách database nếu có
             if hasattr(self, '_load_database_to_scrollable') and hasattr(self, 'db_scroll'):

@@ -958,11 +958,8 @@ class AttendanceMixin:
         """
         name = emp_info.get("name", "Nhân viên")
         emp_id = emp_info.get("id", "NV---")
-        role_full = emp_info.get("role", "Nhân viên")
-
-        parts = role_full.split("-") if "-" in role_full else role_full.split("–")
-        role_name = parts[0].strip()
-        dept_name = parts[1].strip() if len(parts) > 1 else "Phòng IT"
+        role_name = emp_info.get("role", "Nhân viên")
+        dept_name = emp_info.get("department") or emp_info.get("dept") or "Phòng IT"
 
         now = datetime.now()
         now_str = now.strftime("%H:%M:%S · %d/%m/%Y")
@@ -1106,6 +1103,18 @@ class AttendanceMixin:
             self.kiosk_status_time.configure(text=now_short)
         
         # 7. Cho phép thử lại thủ công nếu cần; luồng bình thường vẫn hoàn toàn tự động.
+        # Chỉ ghi sau khi đã xác minh khuôn mặt không thuộc dữ liệu đăng ký.
+        # Không lưu ảnh camera trong lịch sử.
+        self._add_attendance_record({
+            "time": now_short,
+            "name": "Người lạ / Khách",
+            "id": "—",
+            "role": "Chưa đăng ký",
+            "dept": "—",
+            "status": "Thất bại",
+            "distance": round(float(distance), 4) if distance is not None else None,
+        })
+
         self._show_retry_actions()
         if hasattr(self, 'btn_kiosk_register'):
             self.btn_kiosk_register.pack(fill="x", padx=22, pady=(0, 18))

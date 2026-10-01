@@ -9,6 +9,7 @@ warm-up ngầm và giải phóng tài nguyên hệ thống.
 import json
 import pickle
 import threading
+import re
 from pathlib import Path
 import numpy as np
 
@@ -133,7 +134,31 @@ class CoreMixin:
                 need_resave = False
                 for emp_id, emp_val in data.items():
                     if str(emp_id).strip().lower() in active_ids:
-                        cleaned_data[emp_id] = emp_val
+                        profile = dict(emp_val)
+                        role = str(profile.get("role") or "Nhân viên").strip()
+                        department = profile.get("department") or profile.get("dept")
+
+                        # Chuẩn hóa hồ sơ cũ từng lưu "Chức vụ - Phòng ban"
+                        # trong cùng một trường role.
+                        if not department:
+                            legacy_parts = re.split(r"\s*[-–]\s*", role, maxsplit=1)
+                            if len(legacy_parts) == 2:
+                                role, department = legacy_parts[0], legacy_parts[1]
+                            else:
+                                department = "Phòng IT"
+                            need_resave = True
+
+                        if profile.get("role") != role:
+                            profile["role"] = role
+                            need_resave = True
+                        if profile.get("department") != department:
+                            profile["department"] = department
+                            need_resave = True
+                        if "dept" in profile:
+                            profile.pop("dept", None)
+                            need_resave = True
+
+                        cleaned_data[emp_id] = profile
                     else:
                         print(f"[AI CACHE] Tự động loại bỏ vector mồ côi của nhân viên đã xóa: {emp_id} ({emp_val.get('name')})")
                         need_resave = True

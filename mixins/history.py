@@ -132,14 +132,12 @@ class HistoryMixin:
             ctk.CTkLabel(row, text=rec.get("dept", ""), font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM, anchor="w").grid(row=0, column=4, padx=12, pady=8, sticky="w")
             
             is_success = "Thành công" in rec.get("status", "")
-            badge_fg = ("#ecfdf5", "#064e3b") if is_success else ("#fee2e2", "#7f1d1d")
             badge_tx = CTK_SUCCESS if is_success else ("#ef4444", "#fca5a5")
-            icon = "● " if is_success else "✕ "
+            icon = "● "
             badge = ctk.CTkLabel(
                 row, text=icon + rec.get("status", "Thành công"),
                 font=ctk.CTkFont(size=11, weight="bold"),
-                text_color=badge_tx, fg_color=badge_fg,
-                corner_radius=12, width=100, height=24
+                text_color=badge_tx, fg_color="transparent",
             )
             badge.grid(row=0, column=5, padx=12, pady=8, sticky="w")
 
