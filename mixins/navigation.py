@@ -86,7 +86,7 @@ class NavigationMixin:
             btn = ctk.CTkButton(
                 self.sidebar, text=label,
                 font=ctk.CTkFont(size=13), height=40, anchor="w",
-                corner_radius=8, fg_color="transparent",
+                corner_radius=6, fg_color="transparent",
                 text_color=CTK_TEXT, hover_color=CTK_SIDEBAR_HOVER,
                 command=lambda pid=page_id: self._navigate(pid),
             )
