@@ -691,7 +691,6 @@ class AttendanceMixin:
                 )
 
             if tracked_primary_present:
-                self._kiosk_last_face_ts = curr_now
                 self._kiosk_face_absent_since = None
                 if not waiting_for_departure:
                     if primary_is_clear and self._kiosk_face_stable_since is None:
@@ -1545,29 +1544,13 @@ class AttendanceMixin:
         self._kiosk_waiting_for_departure = True
         self.is_recognizing = False
 
-    def _auto_reset_for_next_scan(self):
-        """Tương thích ngược: mở lại quét tự động khi được mã cũ gọi tới."""
-        self.kiosk_reset_timer = None
-        self._kiosk_waiting_for_departure = False
-        self._kiosk_face_stable_since = time.time()
-        self.is_recognizing = False
-        print("[KIOSK] Đã mở lại nhận diện tự động.")
-
     def _reset_for_next_scan(self):
         """
         Nút bấm thủ công "Quét lại" khi nhận diện thất bại:
-        1. Hủy auto-reset timer nếu đang chạy.
-        2. Ẩn nút bấm.
-        3. Dọn dẹp avatar, đưa text về trạng thái chờ 'Chờ nhận diện'.
-        4. Mở khóa cờ self.is_recognizing = False để camera quét người mới.
+        1. Ẩn nút bấm.
+        2. Dọn dẹp avatar, đưa text về trạng thái chờ 'Chờ nhận diện'.
+        3. Mở khóa cờ self.is_recognizing = False để camera quét người mới.
         """
-        if getattr(self, 'kiosk_reset_timer', None):
-            try:
-                self.after_cancel(self.kiosk_reset_timer)
-            except Exception:
-                pass
-            self.kiosk_reset_timer = None
-
         self._kiosk_waiting_for_departure = False
         self._kiosk_face_stable_since = time.time()
         if hasattr(self, 'btn_scan_next'):
@@ -1580,13 +1563,6 @@ class AttendanceMixin:
     def set_idle_state(self):
         """Dọn dẹp avatar, đưa text về lại trạng thái chờ mặc định và mở khóa nhận diện khuôn mặt mới."""
         print("[ATTENDANCE] set_idle_state start")
-        if getattr(self, 'kiosk_reset_timer', None):
-            try:
-                self.after_cancel(self.kiosk_reset_timer)
-            except Exception:
-                pass
-            self.kiosk_reset_timer = None
-
         if hasattr(self, 'btn_scan_next'):
             self.btn_scan_next.pack_forget()
         if hasattr(self, 'btn_kiosk_register'):
@@ -1599,7 +1575,6 @@ class AttendanceMixin:
         self._kiosk_face_stable_since = None
         self._kiosk_unknown_attempts = 0
         self._clear_conditional_confirmation()
-        self._last_recognized_id = None
         self._show_auto_scan_status("●  Tự động nhận diện đang hoạt động")
 
         # Ẩn warning box, hiện greeting card

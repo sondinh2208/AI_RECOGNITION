@@ -35,7 +35,6 @@ KIOSK_MIN_YAW_RATIO = 0.55        # Cho phép quay trái/phải vừa phải khi
 KIOSK_MAX_YAW_RATIO = 1.80
 KIOSK_MIN_PITCH_RATIO = 0.45      # Cho phép ngẩng/cúi vừa phải khi điểm danh
 KIOSK_MAX_PITCH_RATIO = 2.20
-KIOSK_RESET_DELAY_MS = 3000       # Thời gian giữ kết quả (3s) trước khi reset quét người tiếp theo
 
 FACE_CONFIDENCE = 0.45
 PERSON_CONFIDENCE = 0.5

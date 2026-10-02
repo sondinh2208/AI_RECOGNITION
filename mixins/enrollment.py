@@ -203,7 +203,6 @@ class EnrollmentMixin:
         self.preview_frame = ctk.CTkFrame(form_card, fg_color="transparent")
         self.preview_frame.pack(fill="x", padx=24, pady=(0, 10))
         self.preview_label = ctk.CTkLabel(self.preview_frame, text="", width=120, height=90)
-        self.captured_photo = None
 
     def _build_camera_column(self):
         """Xây dựng vùng hiển thị camera trực tiếp & thông tin hệ thống."""
@@ -461,8 +460,7 @@ class EnrollmentMixin:
             if cx2 > cx1 and cy2 > cy1:
                 face_crop = frame[cy1:cy2, cx1:cx2]
         
-        # Lưu frame và hiển thị Preview ngay lập tức
-        self.captured_photo = frame
+        # Hiển thị preview ngay lập tức
         preview_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
         preview_pil = Image.fromarray(preview_rgb).resize((160, 120), Image.LANCZOS)
         preview_ctk = ctk.CTkImage(light_image=preview_pil, dark_image=preview_pil, size=(160, 120))
@@ -479,11 +477,11 @@ class EnrollmentMixin:
         # 5. Khởi chạy AI Thread chạy ngầm (Non-blocking UI)
         threading.Thread(
             target=self._ai_worker_save_face,
-            args=(buffered_samples, face_crop, frame, name, emp_id, role, department),
+            args=(buffered_samples, frame, name, emp_id, role, department),
             daemon=True
         ).start()
 
-    def _ai_worker_save_face(self, face_samples, face_crop, full_frame, name, emp_id, role, department):
+    def _ai_worker_save_face(self, face_samples, full_frame, name, emp_id, role, department):
         """
         Background Thread: Trích xuất Vector khuôn mặt qua DeepFace và lưu file.
         Không thao tác trực tiếp với UI ở đây.

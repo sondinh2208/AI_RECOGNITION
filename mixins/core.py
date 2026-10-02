@@ -20,7 +20,7 @@ from config import (
 )
 from ai_engine import (
     check_gpu_quick,
-    load_face_model, load_person_model, load_mediapipe_detector,
+    load_face_model, load_mediapipe_detector,
 )
 
 
@@ -54,7 +54,6 @@ class CoreMixin:
         self.kiosk_latest_frame = None
         self.kiosk_fps = 0.0
         self.kiosk_face_count = 0
-        self.kiosk_reset_timer = None
         self.kiosk_thread = None
         self._kiosk_waiting_for_departure = False
         self._kiosk_idle_reset_pending = False
@@ -85,7 +84,6 @@ class CoreMixin:
         
         # --- AI Models ---
         self.face_model = None
-        self.person_model = None
         self.face_detector = None
         self.device = 'cpu'
         
@@ -219,13 +217,10 @@ class CoreMixin:
     def _warmup_deepface_async(self):
         """Khởi động sẵn ArcFace & YOLOv8 ngầm để tab Kiosk không bị đơ giật khi nhận diện lần đầu."""
         try:
-            # 1. Warm-up YOLOv8 Face & Person trên GPU CUDA
+            # 1. Warm-up YOLOv8 Face trên GPU CUDA
             if hasattr(self, 'face_model') and self.face_model is not None:
                 dummy_yolo = np.zeros((480, 640, 3), dtype=np.uint8)
                 self.face_model(dummy_yolo, verbose=False)
-            if hasattr(self, 'person_model') and self.person_model is not None:
-                dummy_yolo = np.zeros((480, 640, 3), dtype=np.uint8)
-                self.person_model(dummy_yolo, verbose=False)
                 
             # 2. Warm-up DeepFace ArcFace
             print("[AI] Đang warm-up DeepFace ArcFace trong nền...")
@@ -246,7 +241,6 @@ class CoreMixin:
         print("[AI] Đang load AI models...")
         self.device = check_gpu_quick()
         self.face_model, self.device = load_face_model(self.device)
-        self.person_model, self.device = load_person_model(self.device)
         self.face_detector = load_mediapipe_detector()
         
         # Nạp cache embeddings vào RAM
@@ -261,11 +255,6 @@ class CoreMixin:
         self.kiosk_running = False
         self.enrollment_running = False
         self.camera_running = False
-        if self.kiosk_reset_timer:
-            try:
-                self.after_cancel(self.kiosk_reset_timer)
-            except Exception:
-                pass
         if self.kiosk_thread is not None and self.kiosk_thread.is_alive():
             self.kiosk_thread.join(timeout=0.5)
         if self.camera_thread is not None and self.camera_thread.is_alive():

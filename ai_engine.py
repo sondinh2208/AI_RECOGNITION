@@ -226,15 +226,12 @@ def analyze_face_quality(
     mp_results,
     frame_width,
     frame_height,
-    frame=None,
-    strict_mode=False,
     max_tilt_angle=None,
     yaw_ratio_range=None,
     pitch_ratio_range=None,
 ):
     """
     Phân tích chất lượng khuôn mặt: ngẩng/cúi (pitch), quay ngang (yaw), nghiêng (roll).
-    Nếu strict_mode=True, sẽ bật kiểm tra che khuất nghiêm ngặt.
     Returns:
         (is_valid, error_msg)
     """
@@ -268,11 +265,6 @@ def analyze_face_quality(
     if not best_detection or min_dist >= max(face_w, fy2 - fy1):
         return False, "Khuon mat chua ro rang"
     
-    # Kiểm tra độ tự tin (Chỉ áp dụng khi chụp ảnh - Strict Mode)
-    if strict_mode:
-        if best_detection.categories[0].score < 0.88:
-            return False, "Khuon mat chua ro rang"
-        
     if len(best_detection.keypoints) < 4:
         return False, "Khuon mat chua ro rang"
         
@@ -315,59 +307,9 @@ def analyze_face_quality(
     if pitch_ratio > pitch_max or pitch_ratio < pitch_min:
         return False, "Vui long dieu chinh goc ngang cui"
         
-    # 4. GEOMETRIC OCCLUSION (Chỉ bật khi chụp ảnh để tránh nhiễu nhấp nháy UI)
-    if strict_mode:
-        face_h = fy2 - fy1
-        mouth_y_px = mouth.y * frame_height
-        eye_y_px = eye_cy * frame_height
-        
-        # 4.0. Tỷ lệ khuôn mặt (Aspect Ratio): YOLO box chứa cả bàn tay sẽ dài bất thường
-        aspect_ratio = face_w / face_h
-        if aspect_ratio < 0.65 or aspect_ratio > 1.1:
-            return False, "Khuon mat chua ro rang"
-            
-        # 4.1. Che miệng/cằm (Hình học)
-        dist_mouth_bottom = fy2 - mouth_y_px
-        if dist_mouth_bottom < 0.08 * face_h:
-            return False, "Khuon mat chua ro rang"
-            
-        # 4.2. Phân tích Pixel miệng (Chống bàn tay che mồm cực mạnh)
-        if frame is not None:
-            roi_w = int(0.25 * face_w)
-            roi_h = int(0.15 * face_h)
-            mx_px, my_px = int(mouth.x * frame_width), int(mouth.y * frame_height)
-            x1 = max(0, mx_px - roi_w // 2)
-            y1 = max(0, my_px - roi_h // 2)
-            x2 = min(frame_width, mx_px + roi_w // 2)
-            y2 = min(frame_height, my_px + roi_h // 2)
-            
-            if y2 > y1 and x2 > x1:
-                mouth_roi = frame[y1:y2, x1:x2]
-                
-                # 1. Đo độ tương phản/chi tiết (Môi và răng có nhiều nếp nhăn/góc cạnh hơn mu bàn tay)
-                gray = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2GRAY)
-                sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-                sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-                magnitude = cv2.magnitude(sobelx, sobely)
-                edge_density = np.mean(magnitude)
-                
-                # 2. Đo sắc đỏ (Môi người có độ đỏ Cr cao hơn da tay rất nhiều)
-                ycrcb = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2YCrCb)
-                cr_channel = ycrcb[:,:,1]
-                max_cr = np.max(cr_channel)
-                
-                # Nếu không có chi tiết (mịn như mu bàn tay) HOẶC không có sắc đỏ (tay/khẩu trang)
-                if edge_density < 25.0 or max_cr < 145:
-                    return False, "Khuon mat chua ro rang"
-        
-        # 4.3. Che mắt/trán
-        dist_top_eye = eye_y_px - fy1
-        if dist_top_eye < 0.18 * face_h:
-            return False, "Khuon mat chua ro rang"
-            
     return True, ""
     
-def check_face_constraints(faces, constraint_box, mp_results, frame_width, frame_height, frame=None, strict_mode=False):
+def check_face_constraints(faces, constraint_box, mp_results, frame_width, frame_height):
     """
     Kiểm tra tất cả ràng buộc cho từng khuôn mặt.
     Returns:
@@ -383,13 +325,7 @@ def check_face_constraints(faces, constraint_box, mp_results, frame_width, frame
     cx1, cy1, cx2, cy2 = constraint_box
     box_w = cx2 - cx1
     
-    for (fx1, fy1, fx2, fy2, fconf) in faces:
-        # 0. Kiểm tra độ tự tin của YOLO
-        if strict_mode and fconf < 0.88:
-            color = CV_COLOR_RED
-            status_text = "Khuon mat bi che khuat"
-            continue
-            
+    for (fx1, fy1, fx2, fy2, _fconf) in faces:
         # 1. Kiểm tra vị trí
         if not is_fully_inside((fx1, fy1, fx2, fy2), constraint_box):
             continue
@@ -408,7 +344,7 @@ def check_face_constraints(faces, constraint_box, mp_results, frame_width, frame
         
         # 3. Ràng buộc góc nghiêng, quay, ngẩng và độ rõ nét khuôn mặt
         is_valid_pose, pose_error = analyze_face_quality(
-            (fx1, fy1, fx2, fy2), mp_results, frame_width, frame_height, frame, strict_mode
+            (fx1, fy1, fx2, fy2), mp_results, frame_width, frame_height
         )
         
         if not is_valid_pose:
@@ -484,8 +420,6 @@ def validate_kiosk_face_candidate(face_box, confidence, frame, face_detector):
             mp_results,
             frame_w,
             frame_h,
-            frame=frame,
-            strict_mode=False,
             max_tilt_angle=KIOSK_MAX_ROLL_ANGLE,
             yaw_ratio_range=(KIOSK_MIN_YAW_RATIO, KIOSK_MAX_YAW_RATIO),
             pitch_ratio_range=(KIOSK_MIN_PITCH_RATIO, KIOSK_MAX_PITCH_RATIO),
