@@ -14,6 +14,7 @@ import customtkinter as ctk
 from config import (
     CTK_CARD, CTK_ACCENT, CTK_TEXT, CTK_TEXT_DIM, CTK_SIDEBAR_HOVER,
     CTK_BG_MAIN, DATA_FACES_DIR, ARCFACE_THRESHOLD, ARCFACE_TOP2_MARGIN,
+    ARCFACE_CONDITIONAL_THRESHOLD, ARCFACE_CONDITIONAL_MARGIN,
 )
 
 
@@ -56,8 +57,10 @@ class DashboardMixin:
         self.lbl_dash_users = create_dash_card(1, "👥", "Người đăng ký", f"{total_db} hồ sơ", "Đã số hóa khuôn mặt", "#3b82f6")
         self.lbl_dash_att = create_dash_card(2, "🕒", "Lượt điểm danh", f"{self._successful_attendance_count()} lượt", "Trong phiên làm việc", "#f59e0b")
         self.lbl_dash_engine = create_dash_card(
-            3, "⚡", "Ngưỡng AI", f"{ARCFACE_THRESHOLD:.3f}",
-            f"Top-2 margin ≥ {ARCFACE_TOP2_MARGIN:.3f}", "#8b5cf6",
+            3, "⚡", "Ngưỡng AI",
+            f"{ARCFACE_THRESHOLD:.2f}–{ARCFACE_CONDITIONAL_THRESHOLD:.2f}",
+            f"Margin {ARCFACE_TOP2_MARGIN:.3f}/{ARCFACE_CONDITIONAL_MARGIN:.3f}",
+            "#8b5cf6",
         )
         
         # Shortcut action card

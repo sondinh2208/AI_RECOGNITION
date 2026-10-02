@@ -196,6 +196,8 @@ def main() -> None:
                 "role": role,
                 "department": department,
                 "embedding": vector,
+                "embeddings": [vector],
+                "embedding_count": 1,
                 "image_path": str(Path("data/faces") / filename),
                 "timestamp": timestamp,
                 "source": "LFW benchmark",

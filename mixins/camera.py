@@ -15,7 +15,8 @@ import customtkinter as ctk
 
 from config import (
     ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, ADMIN_CAMERA_FPS_DELAY,
-    ENROLLMENT_DETECTION_INTERVAL_SECONDS,
+    ENROLLMENT_DETECTION_INTERVAL_SECONDS, ENROLLMENT_EMBEDDING_SAMPLES,
+    ENROLLMENT_SAMPLE_INTERVAL_SECONDS, FACE_CROP_PADDING_RATIO,
     CTK_SUCCESS, CTK_DANGER, CTK_WARNING,
 )
 from ai_engine import detect_faces, check_face_constraints
@@ -147,6 +148,28 @@ class CameraMixin:
                     display_locked = False
                     display_color = current_color
                     display_text = status_text
+                    self.enrollment_face_samples.clear()
+
+                # Thu nhiều mẫu đạt eKYC vào RAM, cách nhau đủ xa để tránh
+                # lưu 5 bản sao gần như giống hệt của cùng một frame.
+                sample_now = time.perf_counter()
+                if (
+                    display_locked and len(faces) == 1
+                    and sample_now - self._last_enrollment_sample_at
+                    >= ENROLLMENT_SAMPLE_INTERVAL_SECONDS
+                ):
+                    fx1, fy1, fx2, fy2, _ = faces[0]
+                    pad_x = int((fx2 - fx1) * FACE_CROP_PADDING_RATIO)
+                    pad_y = int((fy2 - fy1) * FACE_CROP_PADDING_RATIO)
+                    cx1, cy1 = max(0, fx1 - pad_x), max(0, fy1 - pad_y)
+                    cx2, cy2 = min(fw, fx2 + pad_x), min(fh, fy2 + pad_y)
+                    if cx2 > cx1 and cy2 > cy1:
+                        self.enrollment_face_samples.append(
+                            frame[cy1:cy2, cx1:cx2].copy()
+                        )
+                        self._last_enrollment_sample_at = sample_now
+                        while len(self.enrollment_face_samples) > ENROLLMENT_EMBEDDING_SAMPLES:
+                            self.enrollment_face_samples.popleft()
             
             # Cập nhật biến trạng thái (Atomic)
             self.is_face_valid = display_locked

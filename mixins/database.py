@@ -538,7 +538,9 @@ class DatabaseMixin:
 
     def _edit_employee(self, emp_info):
         """Hiển thị biểu mẫu sửa mã, tên và chức vụ của nhân viên."""
-        dialog = self._open_database_dialog("Sửa thông tin nhân viên", 470, 510)
+        dialog = self._open_database_dialog("Sửa thông tin nhân viên", 500, 580)
+        dialog.resizable(True, True)
+        dialog.minsize(430, 420)
 
         ctk.CTkLabel(
             dialog, text="Sửa thông tin nhân viên",
@@ -549,6 +551,20 @@ class DatabaseMixin:
             font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM,
         ).pack(anchor="w", padx=28, pady=(0, 18))
 
+        # Giữ các nút hành động luôn nhìn thấy; phần biểu mẫu ở giữa có thể cuộn
+        # trên màn hình thấp hoặc khi Windows dùng display scaling lớn.
+        actions = ctk.CTkFrame(dialog, fg_color="transparent")
+        actions.pack(side="bottom", fill="x", padx=28, pady=(10, 20))
+
+        form_scroll = ctk.CTkScrollableFrame(
+            dialog,
+            fg_color="transparent",
+            corner_radius=0,
+            scrollbar_button_color=("#CBD5E1", "#475569"),
+            scrollbar_button_hover_color=("#94A3B8", "#64748B"),
+        )
+        form_scroll.pack(fill="both", expand=True, padx=(20, 12), pady=(0, 2))
+
         entries = {}
         fields = (
             ("id", "Mã nhân viên", emp_info.get("id", "")),
@@ -558,20 +574,19 @@ class DatabaseMixin:
         )
         for key, label, value in fields:
             ctk.CTkLabel(
-                dialog, text=label, font=ctk.CTkFont(size=12, weight="bold"),
+                form_scroll, text=label,
+                font=ctk.CTkFont(size=12, weight="bold"),
                 text_color=CTK_TEXT,
-            ).pack(anchor="w", padx=28)
+            ).pack(anchor="w", padx=8)
             entry = ctk.CTkEntry(
-                dialog, height=38, corner_radius=7,
+                form_scroll, height=38, corner_radius=7,
                 border_color=CTK_ACCENT, fg_color=("#FFFFFF", "#0F172A"),
                 text_color=CTK_TEXT,
             )
-            entry.pack(fill="x", padx=28, pady=(5, 13))
+            entry.pack(fill="x", padx=8, pady=(5, 13))
             entry.insert(0, value)
             entries[key] = entry
 
-        actions = ctk.CTkFrame(dialog, fg_color="transparent")
-        actions.pack(fill="x", padx=28, pady=(5, 22))
         ctk.CTkButton(
             actions, text="Hủy", width=100, height=36,
             fg_color=("#E2E8F0", "#1E293B"),

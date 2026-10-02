@@ -25,6 +25,8 @@ from config import (
     FACE_CONFIDENCE, PERSON_CONFIDENCE, PERSON_CLASS_ID,
     FACE_MIN_SIZE_RATIO, FACE_MAX_SIZE_RATIO, FACE_MAX_TILT_ANGLE,
     KIOSK_MIN_FACE_CONFIDENCE, KIOSK_FACE_EDGE_MARGIN_RATIO,
+    KIOSK_MAX_ROLL_ANGLE, KIOSK_MIN_YAW_RATIO, KIOSK_MAX_YAW_RATIO,
+    KIOSK_MIN_PITCH_RATIO, KIOSK_MAX_PITCH_RATIO,
     CV_COLOR_DEFAULT, CV_COLOR_RED, CV_COLOR_GREEN,
 )
 
@@ -219,13 +221,29 @@ def is_fully_inside(face_box, constraint_box):
     return (fx1 >= cx1 and fy1 >= cy1 and fx2 <= cx2 and fy2 <= cy2)
 
 
-def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=None, strict_mode=False):
+def analyze_face_quality(
+    face_box,
+    mp_results,
+    frame_width,
+    frame_height,
+    frame=None,
+    strict_mode=False,
+    max_tilt_angle=None,
+    yaw_ratio_range=None,
+    pitch_ratio_range=None,
+):
     """
     Phân tích chất lượng khuôn mặt: ngẩng/cúi (pitch), quay ngang (yaw), nghiêng (roll).
     Nếu strict_mode=True, sẽ bật kiểm tra che khuất nghiêm ngặt.
     Returns:
         (is_valid, error_msg)
     """
+    max_tilt_angle = (
+        FACE_MAX_TILT_ANGLE if max_tilt_angle is None else max_tilt_angle
+    )
+    yaw_min, yaw_max = yaw_ratio_range or (0.75, 1.30)
+    pitch_min, pitch_max = pitch_ratio_range or (0.70, 1.60)
+
     if not mp_results or not mp_results.detections:
         return False, "Khuon mat chua ro rang"
     
@@ -273,7 +291,7 @@ def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=
     dy = (pt_right.y - pt_left.y) * frame_height
     if dx != 0:
         angle_roll = math.degrees(math.atan2(dy, dx))
-        if abs(angle_roll) > FACE_MAX_TILT_ANGLE:
+        if abs(angle_roll) > max_tilt_angle:
             return False, "Giu thang mat voi khung hinh"
             
     # 2. YAW (Quay ngang)
@@ -283,7 +301,7 @@ def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=
         return False, "Khuon mat chua ro rang"
     
     yaw_ratio = dist_nose_left / dist_nose_right
-    if yaw_ratio > 1.3 or yaw_ratio < 0.75:
+    if yaw_ratio > yaw_max or yaw_ratio < yaw_min:
         return False, "Vui long nhin thang vao camera"
         
     # 3. PITCH (Ngẩng / cúi)
@@ -294,8 +312,8 @@ def analyze_face_quality(face_box, mp_results, frame_width, frame_height, frame=
         return False, "Khuon mat chua ro rang"
         
     pitch_ratio = dist_eye_nose / dist_nose_mouth
-    if pitch_ratio > 1.6 or pitch_ratio < 0.7:
-        return False, "Khuon mat chua ro rang"
+    if pitch_ratio > pitch_max or pitch_ratio < pitch_min:
+        return False, "Vui long dieu chinh goc ngang cui"
         
     # 4. GEOMETRIC OCCLUSION (Chỉ bật khi chụp ảnh để tránh nhiễu nhấp nháy UI)
     if strict_mode:
@@ -451,7 +469,7 @@ def validate_kiosk_face_candidate(face_box, confidence, frame, face_detector):
     if face_h <= 0:
         return False, "Khuôn mặt chưa rõ ràng"
     aspect_ratio = face_w / face_h
-    if aspect_ratio < 0.62 or aspect_ratio > 1.18:
+    if aspect_ratio < 0.55 or aspect_ratio > 1.30:
         return False, "Vui lòng đưa toàn bộ khuôn mặt vào khung"
 
     if face_detector is None:
@@ -468,12 +486,21 @@ def validate_kiosk_face_candidate(face_box, confidence, frame, face_detector):
             frame_h,
             frame=frame,
             strict_mode=False,
+            max_tilt_angle=KIOSK_MAX_ROLL_ANGLE,
+            yaw_ratio_range=(KIOSK_MIN_YAW_RATIO, KIOSK_MAX_YAW_RATIO),
+            pitch_ratio_range=(KIOSK_MIN_PITCH_RATIO, KIOSK_MAX_PITCH_RATIO),
         )
         if not is_valid:
+            # YOLO đã xác nhận đây là khuôn mặt rõ với confidence đủ cao.
+            # MediaPipe đôi khi mất landmark ở góc nghiêng; không nên vì vậy mà
+            # chặn ArcFace trước khi mô hình có cơ hội đối chiếu danh tính.
+            if error == "Khuon mat chua ro rang":
+                print("[KIOSK QUALITY] Không đủ landmark; chuyển sang ArcFace dự phòng")
+                return True, ""
             message_map = {
-                "Khuon mat chua ro rang": "Vui lòng đưa toàn bộ khuôn mặt vào khung",
-                "Giu thang mat voi khung hinh": "Vui lòng giữ thẳng khuôn mặt",
-                "Vui long nhin thang vao camera": "Vui lòng nhìn thẳng vào camera",
+                "Giu thang mat voi khung hinh": "Góc nghiêng quá lớn, vui lòng nghiêng lại một chút",
+                "Vui long nhin thang vao camera": "Góc quay quá lớn, vui lòng quay nhẹ về camera",
+                "Vui long dieu chinh goc ngang cui": "Góc ngẩng/cúi quá lớn, vui lòng điều chỉnh nhẹ",
             }
             return False, message_map.get(error, "Vui lòng căn chỉnh lại khuôn mặt")
         return True, ""

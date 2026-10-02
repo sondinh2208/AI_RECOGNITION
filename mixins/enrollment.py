@@ -14,6 +14,8 @@ import time
 import threading
 import pickle
 import re
+import numpy as np
+from tkinter import messagebox
 from datetime import datetime
 from pathlib import Path
 from PIL import Image
@@ -23,12 +25,43 @@ from config import (
     CTK_CARD, CTK_ACCENT, CTK_PRIMARY, CTK_TEXT, CTK_TEXT_DIM,
     CTK_SUCCESS, CTK_WARNING, CTK_DANGER, CTK_SIDEBAR_HOVER,
     ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, DATA_FACES_DIR, DEEPFACE_MODEL_NAME,
+    ENROLLMENT_EMBEDDING_SAMPLES, ENROLLMENT_MIN_SAMPLES,
+    FACE_CROP_PADDING_RATIO,
 )
 from ai_engine import detect_faces, align_face_crop
 
 
 class EnrollmentMixin:
     """Mixin quản lý nghiệp vụ đăng ký nhân viên và thu thập dữ liệu khuôn mặt."""
+
+    @staticmethod
+    def _find_employee_id_in_profiles(profiles, emp_id):
+        """Trả về mã đã tồn tại, so sánh không phân biệt hoa/thường."""
+        if not isinstance(profiles, dict):
+            return None
+        normalized_id = str(emp_id).strip().casefold()
+        for key, profile in profiles.items():
+            stored_id = profile.get("id", key) if isinstance(profile, dict) else key
+            if (
+                str(key).strip().casefold() == normalized_id
+                or str(stored_id).strip().casefold() == normalized_id
+            ):
+                return str(stored_id).strip() or str(key).strip()
+        return None
+
+    def _find_existing_employee_id(self, emp_id):
+        """Kiểm tra mã trong dữ liệu trên đĩa và cache hiện tại."""
+        embeddings_file = Path("data/embeddings.pkl")
+        if embeddings_file.exists():
+            with open(embeddings_file, "rb") as file:
+                profiles = pickle.load(file)
+            duplicate = self._find_employee_id_in_profiles(profiles, emp_id)
+            if duplicate:
+                return duplicate
+
+        return self._find_employee_id_in_profiles(
+            getattr(self, "embeddings_cache", {}), emp_id
+        )
 
     def _build_form_column(self):
         """Xây dựng form đăng ký nhân viên mới."""
@@ -359,6 +392,30 @@ class EnrollmentMixin:
         if re.search(r'[\s<>:"/\\|?*@]', emp_id):
             self._set_status("❌ MÃ NHÂN VIÊN không được có khoảng trắng hoặc ký tự đặc biệt!", CTK_DANGER)
             return
+        try:
+            duplicate_id = self._find_existing_employee_id(emp_id)
+        except Exception as exc:
+            self._set_status(
+                "❌ Không thể kiểm tra dữ liệu nhân viên. Vui lòng thử lại!",
+                CTK_DANGER,
+            )
+            messagebox.showerror(
+                "Không thể kiểm tra mã nhân viên",
+                f"Không thể đọc dữ liệu đăng ký:\n{exc}",
+                parent=self,
+            )
+            return
+        if duplicate_id:
+            warning = f"Mã nhân viên {duplicate_id} đã tồn tại. Vui lòng sử dụng mã khác."
+            self._set_status(f"❌ {warning}", CTK_DANGER)
+            messagebox.showwarning(
+                "Mã nhân viên đã tồn tại",
+                warning,
+                parent=self,
+            )
+            self.entry_id.focus_set()
+            self.entry_id.select_range(0, "end")
+            return
         if not role:
             self._set_status("❌ Vui lòng nhập CHỨC VỤ!", CTK_DANGER)
             return
@@ -373,6 +430,19 @@ class EnrollmentMixin:
         if not getattr(self, 'is_face_valid', False):
             self._set_status("❌ KHUÔN MẶT CHƯA HỢP LỆ: Vui lòng đưa mặt vào đúng vị trí khung xanh!", CTK_DANGER)
             return
+
+        buffered_samples = [
+            sample.copy() for sample in list(
+                getattr(self, 'enrollment_face_samples', [])
+            )[-ENROLLMENT_EMBEDDING_SAMPLES:]
+        ]
+        if len(buffered_samples) < ENROLLMENT_MIN_SAMPLES:
+            self._set_status(
+                f"⏳ Vui lòng giữ khuôn mặt trong khung thêm một chút "
+                f"({len(buffered_samples)}/{ENROLLMENT_MIN_SAMPLES} mẫu).",
+                CTK_WARNING,
+            )
+            return
         
         frame = self.current_frame.copy()
         fw, fh = self.frame_width, self.frame_height
@@ -382,8 +452,8 @@ class EnrollmentMixin:
         face_crop = frame
         if len(faces) > 0:
             fx1, fy1, fx2, fy2, _ = faces[0]
-            pad_x = int((fx2 - fx1) * 0.1)
-            pad_y = int((fy2 - fy1) * 0.1)
+            pad_x = int((fx2 - fx1) * FACE_CROP_PADDING_RATIO)
+            pad_y = int((fy2 - fy1) * FACE_CROP_PADDING_RATIO)
             cx1 = max(0, fx1 - pad_x)
             cy1 = max(0, fy1 - pad_y)
             cx2 = min(fw, fx2 + pad_x)
@@ -409,11 +479,11 @@ class EnrollmentMixin:
         # 5. Khởi chạy AI Thread chạy ngầm (Non-blocking UI)
         threading.Thread(
             target=self._ai_worker_save_face,
-            args=(face_crop, frame, name, emp_id, role, department),
+            args=(buffered_samples, face_crop, frame, name, emp_id, role, department),
             daemon=True
         ).start()
 
-    def _ai_worker_save_face(self, face_crop, full_frame, name, emp_id, role, department):
+    def _ai_worker_save_face(self, face_samples, face_crop, full_frame, name, emp_id, role, department):
         """
         Background Thread: Trích xuất Vector khuôn mặt qua DeepFace và lưu file.
         Không thao tác trực tiếp với UI ở đây.
@@ -423,20 +493,64 @@ class EnrollmentMixin:
             
             # --- 1. Tự động căn chỉnh xoay thẳng mặt (Face Alignment) ---
             detector = getattr(self, 'face_detector', None)
-            aligned_crop, tilt_angle = align_face_crop(face_crop, detector)
-            if abs(tilt_angle) > 2.0:
-                print(f"[ENROLLMENT AI] Đã căn chỉnh xoay mặt {tilt_angle:.1f}° khi đăng ký")
-                face_crop = aligned_crop
+            embedding_vectors = []
+            aligned_samples = []
+            for sample in face_samples:
+                aligned_sample, tilt_angle = align_face_crop(sample, detector)
+                reps = DeepFace.represent(
+                    img_path=aligned_sample,
+                    model_name=DEEPFACE_MODEL_NAME,
+                    detector_backend="skip",
+                    enforce_detection=False,
+                )
+                if reps and reps[0].get("embedding") is not None:
+                    embedding_vectors.append(reps[0]["embedding"])
+                    aligned_samples.append(aligned_sample)
 
-            # --- 2. Trích xuất Vector AI (ArcFace 512-dim) ---
-            reps = DeepFace.represent(
-                img_path=face_crop,
-                model_name=DEEPFACE_MODEL_NAME,
-                detector_backend="skip",
-                enforce_detection=False
-            )
-            embedding_vector = reps[0]["embedding"] if reps and len(reps) > 0 else None
+            if len(embedding_vectors) < ENROLLMENT_MIN_SAMPLES:
+                raise RuntimeError(
+                    f"Chỉ tạo được {len(embedding_vectors)}/{ENROLLMENT_MIN_SAMPLES} "
+                    "vector khuôn mặt hợp lệ"
+                )
+
+            # Giữ trường embedding dạng đơn cho mã cũ: dùng centroid đã chuẩn hóa.
+            normalized_vectors = []
+            for vector in embedding_vectors:
+                value = np.asarray(vector, dtype=np.float32)
+                norm = float(np.linalg.norm(value))
+                if norm > 1e-12:
+                    normalized_vectors.append(value / norm)
+            centroid = np.mean(np.stack(normalized_vectors), axis=0)
+            centroid /= np.linalg.norm(centroid)
+            embedding_vector = centroid.tolist()
+
+            # Ảnh hiển thị duy nhất là mẫu gần centroid nhất.
+            representative_index = int(np.argmax(
+                np.stack(normalized_vectors) @ centroid
+            ))
+            face_crop = aligned_samples[representative_index]
             
+            # Đọc lại nguồn dữ liệu chuẩn ngay trước lúc ghi để không ghi đè
+            # nếu mã vừa được đăng ký bởi một thao tác khác.
+            embeddings_file = Path("data/embeddings.pkl")
+            embeddings_data = {}
+            if embeddings_file.exists():
+                try:
+                    with open(embeddings_file, "rb") as f:
+                        embeddings_data = pickle.load(f)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Không thể đọc dữ liệu nhân viên hiện tại: {exc}"
+                    ) from exc
+
+            duplicate_id = self._find_employee_id_in_profiles(
+                embeddings_data, emp_id
+            )
+            if duplicate_id:
+                raise ValueError(
+                    f"Mã nhân viên {duplicate_id} đã tồn tại; dữ liệu không được ghi đè"
+                )
+
             # --- 2. Lưu ảnh ra các thư mục ---
             def safe_component(value, fallback):
                 value = re.sub(r'[<>:"/\\|?*@]', "", value.strip())
@@ -468,29 +582,23 @@ class EnrollmentMixin:
                 cv2.imwrite(str(filepath_crop), face_crop)
             
             # --- 3. Lưu Vector vào embeddings.pkl ---
-            embeddings_file = Path("data/embeddings.pkl")
-            embeddings_data = {}
-            if embeddings_file.exists():
-                try:
-                    with open(embeddings_file, "rb") as f:
-                        embeddings_data = pickle.load(f)
-                except Exception as pe:
-                    print(f"[AI WORKER] Cảnh báo đọc embeddings.pkl: {pe}")
-                    embeddings_data = {}
-                    
             embeddings_data[emp_id] = {
                 "id": emp_id,
                 "name": name,
                 "role": role,
                 "department": department,
                 "embedding": embedding_vector,
+                "embeddings": embedding_vectors,
+                "embedding_count": len(embedding_vectors),
                 "image_path": str(filepath_main),
                 "timestamp": timestamp,
                 "recognition_enabled": True,
             }
             
-            with open(embeddings_file, "wb") as f:
+            temporary_file = embeddings_file.with_suffix(".pkl.tmp")
+            with open(temporary_file, "wb") as f:
                 pickle.dump(embeddings_data, f)
+            temporary_file.replace(embeddings_file)
                 
             # Cập nhật ngay cache embeddings trong RAM
             self.embeddings_cache = embeddings_data
@@ -518,6 +626,8 @@ class EnrollmentMixin:
         # 3. Cập nhật kết quả
         if success:
             self._set_status(f"✅ Quét và lưu khuôn mặt thành công: {name} ({emp_id})!", CTK_SUCCESS)
+            self.enrollment_face_samples.clear()
+            self._last_enrollment_sample_at = 0.0
             
             # Tự động xóa các ô nhập liệu
             self.entry_name.delete(0, "end")

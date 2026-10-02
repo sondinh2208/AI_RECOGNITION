@@ -15,6 +15,7 @@ import time
 import threading
 from datetime import datetime
 from pathlib import Path
+from tkinter import filedialog, messagebox
 import numpy as np
 from PIL import Image
 import customtkinter as ctk
@@ -22,7 +23,12 @@ import customtkinter as ctk
 from config import (
     CTK_CARD, CTK_ACCENT, CTK_TEXT, CTK_TEXT_DIM, CTK_PRIMARY, CTK_PRIMARY_HOVER,
     CTK_SUCCESS, CTK_DANGER, CTK_SIDEBAR_HOVER, CTK_BG_MAIN, ADMIN_CAMERA_FPS_DELAY,
-    DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, ARCFACE_TOP2_MARGIN, KIOSK_MIN_FACE_WIDTH,
+    DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, ARCFACE_TOP2_MARGIN,
+    ARCFACE_CONDITIONAL_THRESHOLD, ARCFACE_CONDITIONAL_MARGIN,
+    ARCFACE_CONDITIONAL_CONFIRMATIONS, ARCFACE_CONDITIONAL_MAX_ATTEMPTS,
+    ARCFACE_CONDITIONAL_WINDOW_SECONDS, KIOSK_MIN_FACE_WIDTH,
+    FACE_CROP_PADDING_RATIO,
+    KIOSK_PRIMARY_FACE_MIN_AREA_RATIO, KIOSK_PRIMARY_FACE_LEAVE_AREA_RATIO,
     KIOSK_FACE_STABLE_SECONDS, KIOSK_FACE_LEAVE_SECONDS,
     KIOSK_ATTENDANCE_COOLDOWN_SECONDS, KIOSK_UNKNOWN_CONFIRMATIONS,
     KIOSK_DETECTION_INTERVAL_SECONDS,
@@ -35,6 +41,20 @@ from .ui_helpers import (
     make_circular_avatar,
     create_default_avatar,
 )
+
+
+def classify_recognition_score(distance, margin):
+    """Phân loại điểm nhận diện thành chắc chắn, có điều kiện, mơ hồ hoặc lạ."""
+    if distance <= ARCFACE_THRESHOLD and margin >= ARCFACE_TOP2_MARGIN:
+        return "strict"
+    if (
+        distance <= ARCFACE_CONDITIONAL_THRESHOLD
+        and margin >= ARCFACE_CONDITIONAL_MARGIN
+    ):
+        return "conditional"
+    if distance <= ARCFACE_CONDITIONAL_THRESHOLD:
+        return "ambiguous"
+    return "unknown"
 
 
 class AttendanceMixin:
@@ -242,7 +262,7 @@ class AttendanceMixin:
 
         self.kiosk_greeting_title = ctk.CTkLabel(
             self.kiosk_greeting_card,
-            text="Vui lòng đứng thẳng, nhìn vào camera để điểm danh.",
+            text="Đưa đầy đủ khuôn mặt vào khung để điểm danh.",
             font=ctk.CTkFont(size=13, weight="bold"), text_color=CTK_TEXT,
             anchor="w"
         )
@@ -374,6 +394,22 @@ class AttendanceMixin:
             command=lambda: self._navigate("add_employee")
         )
         self.btn_kiosk_register.pack_forget()
+
+        # Công cụ đánh giá ảnh gốc, tách biệt hoàn toàn khỏi điểm danh thật.
+        self.btn_test_image = ctk.CTkButton(
+            self.kiosk_result_card,
+            text="▧   Kiểm thử bằng file ảnh",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=38,
+            corner_radius=8,
+            fg_color="transparent",
+            border_width=1,
+            border_color=CTK_ACCENT,
+            hover_color=CTK_SIDEBAR_HOVER,
+            text_color=CTK_TEXT,
+            command=self._select_recognition_test_image,
+        )
+        self.btn_test_image.pack(fill="x", padx=22, pady=(0, 18))
 
         # ==========================================
         # BOTTOM ROW: BẢNG LỊCH SỬ ĐIỂM DANH HÔM NAY
@@ -608,18 +644,61 @@ class AttendanceMixin:
             faces = cached_faces
             self.kiosk_face_count = len(faces)
             
-            # 2. Vẽ khung góc nhẹ nhàng bám theo khuôn mặt (Xanh neon chuẩn Mockup)
-            for (fx1, fy1, fx2, fy2, fconf) in faces:
-                draw_kiosk_face_box(frame, fx1, fy1, fx2, fy2, color=(100, 255, 100), thickness=3)
+            # 2. Chọn khuôn mặt gần camera nhất theo diện tích bounding box.
+            ranked_faces = sorted(
+                faces,
+                key=lambda face: (face[2] - face[0]) * (face[3] - face[1]),
+                reverse=True,
+            )
+            primary_face = ranked_faces[0] if ranked_faces else None
+            primary_area = (
+                (primary_face[2] - primary_face[0])
+                * (primary_face[3] - primary_face[1])
+                if primary_face else 0
+            )
+            second_area = (
+                (ranked_faces[1][2] - ranked_faces[1][0])
+                * (ranked_faces[1][3] - ranked_faces[1][1])
+                if len(ranked_faces) > 1 else 0
+            )
+            primary_is_clear = bool(
+                primary_face
+                and (
+                    second_area <= 0
+                    or primary_area / second_area >= KIOSK_PRIMARY_FACE_MIN_AREA_RATIO
+                )
+            )
+
+            # Mặt chính màu xanh; các mặt phía xa chỉ đánh dấu xám và bị bỏ qua.
+            for face in faces:
+                fx1, fy1, fx2, fy2, _ = face
+                is_primary = face == primary_face
+                draw_kiosk_face_box(
+                    frame, fx1, fy1, fx2, fy2,
+                    color=(100, 255, 100) if is_primary else (150, 150, 150),
+                    thickness=3 if is_primary else 1,
+                )
                 
             curr_now = time.time()
-            if len(faces) > 0:
+            waiting_for_departure = getattr(
+                self, '_kiosk_waiting_for_departure', False
+            )
+            tracked_primary_present = bool(primary_face)
+            active_area = getattr(self, '_kiosk_active_face_area', None)
+            if waiting_for_departure and active_area:
+                tracked_primary_present = (
+                    primary_area >= active_area * KIOSK_PRIMARY_FACE_LEAVE_AREA_RATIO
+                )
+
+            if tracked_primary_present:
                 self._kiosk_last_face_ts = curr_now
                 self._kiosk_face_absent_since = None
-                if len(faces) == 1 and self._kiosk_face_stable_since is None:
-                    self._kiosk_face_stable_since = curr_now
-                elif len(faces) > 1:
-                    self._kiosk_face_stable_since = None
+                if not waiting_for_departure:
+                    if primary_is_clear and self._kiosk_face_stable_since is None:
+                        self._kiosk_face_stable_since = curr_now
+                    elif not primary_is_clear:
+                        self._kiosk_face_stable_since = None
+                if len(faces) > 1 and not primary_is_clear and not waiting_for_departure:
                     if curr_now - getattr(self, '_last_multi_face_notice_ts', 0) >= 1.0:
                         self._last_multi_face_notice_ts = curr_now
                         self._safe_after(0, self._show_multiple_faces_notice)
@@ -649,13 +728,13 @@ class AttendanceMixin:
                 if self._kiosk_face_stable_since is not None else 0.0
             )
             if (
-                len(faces) == 1
+                primary_face is not None
+                and primary_is_clear
                 and not self.is_recognizing
                 and not getattr(self, '_kiosk_waiting_for_departure', False)
                 and face_stable_for >= KIOSK_FACE_STABLE_SECONDS
             ):
-                best_face = max(faces, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]))
-                fx1, fy1, fx2, fy2, fconf = best_face
+                fx1, fy1, fx2, fy2, fconf = primary_face
                 face_w = fx2 - fx1
                 face_h = fy2 - fy1
                 
@@ -679,8 +758,8 @@ class AttendanceMixin:
                         )
                         continue
 
-                    pad_x = int(face_w * 0.20)
-                    pad_y = int(face_h * 0.20)
+                    pad_x = int(face_w * FACE_CROP_PADDING_RATIO)
+                    pad_y = int(face_h * FACE_CROP_PADDING_RATIO)
                     cx1 = max(0, fx1 - pad_x)
                     cy1 = max(0, fy1 - pad_y)
                     cx2 = min(fw, fx2 + pad_x)
@@ -690,6 +769,7 @@ class AttendanceMixin:
                         cropped_img = clean_frame[cy1:cy2, cx1:cx2].copy()
                         # Đặt cờ self.is_recognizing = True để bỏ qua các frame tiếp theo
                         self.is_recognizing = True
+                        self._kiosk_active_face_area = primary_area
                         self._kiosk_face_stable_since = None
                         
                         self._safe_after(0, self._on_kiosk_recognizing_started)
@@ -823,17 +903,20 @@ class AttendanceMixin:
         self._show_auto_scan_status("◌  Đang xác minh khuôn mặt...", CTK_PRIMARY)
 
     def _show_multiple_faces_notice(self):
-        """Thông báo rõ khi có nhiều hơn một khuôn mặt trong camera."""
+        """Yêu cầu làm rõ khuôn mặt chính khi hai người đứng gần ngang nhau."""
         if self.is_recognizing or getattr(self, '_kiosk_waiting_for_departure', False):
             return
         self._kiosk_unknown_attempts = 0
         self._is_kiosk_ui_idle = False
-        self.kiosk_res_title.configure(text="Có nhiều khuôn mặt", text_color=CTK_TEXT)
+        self.kiosk_res_title.configure(
+            text="Chưa xác định người gần nhất", text_color=CTK_TEXT
+        )
         self.kiosk_res_sub.configure(
-            text="Vui lòng chỉ để một người trong khung hình", text_color=CTK_TEXT_DIM
+            text="Người cần điểm danh vui lòng tiến gần camera hơn",
+            text_color=CTK_TEXT_DIM,
         )
         self._show_auto_scan_status(
-            "●  Đang chờ một khuôn mặt", ("#B45309", "#FBBF24")
+            "●  Đang chờ khuôn mặt chính", ("#B45309", "#FBBF24")
         )
 
     def _on_kiosk_face_quality_rejected(self, message):
@@ -858,6 +941,106 @@ class AttendanceMixin:
         )
         self._show_auto_scan_status("◌  Vui lòng giữ nguyên khuôn mặt", CTK_PRIMARY)
 
+    def _on_kiosk_conditional_confirmation_pending(self, votes, attempts, distance, margin):
+        """Yêu cầu khung xác minh thứ hai cho kết quả đúng Top 1 nhưng distance cao."""
+        self._is_kiosk_ui_idle = False
+        self.kiosk_res_title.configure(text="Đang xác minh bổ sung", text_color=CTK_TEXT)
+        self.kiosk_res_sub.configure(
+            text=(
+                f"Ánh sáng hoặc góc mặt chưa tối ưu · "
+                f"{votes}/{ARCFACE_CONDITIONAL_CONFIRMATIONS} phiếu, "
+                f"lượt {attempts}/{ARCFACE_CONDITIONAL_MAX_ATTEMPTS}"
+            ),
+            text_color=CTK_TEXT_DIM,
+        )
+        self._show_auto_scan_status(
+            "◌  Vui lòng giữ khuôn mặt ổn định thêm một chút", CTK_PRIMARY
+        )
+        print(
+            f"[KIOSK AI] Cửa sổ xác minh: votes={votes}/"
+            f"{ARCFACE_CONDITIONAL_CONFIRMATIONS}, attempts={attempts}/"
+            f"{ARCFACE_CONDITIONAL_MAX_ATTEMPTS}, distance={distance:.4f}, "
+            f"margin={margin:.4f}"
+        )
+
+    def _clear_conditional_confirmation(self):
+        self._kiosk_conditional_candidate_id = None
+        self._kiosk_conditional_confirmations = 0
+        self._kiosk_conditional_attempts = 0
+        self._kiosk_conditional_started_at = None
+        self._kiosk_conditional_distances = []
+        self._kiosk_conditional_margins = []
+        self._kiosk_conditional_votes = {}
+
+    def _conditional_window_expired(self, now=None):
+        now = time.time() if now is None else now
+        started = self._kiosk_conditional_started_at
+        return bool(
+            started is not None
+            and now - started > ARCFACE_CONDITIONAL_WINDOW_SECONDS
+        )
+
+    def _record_conditional_vote(self, candidate_id, distance, margin, now=None):
+        """Ghi phiếu theo từng ứng viên trong một cửa sổ tối đa 5 frame."""
+        now = time.time() if now is None else now
+        candidate_id = str(candidate_id or "")
+        if (
+            self._kiosk_conditional_started_at is None
+            or self._conditional_window_expired(now)
+        ):
+            self._clear_conditional_confirmation()
+            self._kiosk_conditional_started_at = now
+
+        self._kiosk_conditional_attempts += 1
+        votes = self._kiosk_conditional_votes.setdefault(
+            candidate_id, {"distances": [], "margins": []}
+        )
+        votes["distances"].append(float(distance))
+        votes["margins"].append(float(margin))
+
+        # Dẫn đầu theo số phiếu; nếu hòa thì ưu tiên median distance thấp hơn.
+        leader_id, leader_votes = min(
+            self._kiosk_conditional_votes.items(),
+            key=lambda item: (
+                -len(item[1]["distances"]),
+                float(np.median(item[1]["distances"])),
+            ),
+        )
+        self._kiosk_conditional_candidate_id = leader_id
+        self._kiosk_conditional_confirmations = len(leader_votes["distances"])
+        self._kiosk_conditional_distances = list(leader_votes["distances"])
+        self._kiosk_conditional_margins = list(leader_votes["margins"])
+        return self._conditional_window_state()
+
+    def _record_conditional_noise(self, now=None):
+        """Frame nhiễu tiêu tốn một lượt nhưng không xóa phiếu tốt đã có."""
+        now = time.time() if now is None else now
+        if self._kiosk_conditional_candidate_id is None:
+            return None
+        if self._conditional_window_expired(now):
+            self._clear_conditional_confirmation()
+            return None
+        self._kiosk_conditional_attempts += 1
+        if self._kiosk_conditional_attempts >= ARCFACE_CONDITIONAL_MAX_ATTEMPTS:
+            self._clear_conditional_confirmation()
+            return None
+        return self._conditional_window_state()
+
+    def _conditional_window_state(self):
+        distances = self._kiosk_conditional_distances
+        margins = self._kiosk_conditional_margins
+        return {
+            "candidate_id": self._kiosk_conditional_candidate_id,
+            "votes": self._kiosk_conditional_confirmations,
+            "attempts": self._kiosk_conditional_attempts,
+            "exhausted": (
+                self._kiosk_conditional_attempts
+                >= ARCFACE_CONDITIONAL_MAX_ATTEMPTS
+            ),
+            "median_distance": float(np.median(distances)) if distances else None,
+            "median_margin": float(np.median(margins)) if margins else None,
+        }
+
     def _show_auto_scan_status(self, text, color=("#15803D", "#4ADE80")):
         """Hiển thị trạng thái của cơ chế quét tự động ở cuối panel kết quả."""
         if hasattr(self, 'btn_scan_next'):
@@ -873,6 +1056,138 @@ class AttendanceMixin:
         if hasattr(self, 'btn_scan_next'):
             self.btn_scan_next.configure(text="↻   Quét lại")
             self.btn_scan_next.pack(fill="x", padx=22, pady=(0, 8))
+
+    def _select_recognition_test_image(self):
+        """Chọn ảnh gốc để đánh giá thuật toán mà không ghi điểm danh."""
+        image_path = filedialog.askopenfilename(
+            parent=self,
+            title="Chọn ảnh khuôn mặt để kiểm thử",
+            filetypes=[
+                ("Ảnh khuôn mặt", "*.jpg *.jpeg *.png *.bmp *.webp"),
+                ("Tất cả tệp", "*.*"),
+            ],
+        )
+        if not image_path:
+            return
+        self.btn_test_image.configure(state="disabled", text="◌   Đang phân tích ảnh...")
+        threading.Thread(
+            target=self._worker_recognition_test_image,
+            args=(image_path,),
+            daemon=True,
+        ).start()
+
+    def _worker_recognition_test_image(self, image_path):
+        """Chạy pipeline ảnh tĩnh trong nền, bao gồm cả hồ sơ chỉ kiểm thử."""
+        try:
+            from deepface import DeepFace
+
+            image_bytes = np.fromfile(image_path, dtype=np.uint8)
+            image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+            if image is None:
+                raise ValueError("Không thể đọc định dạng ảnh đã chọn")
+
+            faces = detect_faces(self.face_model, image, self.device)
+            if len(faces) != 1:
+                raise ValueError(
+                    f"Ảnh phải có đúng một khuôn mặt; hệ thống phát hiện {len(faces)}"
+                )
+            fx1, fy1, fx2, fy2, _ = faces[0]
+            height, width = image.shape[:2]
+            pad_x = int((fx2 - fx1) * FACE_CROP_PADDING_RATIO)
+            pad_y = int((fy2 - fy1) * FACE_CROP_PADDING_RATIO)
+            x1, y1 = max(0, fx1 - pad_x), max(0, fy1 - pad_y)
+            x2, y2 = min(width, fx2 + pad_x), min(height, fy2 + pad_y)
+            face_crop = image[y1:y2, x1:x2]
+            if face_crop.size == 0:
+                raise ValueError("Vùng khuôn mặt sau khi crop bị rỗng")
+            face_crop, _ = align_face_crop(face_crop, getattr(self, 'face_detector', None))
+
+            representations = DeepFace.represent(
+                img_path=face_crop,
+                model_name=DEEPFACE_MODEL_NAME,
+                detector_backend="skip",
+                enforce_detection=False,
+            )
+            if not representations or representations[0].get("embedding") is None:
+                raise ValueError("ArcFace không tạo được vector khuôn mặt")
+            query_vector = representations[0]["embedding"]
+
+            if self.embeddings_cache is None:
+                self._reload_embeddings_cache()
+            ranked = []
+            for emp_info in (self.embeddings_cache or {}).values():
+                vectors = emp_info.get("embeddings") or []
+                if not vectors and emp_info.get("embedding") is not None:
+                    vectors = [emp_info["embedding"]]
+                if vectors:
+                    distance = min(
+                        calculate_cosine_distance(query_vector, vector)
+                        for vector in vectors
+                    )
+                    ranked.append((distance, emp_info))
+            ranked.sort(key=lambda item: item[0])
+            if not ranked:
+                raise ValueError("Cơ sở dữ liệu chưa có vector khuôn mặt")
+
+            best_distance, best_profile = ranked[0]
+            second_distance, second_profile = (
+                ranked[1] if len(ranked) > 1 else (float("inf"), None)
+            )
+            margin = second_distance - best_distance
+            test_decision = classify_recognition_score(best_distance, margin)
+            if test_decision == "strict":
+                conclusion = "ĐẠT — nhận diện đủ điều kiện"
+            elif test_decision == "conditional":
+                conclusion = "CÓ ĐIỀU KIỆN — camera cần xác nhận cùng người lần hai"
+            elif test_decision == "ambiguous":
+                conclusion = "MƠ HỒ — Top 1 và Top 2 quá gần nhau"
+            else:
+                conclusion = "KHÔNG ĐẠT — vượt ngưỡng nhận diện"
+
+            result = {
+                "file": Path(image_path).name,
+                "best_profile": best_profile,
+                "best_distance": best_distance,
+                "second_profile": second_profile,
+                "second_distance": second_distance,
+                "margin": margin,
+                "conclusion": conclusion,
+            }
+            self._safe_after(0, self._show_recognition_test_result, result, None)
+        except Exception as exc:
+            self._safe_after(0, self._show_recognition_test_result, None, str(exc))
+
+    def _show_recognition_test_result(self, result, error):
+        """Hiển thị thông số kiểm thử; không thay đổi UI hay lịch sử điểm danh."""
+        if hasattr(self, 'btn_test_image'):
+            self.btn_test_image.configure(
+                state="normal", text="▧   Kiểm thử bằng file ảnh"
+            )
+        if error:
+            messagebox.showerror("Không thể kiểm thử ảnh", error, parent=self)
+            return
+
+        best = result["best_profile"]
+        second = result["second_profile"] or {}
+        best_state = (
+            "Đang nhận diện"
+            if best.get("recognition_enabled", True) else "Chỉ kiểm thử"
+        )
+        details = (
+            f"File: {result['file']}\n\n"
+            f"Kết luận: {result['conclusion']}\n\n"
+            f"Top 1: {best.get('name', 'Không rõ')} ({best.get('id', '---')})\n"
+            f"Distance: {result['best_distance']:.4f}\n"
+            f"Trạng thái hồ sơ: {best_state}\n\n"
+            f"Top 2: {second.get('name', 'Không có')} ({second.get('id', '---')})\n"
+            f"Distance: {result['second_distance']:.4f}\n\n"
+            f"Margin: {result['margin']:.4f} / yêu cầu {ARCFACE_TOP2_MARGIN:.4f}\n"
+            f"Threshold chắc chắn: {ARCFACE_THRESHOLD:.4f}\n"
+            f"Vùng có điều kiện: ≤ {ARCFACE_CONDITIONAL_THRESHOLD:.4f}, "
+            f"margin ≥ {ARCFACE_CONDITIONAL_MARGIN:.4f}\n\n"
+            "Kết quả này chỉ phục vụ kiểm thử và không được ghi vào lịch sử."
+        )
+        messagebox.showinfo("Kết quả kiểm thử nhận diện", details, parent=self)
 
     def _ai_worker_recognize(self, cropped_img):
         """
@@ -922,9 +1237,15 @@ class AttendanceMixin:
                 # kiểm thử nhưng tuyệt đối không tham gia nhận diện điểm danh.
                 if not emp_info.get("recognition_enabled", True):
                     continue
-                emp_emb = emp_info.get("embedding")
-                if emp_emb is not None:
-                    dist = calculate_cosine_distance(query_vector, emp_emb)
+                employee_vectors = emp_info.get("embeddings") or []
+                if not employee_vectors and emp_info.get("embedding") is not None:
+                    employee_vectors = [emp_info["embedding"]]
+                if employee_vectors:
+                    # Khoảng cách của danh tính là mẫu phù hợp nhất trong hồ sơ.
+                    dist = min(
+                        calculate_cosine_distance(query_vector, emp_emb)
+                        for emp_emb in employee_vectors
+                    )
                     ranked_matches.append((dist, emp_info))
 
             ranked_matches.sort(key=lambda item: item[0])
@@ -933,45 +1254,90 @@ class AttendanceMixin:
             top2_margin = second_dist - best_dist
             second_name = ranked_matches[1][1].get("name") if len(ranked_matches) > 1 else "Không có"
 
+            decision = classify_recognition_score(best_dist, top2_margin)
             print(
                 f"[KIOSK AI] Top 1: {best_emp.get('name') if best_emp else 'Không có'} "
                 f"({best_dist:.4f}) | Top 2: {second_name} ({second_dist:.4f}) | "
-                f"Margin: {top2_margin:.4f}/{ARCFACE_TOP2_MARGIN} | "
-                f"Threshold: {ARCFACE_THRESHOLD}"
+                f"Margin: {top2_margin:.4f} | Threshold: {ARCFACE_THRESHOLD}/"
+                f"{ARCFACE_CONDITIONAL_THRESHOLD} | Decision: {decision}"
             )
 
-            # Khoảng cách đạt nhưng hai ứng viên quá gần nhau là kết quả mơ hồ,
-            # không được biến thành thành công hoặc ghi nhận là người lạ.
-            if (
-                best_emp is not None
-                and best_dist <= ARCFACE_THRESHOLD
-                and top2_margin < ARCFACE_TOP2_MARGIN
-            ):
+            if best_emp is not None and decision == "strict":
                 self._kiosk_unknown_attempts = 0
-                self._safe_after(
-                    0, self._on_kiosk_recognition_ambiguous,
-                    best_dist, second_dist, top2_margin,
-                )
-            elif (
-                best_emp is not None
-                and best_dist <= ARCFACE_THRESHOLD
-                and top2_margin >= ARCFACE_TOP2_MARGIN
-            ):
-                self._kiosk_unknown_attempts = 0
+                self._clear_conditional_confirmation()
                 self._safe_after(0, self._on_kiosk_recognition_success, best_emp, best_dist)
-            else:
-                self._kiosk_unknown_attempts = getattr(self, '_kiosk_unknown_attempts', 0) + 1
-                if self._kiosk_unknown_attempts < KIOSK_UNKNOWN_CONFIRMATIONS:
-                    attempt = self._kiosk_unknown_attempts
+            elif best_emp is not None and decision == "conditional":
+                self._kiosk_unknown_attempts = 0
+                candidate_id = str(best_emp.get("id", ""))
+                state = self._record_conditional_vote(
+                    candidate_id, best_dist, top2_margin
+                )
+                if (
+                    state["candidate_id"] == candidate_id
+                    and state["votes"] >= ARCFACE_CONDITIONAL_CONFIRMATIONS
+                ):
+                    confirmed_distance = state["median_distance"]
+                    self._clear_conditional_confirmation()
+                    self._safe_after(
+                        0, self._on_kiosk_recognition_success,
+                        best_emp, confirmed_distance,
+                    )
+                elif state["exhausted"]:
+                    self._clear_conditional_confirmation()
+                    self._safe_after(
+                        0, self._on_kiosk_recognition_ambiguous,
+                        best_dist, second_dist, top2_margin,
+                    )
+                else:
                     self.is_recognizing = False
                     self._kiosk_face_stable_since = time.time()
-                    self._safe_after(0, self._on_kiosk_unknown_confirmation_pending, attempt)
+                    self._safe_after(
+                        0, self._on_kiosk_conditional_confirmation_pending,
+                        state["votes"], state["attempts"],
+                        best_dist, top2_margin,
+                    )
+            elif best_emp is not None and decision == "ambiguous":
+                self._kiosk_unknown_attempts = 0
+                state = self._record_conditional_noise()
+                if state is not None:
+                    self.is_recognizing = False
+                    self._kiosk_face_stable_since = time.time()
+                    self._safe_after(
+                        0, self._on_kiosk_conditional_confirmation_pending,
+                        state["votes"], state["attempts"],
+                        best_dist, top2_margin,
+                    )
                 else:
-                    self._kiosk_unknown_attempts = 0
-                    self._safe_after(0, self._on_kiosk_recognition_failed, best_dist)
+                    self._safe_after(
+                        0, self._on_kiosk_recognition_ambiguous,
+                        best_dist, second_dist, top2_margin,
+                    )
+            else:
+                state = self._record_conditional_noise()
+                if state is not None:
+                    self.is_recognizing = False
+                    self._kiosk_face_stable_since = time.time()
+                    self._safe_after(
+                        0, self._on_kiosk_conditional_confirmation_pending,
+                        state["votes"], state["attempts"],
+                        best_dist, top2_margin,
+                    )
+                else:
+                    self._kiosk_unknown_attempts = getattr(self, '_kiosk_unknown_attempts', 0) + 1
+                    if self._kiosk_unknown_attempts < KIOSK_UNKNOWN_CONFIRMATIONS:
+                        attempt = self._kiosk_unknown_attempts
+                        self.is_recognizing = False
+                        self._kiosk_face_stable_since = time.time()
+                        self._safe_after(
+                            0, self._on_kiosk_unknown_confirmation_pending, attempt
+                        )
+                    else:
+                        self._kiosk_unknown_attempts = 0
+                        self._safe_after(0, self._on_kiosk_recognition_failed, best_dist)
                 
         except Exception as e:
             print(f"[KIOSK AI ERROR]: Lỗi nhận diện: {e}")
+            self._clear_conditional_confirmation()
             self.is_recognizing = False
             self._safe_after(0, self._on_kiosk_recognition_failed, 1.0)
 
@@ -1229,8 +1595,10 @@ class AttendanceMixin:
         self.is_recognizing = False
         self._kiosk_waiting_for_departure = False
         self._kiosk_idle_reset_pending = False
+        self._kiosk_active_face_area = None
         self._kiosk_face_stable_since = None
         self._kiosk_unknown_attempts = 0
+        self._clear_conditional_confirmation()
         self._last_recognized_id = None
         self._show_auto_scan_status("●  Tự động nhận diện đang hoạt động")
 
@@ -1264,7 +1632,10 @@ class AttendanceMixin:
         
         self.kiosk_greeting_card.configure(fg_color="transparent")
         if hasattr(self, 'kiosk_greeting_title'):
-            self.kiosk_greeting_title.configure(text="Vui lòng đứng thẳng, nhìn vào camera để điểm danh.", text_color=CTK_TEXT)
+            self.kiosk_greeting_title.configure(
+                text="Đưa đầy đủ khuôn mặt vào khung để điểm danh.",
+                text_color=CTK_TEXT,
+            )
         self.kiosk_greeting_text.configure(
             text="Chúc bạn một ngày làm việc hiệu quả!",
             text_color=CTK_TEXT_DIM
@@ -1275,7 +1646,9 @@ class AttendanceMixin:
             self.kiosk_saved_badge.pack_forget()
         
         self.kiosk_status_title.configure(text="Sẵn sàng quét khuôn mặt")
-        self.kiosk_status_desc.configure(text="Vui lòng đứng thẳng, nhìn vào camera (cự ly 0.5m – 1.2m)")
+        self.kiosk_status_desc.configure(
+            text="Có thể nghiêng nhẹ, giữ khuôn mặt rõ trong khung (cự ly 0.5m – 1.2m)"
+        )
         if hasattr(self, 'kiosk_status_time'):
             self.kiosk_status_time.configure(text="")
         

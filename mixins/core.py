@@ -10,12 +10,13 @@ import json
 import pickle
 import threading
 import re
+from collections import deque
 from pathlib import Path
 import numpy as np
 
 from config import (
     ADMIN_WINDOW_WIDTH, ADMIN_WINDOW_HEIGHT, CTK_BG_MAIN,
-    DATA_FACES_DIR, DEEPFACE_MODEL_NAME,
+    DATA_FACES_DIR, DEEPFACE_MODEL_NAME, ENROLLMENT_EMBEDDING_SAMPLES,
 )
 from ai_engine import (
     check_gpu_quick,
@@ -59,7 +60,15 @@ class CoreMixin:
         self._kiosk_idle_reset_pending = False
         self._kiosk_face_stable_since = None
         self._kiosk_face_absent_since = None
+        self._kiosk_active_face_area = None
         self._kiosk_unknown_attempts = 0
+        self._kiosk_conditional_candidate_id = None
+        self._kiosk_conditional_confirmations = 0
+        self._kiosk_conditional_attempts = 0
+        self._kiosk_conditional_started_at = None
+        self._kiosk_conditional_distances = []
+        self._kiosk_conditional_margins = []
+        self._kiosk_conditional_votes = {}
         self._attendance_cooldowns = {}
         
         # --- Dữ liệu lịch sử điểm danh thực tế (lưu bền vững trên đĩa) ---
@@ -71,6 +80,8 @@ class CoreMixin:
         self.is_face_valid = False
         self.ai_status_text = "Dua mat vao khung hinh"
         self.prev_status = None
+        self.enrollment_face_samples = deque(maxlen=ENROLLMENT_EMBEDDING_SAMPLES)
+        self._last_enrollment_sample_at = 0.0
         
         # --- AI Models ---
         self.face_model = None
