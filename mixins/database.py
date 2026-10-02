@@ -124,7 +124,7 @@ class DatabaseMixin:
         thead.pack(fill="x", padx=5, pady=(0, 6))
         
         headers = ["", "Ảnh", "Mã NV", "Họ và tên", "Chức vụ", "Phòng ban", "Trạng thái", "Hành động"]
-        weights = [3, 5, 8, 20, 14, 14, 12, 10]
+        weights = [3, 5, 8, 18, 13, 13, 13, 14]
         
         for i, w in enumerate(weights):
             thead.grid_columnconfigure(i, weight=w, uniform="table_col")
@@ -225,6 +225,11 @@ class DatabaseMixin:
                     profile.get("department") or profile.get("dept") or emp_department
                 )
 
+            recognition_enabled = (
+                profile.get("recognition_enabled", profile.get("source") != "LFW benchmark")
+                if isinstance(profile, dict) else True
+            )
+
             # Tương thích hồ sơ cũ từng gộp "Chức vụ - Phòng ban" trong role.
             if not (isinstance(profile, dict) and (profile.get("department") or profile.get("dept"))):
                 legacy_parts = re.split(r"\s*[-–]\s*", emp_role, maxsplit=1)
@@ -248,7 +253,8 @@ class DatabaseMixin:
                 "name": emp_name,
                 "role": emp_role,
                 "department": emp_department,
-                "status": "Đã đăng ký"
+                "recognition_enabled": bool(recognition_enabled),
+                "status": "Đang nhận diện" if recognition_enabled else "Chỉ kiểm thử",
             })
             
         self._safe_after(0, self._apply_database_results, records, total_files, gen)
@@ -321,7 +327,7 @@ class DatabaseMixin:
         row_frame = ctk.CTkFrame(self.db_scroll, fg_color=bg_color, corner_radius=6)
         row_frame.pack(fill="x", pady=2, padx=5)
         
-        weights = [3, 5, 8, 20, 14, 14, 12, 10]
+        weights = [3, 5, 8, 18, 13, 13, 13, 14]
         for i, w in enumerate(weights):
             row_frame.grid_columnconfigure(i, weight=w, uniform="table_col")
             
@@ -361,10 +367,10 @@ class DatabaseMixin:
         badge_frame.grid(row=0, column=6, sticky="w", padx=10)
         
         status_text = emp_data["status"]
-        if "Chưa đăng ký" in status_text:
-            text_col, icon = ("#dc2626", "#f87171"), "● "
-        else:
+        if emp_data.get("recognition_enabled", True):
             text_col, icon = ("#16a34a", "#4ade80"), "● "
+        else:
+            text_col, icon = ("#b45309", "#f59e0b"), "● "
             
         badge = ctk.CTkLabel(
             badge_frame, text=icon + status_text,
@@ -394,6 +400,19 @@ class DatabaseMixin:
             command=lambda data=emp_data: self._edit_employee(data),
         )
         btn_edit.pack(side="left", padx=2)
+
+        recognition_enabled = emp_data.get("recognition_enabled", True)
+        btn_toggle = ctk.CTkButton(
+            action_frame,
+            text="Tắt" if recognition_enabled else "Bật",
+            width=38, height=28,
+            fg_color="transparent", corner_radius=4, border_width=1,
+            border_color=CTK_ACCENT,
+            text_color=("#b45309", "#fbbf24") if recognition_enabled else ("#15803d", "#4ade80"),
+            hover_color=CTK_SIDEBAR_HOVER,
+            command=lambda data=emp_data: self._toggle_employee_recognition(data),
+        )
+        btn_toggle.pack(side="left", padx=2)
         
         btn_del = ctk.CTkButton(
             action_frame, text="🗑", width=30, height=28,
@@ -401,6 +420,52 @@ class DatabaseMixin:
             command=lambda: self._delete_single_employee(emp_data, row_frame)
         )
         btn_del.pack(side="left", padx=2)
+
+    def _toggle_employee_recognition(self, emp_info):
+        """Bật/tắt một hồ sơ trong gallery điểm danh mà không xóa dữ liệu."""
+        emp_id = str(emp_info.get("id", "")).strip()
+        if not emp_id:
+            return
+
+        embeddings_file = Path("data/embeddings.pkl")
+        try:
+            with open(embeddings_file, "rb") as file:
+                embeddings_data = pickle.load(file)
+
+            profile_key = next(
+                (
+                    key for key in embeddings_data
+                    if str(key).strip().casefold() == emp_id.casefold()
+                ),
+                None,
+            )
+            if profile_key is None:
+                raise KeyError(f"Không tìm thấy hồ sơ {emp_id}")
+
+            profile = embeddings_data[profile_key]
+            enabled = not bool(
+                profile.get(
+                    "recognition_enabled",
+                    profile.get("source") != "LFW benchmark",
+                )
+            )
+            embeddings_data[profile_key]["recognition_enabled"] = enabled
+
+            temporary = embeddings_file.with_suffix(".pkl.tmp")
+            with open(temporary, "wb") as file:
+                pickle.dump(embeddings_data, file)
+            temporary.replace(embeddings_file)
+
+            self.embeddings_cache = embeddings_data
+            emp_info["recognition_enabled"] = enabled
+            emp_info["status"] = "Đang nhận diện" if enabled else "Chỉ kiểm thử"
+            self._render_database_page()
+        except Exception as exc:
+            messagebox.showerror(
+                "Không thể cập nhật",
+                f"Không thể đổi trạng thái nhận diện của {emp_id}:\n{exc}",
+                parent=self,
+            )
 
     def _open_database_dialog(self, title, width, height):
         """Tạo cửa sổ con modal và đặt giữa cửa sổ chính."""

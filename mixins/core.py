@@ -158,6 +158,14 @@ class CoreMixin:
                             profile.pop("dept", None)
                             need_resave = True
 
+                        # Hồ sơ benchmark chỉ phục vụ kiểm thử, không được tham gia
+                        # điểm danh thật nếu chưa được người quản trị chủ động bật.
+                        if "recognition_enabled" not in profile:
+                            profile["recognition_enabled"] = (
+                                profile.get("source") != "LFW benchmark"
+                            )
+                            need_resave = True
+
                         cleaned_data[emp_id] = profile
                     else:
                         print(f"[AI CACHE] Tự động loại bỏ vector mồ côi của nhân viên đã xóa: {emp_id} ({emp_val.get('name')})")

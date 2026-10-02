@@ -22,7 +22,7 @@ import customtkinter as ctk
 from config import (
     CTK_CARD, CTK_ACCENT, CTK_TEXT, CTK_TEXT_DIM, CTK_PRIMARY, CTK_PRIMARY_HOVER,
     CTK_SUCCESS, CTK_DANGER, CTK_SIDEBAR_HOVER, CTK_BG_MAIN, ADMIN_CAMERA_FPS_DELAY,
-    DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, KIOSK_MIN_FACE_WIDTH,
+    DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, ARCFACE_TOP2_MARGIN, KIOSK_MIN_FACE_WIDTH,
     KIOSK_FACE_STABLE_SECONDS, KIOSK_FACE_LEAVE_SECONDS,
     KIOSK_ATTENDANCE_COOLDOWN_SECONDS, KIOSK_UNKNOWN_CONFIRMATIONS,
     KIOSK_DETECTION_INTERVAL_SECONDS,
@@ -879,7 +879,7 @@ class AttendanceMixin:
         Luồng xử lý ngầm (_ai_worker_recognize):
         - Nhận ảnh crop từ YOLO, chạy DeepFace.represent(img_path=cropped_img, model_name='ArcFace', enforce_detection=False).
         - Duyệt qua file embeddings.pkl, tính khoảng cách Cosine với toàn bộ nhân viên.
-        - Tìm ra người có khoảng cách NHỎ NHẤT. Nếu khoảng cách min < 0.68 -> Nhận diện thành công. Nếu > 0.68 -> Người lạ.
+        - Chỉ chấp nhận khi Top 1 đạt threshold và cách Top 2 đủ margin.
         - Dùng self.after để gọi hàm cập nhật UI.
         """
         try:
@@ -915,23 +915,50 @@ class AttendanceMixin:
                 return
                 
             # 3. Duyệt qua file embeddings.pkl, tính khoảng cách Cosine với toàn bộ nhân viên
-            best_emp = None
-            min_dist = 999.0
+            ranked_matches = []
             
             for emp_id, emp_info in embeddings_data.items():
+                # Hồ sơ bị tắt (ví dụ dữ liệu benchmark LFW) vẫn được giữ để
+                # kiểm thử nhưng tuyệt đối không tham gia nhận diện điểm danh.
+                if not emp_info.get("recognition_enabled", True):
+                    continue
                 emp_emb = emp_info.get("embedding")
                 if emp_emb is not None:
                     dist = calculate_cosine_distance(query_vector, emp_emb)
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_emp = emp_info
-                        
-            print(f"[KIOSK AI] Min Cosine Distance: {min_dist:.4f} (Threshold: {ARCFACE_THRESHOLD}) | Match: {best_emp.get('name') if best_emp else 'Không có'}")
-            
-            # 4. Tìm ra người có khoảng cách NHỎ NHẤT: min < 0.68 -> Thành công. Ngược lại -> Người lạ.
-            if best_emp is not None and min_dist < ARCFACE_THRESHOLD:
+                    ranked_matches.append((dist, emp_info))
+
+            ranked_matches.sort(key=lambda item: item[0])
+            best_dist, best_emp = ranked_matches[0] if ranked_matches else (999.0, None)
+            second_dist = ranked_matches[1][0] if len(ranked_matches) > 1 else float("inf")
+            top2_margin = second_dist - best_dist
+            second_name = ranked_matches[1][1].get("name") if len(ranked_matches) > 1 else "Không có"
+
+            print(
+                f"[KIOSK AI] Top 1: {best_emp.get('name') if best_emp else 'Không có'} "
+                f"({best_dist:.4f}) | Top 2: {second_name} ({second_dist:.4f}) | "
+                f"Margin: {top2_margin:.4f}/{ARCFACE_TOP2_MARGIN} | "
+                f"Threshold: {ARCFACE_THRESHOLD}"
+            )
+
+            # Khoảng cách đạt nhưng hai ứng viên quá gần nhau là kết quả mơ hồ,
+            # không được biến thành thành công hoặc ghi nhận là người lạ.
+            if (
+                best_emp is not None
+                and best_dist <= ARCFACE_THRESHOLD
+                and top2_margin < ARCFACE_TOP2_MARGIN
+            ):
                 self._kiosk_unknown_attempts = 0
-                self._safe_after(0, self._on_kiosk_recognition_success, best_emp, min_dist)
+                self._safe_after(
+                    0, self._on_kiosk_recognition_ambiguous,
+                    best_dist, second_dist, top2_margin,
+                )
+            elif (
+                best_emp is not None
+                and best_dist <= ARCFACE_THRESHOLD
+                and top2_margin >= ARCFACE_TOP2_MARGIN
+            ):
+                self._kiosk_unknown_attempts = 0
+                self._safe_after(0, self._on_kiosk_recognition_success, best_emp, best_dist)
             else:
                 self._kiosk_unknown_attempts = getattr(self, '_kiosk_unknown_attempts', 0) + 1
                 if self._kiosk_unknown_attempts < KIOSK_UNKNOWN_CONFIRMATIONS:
@@ -941,7 +968,7 @@ class AttendanceMixin:
                     self._safe_after(0, self._on_kiosk_unknown_confirmation_pending, attempt)
                 else:
                     self._kiosk_unknown_attempts = 0
-                    self._safe_after(0, self._on_kiosk_recognition_failed, min_dist)
+                    self._safe_after(0, self._on_kiosk_recognition_failed, best_dist)
                 
         except Exception as e:
             print(f"[KIOSK AI ERROR]: Lỗi nhận diện: {e}")
@@ -1046,6 +1073,37 @@ class AttendanceMixin:
         self._show_auto_scan_status(status_text)
         self._kiosk_waiting_for_departure = True
         self.is_recognizing = False
+
+    def _on_kiosk_recognition_ambiguous(self, best_distance, second_distance, margin):
+        """Từ chối an toàn khi Top 1 và Top 2 chưa tách biệt đủ rõ."""
+        self._is_kiosk_ui_idle = False
+        self.kiosk_res_banner_frame.configure(fg_color="transparent")
+        self.kiosk_res_icon.configure(
+            text="!", fg_color=("#FEF3C7", "#422006"),
+            text_color=("#B45309", "#FBBF24"),
+        )
+        self.kiosk_res_title.configure(text="Kết quả chưa chắc chắn", text_color=CTK_TEXT)
+        self.kiosk_res_sub.configure(
+            text="Hai hồ sơ có mức tương đồng quá gần nhau", text_color=CTK_TEXT_DIM,
+        )
+        self.kiosk_name_label.configure(text="Vui lòng quét lại", text_color=CTK_TEXT)
+        if hasattr(self, 'kiosk_id_title'):
+            self.kiosk_id_title.configure(text="Mã NV: ")
+        self.kiosk_id_badge.configure(text="---", text_color=CTK_TEXT_DIM)
+        self.kiosk_role_label.configure(text="💼  Chức vụ: ---")
+        self.kiosk_dept_label.configure(text="🏢  Phòng ban: ---")
+        self._set_kiosk_avatar(None, None, border_color="#E2E8F0", size=(80, 80))
+        self.kiosk_status_title.configure(text="Cần xác minh lại khuôn mặt")
+        self.kiosk_status_desc.configure(text="Vui lòng nhìn thẳng và quét lại")
+        self._show_retry_actions()
+        if hasattr(self, 'btn_kiosk_register'):
+            self.btn_kiosk_register.pack_forget()
+        self._kiosk_waiting_for_departure = True
+        self.is_recognizing = False
+        print(
+            f"[KIOSK AI] Từ chối kết quả mơ hồ: top1={best_distance:.4f}, "
+            f"top2={second_distance:.4f}, margin={margin:.4f}"
+        )
 
     def _on_kiosk_recognition_failed(self, distance):
         """

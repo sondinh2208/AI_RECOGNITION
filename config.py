@@ -19,7 +19,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 FACE_MODEL_PATH = "models/model.pt"
 MP_FACE_MODEL_PATH = "models/blaze_face_short_range.tflite"
 DEEPFACE_MODEL_NAME = "ArcFace"   # ArcFace: Vector đặc trưng 512 chiều (512-d embedding)
-ARCFACE_THRESHOLD = 0.68          # Ngưỡng Cosine distance: nhỏ hơn 0.68 là cùng một người
+ARCFACE_THRESHOLD = 0.490         # Ngưỡng sau khi chọn ảnh đăng ký bằng embedding medoid
+ARCFACE_TOP2_MARGIN = 0.075       # Top 1 phải tốt hơn Top 2 ít nhất mức này
 KIOSK_MIN_FACE_WIDTH = 100        # Kích thước mặt tối thiểu (px) để kích hoạt nhận diện
 KIOSK_RESET_DELAY_MS = 3000       # Thời gian giữ kết quả (3s) trước khi reset quét người tiếp theo
 

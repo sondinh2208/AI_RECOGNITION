@@ -485,7 +485,8 @@ class EnrollmentMixin:
                 "department": department,
                 "embedding": embedding_vector,
                 "image_path": str(filepath_main),
-                "timestamp": timestamp
+                "timestamp": timestamp,
+                "recognition_enabled": True,
             }
             
             with open(embeddings_file, "wb") as f:

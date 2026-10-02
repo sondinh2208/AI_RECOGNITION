@@ -415,7 +415,7 @@ def calculate_cosine_distance(vec1, vec2):
     Tính khoảng cách Cosine giữa 2 vector đặc trưng (ArcFace/DeepFace).
     Metric Cosine: distance = 1 - (A . B) / (||A|| * ||B||)
     Returns:
-        float: 0.0 (giống hệt) đến 2.0 (hoàn toàn khác). Nhỏ hơn 0.68 là cùng một người.
+        float: 0.0 (giống hệt) đến 2.0 (hoàn toàn khác).
     """
     v1 = np.asarray(vec1, dtype=np.float32).flatten()
     v2 = np.asarray(vec2, dtype=np.float32).flatten()
@@ -559,4 +559,3 @@ def align_face_crop(face_crop, face_detector):
     except Exception as e:
         print(f"[ALIGN ERROR]: {e}")
         return face_crop, 0.0
-
