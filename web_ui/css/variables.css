@@ -1,0 +1,21 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f8fc; --surface: #fff; --surface-soft: #f8fafc;
+  --primary: #2563eb; --primary-hover: #1d4ed8; --primary-soft: #eaf3ff;
+  --success: #16a34a; --success-soft: #ecfdf3;
+  --danger: #dc2626; --danger-soft: #fef2f2;
+  --warning: #d97706; --warning-soft: #fffbeb;
+  --text: #0f172a; --muted: #64748b; --faint: #94a3b8;
+  --border: #e2e8f0; --sidebar: 250px; --radius: 12px;
+  --shadow: 0 1px 2px rgba(15,23,42,.03), 0 8px 24px rgba(15,23,42,.035);
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; overflow: hidden; }
+button, input, select { font: inherit; }
+button { color: inherit; }
+svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.svg-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+[hidden] { display: none !important; }
+
