@@ -28,13 +28,24 @@ class CameraMixin:
     """Mixin quản lý camera chung và luồng camera Enrollment."""
 
     def _start_camera(self):
-        """Khởi tạo camera + tính layout eKYC."""
+        """Khởi tạo camera + tính layout eKYC với cấu hình phần cứng tối ưu (MJPG, 30 FPS, buffer 1)."""
         if self.camera_cap is not None:
             self.camera_cap.release()
+            self.camera_cap = None
         
         for cam_id in [1, 0]:
-            cap = cv2.VideoCapture(cam_id)
-            if cap.isOpened():
+            for backend in [cv2.CAP_DSHOW, cv2.CAP_ANY]:
+                cap = cv2.VideoCapture(cam_id, backend) if backend != cv2.CAP_ANY else cv2.VideoCapture(cam_id)
+                if not cap.isOpened():
+                    continue
+                
+                # Cấu hình tối ưu phần cứng (đặc biệt chuẩn nén MJPG 30 FPS cho webcam Logitech C270)
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                cap.set(cv2.CAP_PROP_FPS, 30)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
                 ret, frame = cap.read()
                 if ret and frame is not None:
                     self.camera_cap = cap
@@ -55,7 +66,7 @@ class CameraMixin:
                         self.lbl_stat_status.configure(text="● Hoạt động tốt", text_color=CTK_SUCCESS)
                     if hasattr(self, 'cam_live_status'):
                         self.cam_live_status.configure(text="● ĐANG CHỜ KHUÔN MẶT", text_color=CTK_SUCCESS)
-                    print(f"[CAMERA] Đã kết nối camera ID={cam_id} ({self.frame_width}x{self.frame_height})")
+                    print(f"[CAMERA] Đã kết nối camera ID={cam_id} ({self.frame_width}x{self.frame_height} @ 30 FPS MJPG)")
                     
                     if self.current_page == "attendance":
                         if hasattr(self, '_start_kiosk_worker'):
@@ -289,7 +300,7 @@ class CameraMixin:
                 pass
                 
             self.latest_processed_frame = output
-            time.sleep(0.001)
+            self._current_frame_id = getattr(self, '_current_frame_id', 0) + 1
 
     def _update_frame(self):
         """

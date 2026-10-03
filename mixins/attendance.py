@@ -856,6 +856,7 @@ class AttendanceMixin:
             
             # 5. Lưu frame và chuẩn bị ảnh PIL trong Background Thread (Không làm nặng UI Thread)
             self.kiosk_latest_frame = frame
+            self._current_frame_id = getattr(self, '_current_frame_id', 0) + 1
             try:
                 fh, fw = frame.shape[:2]
                 lbl_w = getattr(self, '_cached_kiosk_w', 460)
@@ -877,7 +878,6 @@ class AttendanceMixin:
                     self._first_processed_logged = True
             except Exception:
                 pass
-            time.sleep(0.01)
 
     def _update_kiosk_frame(self):
         """Main UI Thread: Lấy ảnh PIL đã định dạng từ background thread và hiển thị (siêu nhẹ, <1ms)."""

@@ -35,23 +35,29 @@ from ekyc_renderer import (
 
 def init_camera():
     """
-    Khởi tạo camera.
+    Khởi tạo camera với DirectShow và MJPG 30 FPS.
     Thử camera ID = 1 trước (camera ngoài), nếu lỗi lùi về ID = 0.
     """
     for cam_id in [1, 0]:
         print(f"[INFO] Đang thử mở camera ID = {cam_id}...")
-        cap = cv2.VideoCapture(cam_id)
-        
-        if cap.isOpened():
+        for backend in [cv2.CAP_DSHOW, cv2.CAP_ANY]:
+            cap = cv2.VideoCapture(cam_id, backend) if backend != cv2.CAP_ANY else cv2.VideoCapture(cam_id)
+            if not cap.isOpened():
+                continue
+            
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 30)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
             ret, frame = cap.read()
             if ret and frame is not None:
-                print(f"[OK] Đã kết nối camera ID = {cam_id} thành công!")
+                print(f"[OK] Đã kết nối camera ID = {cam_id} ({frame.shape[1]}x{frame.shape[0]} @ 30 FPS MJPG) thành công!")
                 return cap
             else:
                 cap.release()
-                print(f"[WARN] Camera ID = {cam_id} mở được nhưng không đọc được frame.")
-        else:
-            print(f"[WARN] Không thể mở camera ID = {cam_id}.")
+        print(f"[WARN] Không thể mở camera ID = {cam_id}.")
     
     print("[FATAL] Không tìm thấy camera nào khả dụng! Thoát chương trình.")
     exit(1)

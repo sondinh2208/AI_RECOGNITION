@@ -135,11 +135,16 @@ async def dashboard(_request):
 
 async def camera_stream(_request):
     async def frames():
-        while True:
-            frame = runtime.camera_jpeg()
-            if frame:
-                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-            await asyncio.sleep(0.05)
+        last_frame_id = -1
+        try:
+            while True:
+                frame_id, frame = runtime.camera_jpeg_frame()
+                if frame and frame_id != last_frame_id:
+                    last_frame_id = frame_id
+                    yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+                await asyncio.sleep(0.01)
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
     return StreamingResponse(
         frames(), media_type="multipart/x-mixed-replace; boundary=frame",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},

@@ -43,6 +43,9 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self.current_fps = 0.0
         self.current_conf = 0.0
         self.current_page = "attendance"
+        self._current_frame_id = 0
+        self._last_cached_frame_id = -1
+        self._last_cached_jpeg = None
 
         self.kiosk_running = False
         self.is_recognizing = False
@@ -219,19 +222,37 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._publish()
         return self.snapshot()
 
-    def camera_jpeg(self):
+    def camera_jpeg_frame(self):
+        """Trả về (frame_id, jpeg_bytes) có bộ nhớ đệm, chỉ nén ảnh khi có khung hình mới."""
         frame = None
         if self.current_page == "attendance":
             if self.kiosk_latest_frame is not None:
-                frame = self.kiosk_latest_frame.copy()
+                frame = self.kiosk_latest_frame
             elif self.kiosk_latest_pil is not None:
                 frame = cv2.cvtColor(np.asarray(self.kiosk_latest_pil), cv2.COLOR_RGB2BGR)
         elif self.latest_processed_frame is not None:
-            frame = self.latest_processed_frame.copy()
+            frame = self.latest_processed_frame
         if frame is None:
-            return None
-        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
-        return encoded.tobytes() if ok else None
+            return 0, None
+
+        frame_id = getattr(self, "_current_frame_id", 0)
+        cached_id = getattr(self, "_last_cached_frame_id", -1)
+        cached_bytes = getattr(self, "_last_cached_jpeg", None)
+
+        if frame_id == cached_id and cached_bytes is not None:
+            return frame_id, cached_bytes
+
+        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if ok:
+            cached_bytes = encoded.tobytes()
+            self._last_cached_frame_id = frame_id
+            self._last_cached_jpeg = cached_bytes
+            return frame_id, cached_bytes
+        return frame_id, None
+
+    def camera_jpeg(self):
+        _, bytes_data = self.camera_jpeg_frame()
+        return bytes_data
 
     def _update_kiosk_frame(self):
         """The browser consumes frames from ``camera_jpeg``; no Tk repaint loop."""
