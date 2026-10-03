@@ -588,12 +588,12 @@ class NavigationMixin:
         # Cache các trang (Create Once)
         self.page_frames = {}
         
-        # Lazy Initialization: Dựng trước trang Kiosk Điểm danh để ứng dụng khởi động tức thì
-        self._get_or_create_page("attendance")
-        self._show_page("attendance")
+        # Mặc định mở trang Bảng điều khiển (Dashboard) khi khởi động hệ thống
+        self._get_or_create_page("dashboard")
+        self._show_page("dashboard")
         
         # Pre-warm từng trang theo nhịp riêng để không khóa UI hàng trăm ms một lần.
-        pages_to_prewarm = ["database", "history", "dashboard", "add_employee"]
+        pages_to_prewarm = ["attendance", "database", "history", "add_employee"]
 
         def _prewarm_next_page(index=0):
             if index >= len(pages_to_prewarm):
@@ -610,7 +610,7 @@ class NavigationMixin:
         now = datetime.now()
         days = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
         day_str = days[now.weekday()]
-        date_str = f"{day_str}, {now.strftime('%d/%m/%Y')}"
+        date_str = f"📅  {day_str}, {now.strftime('%d/%m/%Y')}"
         time_str = now.strftime("%H:%M:%S")
         
         if hasattr(self, 'header_date_label') and self.header_date_label.winfo_exists():

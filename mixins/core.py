@@ -47,7 +47,7 @@ class CoreMixin:
         self.current_conf = 0.0
         
         # --- Biến luồng Kiosk Mode (Nhận diện điểm danh) ---
-        self.current_page = "attendance"  # Mặc định mở tab Kiosk
+        self.current_page = "dashboard"  # Mặc định mở tab Bảng điều khiển (Dashboard)
         self.kiosk_running = False
         self.enrollment_running = False
         self.is_recognizing = False       # Cờ khóa inference chống spam/giật lag
