@@ -15,8 +15,9 @@ import customtkinter as ctk
 
 from config import (
     ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, ADMIN_CAMERA_FPS_DELAY,
-    ENROLLMENT_DETECTION_INTERVAL_SECONDS, ENROLLMENT_EMBEDDING_SAMPLES,
-    ENROLLMENT_SAMPLE_INTERVAL_SECONDS, FACE_CROP_PADDING_RATIO,
+    ENROLLMENT_DETECTION_INTERVAL_SECONDS,
+    ENROLLMENT_SAMPLE_INTERVAL_SECONDS, ENROLLMENT_AUTO_CAPTURE_SECONDS,
+    ENROLLMENT_MIN_SAMPLES, FACE_CROP_PADDING_RATIO,
     CTK_SUCCESS, CTK_DANGER, CTK_WARNING,
 )
 from ai_engine import detect_faces, check_face_constraints
@@ -94,9 +95,13 @@ class CameraMixin:
         # Biến State Machine chống nhiễu (Debounce)
         green_streak = 0
         red_streak = 0
-        display_color = (50, 50, 255)  # Mặc định Đỏ
-        display_text = "Dua mat vao khung hinh"
-        display_locked = False
+        capture_ready = bool(getattr(self, "enrollment_capture_ready", False))
+        display_color = (100, 255, 100) if capture_ready else (50, 50, 255)
+        display_text = (
+            "DA QUET KHUON MAT - SAN SANG LUU"
+            if capture_ready else "Dua mat vao khung hinh"
+        )
+        display_locked = capture_ready
         current_color = display_color
         faces = []
         mp_results = None
@@ -128,48 +133,98 @@ class CameraMixin:
                     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
                     mp_results = self.face_detector.detect(mp_image)
 
-                current_color, status_text, is_locked = check_face_constraints(
-                    faces, self.constraint_box, mp_results, fw, fh
-                )
-
-                # State machine chỉ đếm kết quả AI mới, không đếm frame video lặp.
-                if is_locked:
-                    green_streak += 1
-                    red_streak = 0
-                else:
-                    red_streak += 1
-                    green_streak = 0
-
-                if green_streak >= 5:
+                if getattr(self, "enrollment_capture_ready", False):
+                    # Snapshot đã khóa: camera vẫn chạy nhưng không tự ghi đè bằng người khác.
                     display_locked = True
-                    display_color = current_color
-                    display_text = status_text
-                elif red_streak >= 2:
+                    display_color = (100, 255, 100)
+                    display_text = "DA QUET KHUON MAT - SAN SANG LUU"
+                elif getattr(self, "_enrollment_waiting_for_face_leave", False):
+                    # Sau khi lưu, bắt buộc người cũ rời khung trước lượt đăng ký mới.
                     display_locked = False
-                    display_color = current_color
-                    display_text = status_text
+                    display_color = (50, 50, 255)
+                    display_text = "ROI KHOI KHUNG DE QUET NGUOI TIEP THEO"
+                    self._enrollment_valid_since = None
                     self.enrollment_face_samples.clear()
+                    self._last_enrollment_sample_at = 0.0
+                    green_streak = 0
+                    if faces:
+                        red_streak = 0
+                    else:
+                        red_streak += 1
+                        if red_streak >= 2:
+                            self._enrollment_waiting_for_face_leave = False
+                            red_streak = 0
+                            display_text = "Dua mat vao khung hinh"
+                else:
+                    current_color, status_text, is_locked = check_face_constraints(
+                        faces, self.constraint_box, mp_results, fw, fh
+                    )
 
-                # Thu nhiều mẫu đạt eKYC vào RAM, cách nhau đủ xa để tránh
-                # lưu 5 bản sao gần như giống hệt của cùng một frame.
-                sample_now = time.perf_counter()
-                if (
-                    display_locked and len(faces) == 1
-                    and sample_now - self._last_enrollment_sample_at
-                    >= ENROLLMENT_SAMPLE_INTERVAL_SECONDS
-                ):
-                    fx1, fy1, fx2, fy2, _ = faces[0]
-                    pad_x = int((fx2 - fx1) * FACE_CROP_PADDING_RATIO)
-                    pad_y = int((fy2 - fy1) * FACE_CROP_PADDING_RATIO)
-                    cx1, cy1 = max(0, fx1 - pad_x), max(0, fy1 - pad_y)
-                    cx2, cy2 = min(fw, fx2 + pad_x), min(fh, fy2 + pad_y)
-                    if cx2 > cx1 and cy2 > cy1:
-                        self.enrollment_face_samples.append(
-                            frame[cy1:cy2, cx1:cx2].copy()
-                        )
-                        self._last_enrollment_sample_at = sample_now
-                        while len(self.enrollment_face_samples) > ENROLLMENT_EMBEDDING_SAMPLES:
-                            self.enrollment_face_samples.popleft()
+                    # State machine chỉ đếm kết quả AI mới, không đếm frame video lặp.
+                    if is_locked and len(faces) == 1:
+                        green_streak += 1
+                        red_streak = 0
+                    else:
+                        red_streak += 1
+                        green_streak = 0
+
+                    if green_streak >= 5:
+                        display_locked = True
+                        display_color = current_color
+                    elif red_streak >= 2:
+                        display_locked = False
+                        display_color = current_color
+                        display_text = status_text
+                        self._enrollment_valid_since = None
+                        self.enrollment_face_samples.clear()
+                        self._last_enrollment_sample_at = 0.0
+
+                    # Khi mặt hợp lệ, bắt đầu đếm 3 giây và tự thu các mẫu vào RAM.
+                    sample_now = time.perf_counter()
+                    if display_locked and len(faces) == 1:
+                        if self._enrollment_valid_since is None:
+                            self._enrollment_valid_since = sample_now
+                            self.enrollment_face_samples.clear()
+                            self._last_enrollment_sample_at = 0.0
+
+                        elapsed = sample_now - self._enrollment_valid_since
+                        remaining = max(0.0, ENROLLMENT_AUTO_CAPTURE_SECONDS - elapsed)
+                        display_text = f"GIU YEN KHUON MAT: {remaining:.1f} GIAY"
+
+                        if (
+                            sample_now - self._last_enrollment_sample_at
+                            >= ENROLLMENT_SAMPLE_INTERVAL_SECONDS
+                        ):
+                            fx1, fy1, fx2, fy2, _ = faces[0]
+                            pad_x = int((fx2 - fx1) * FACE_CROP_PADDING_RATIO)
+                            pad_y = int((fy2 - fy1) * FACE_CROP_PADDING_RATIO)
+                            cx1, cy1 = max(0, fx1 - pad_x), max(0, fy1 - pad_y)
+                            cx2, cy2 = min(fw, fx2 + pad_x), min(fh, fy2 + pad_y)
+                            if cx2 > cx1 and cy2 > cy1:
+                                self.enrollment_face_samples.append(
+                                    frame[cy1:cy2, cx1:cx2].copy()
+                                )
+                                self._last_enrollment_sample_at = sample_now
+
+                        if (
+                            elapsed >= ENROLLMENT_AUTO_CAPTURE_SECONDS
+                            and len(self.enrollment_face_samples) >= ENROLLMENT_MIN_SAMPLES
+                        ):
+                            fx1, fy1, fx2, fy2, _ = faces[0]
+                            pad_x = int((fx2 - fx1) * FACE_CROP_PADDING_RATIO)
+                            pad_y = int((fy2 - fy1) * FACE_CROP_PADDING_RATIO)
+                            cx1, cy1 = max(0, fx1 - pad_x), max(0, fy1 - pad_y)
+                            cx2, cy2 = min(fw, fx2 + pad_x), min(fh, fy2 + pad_y)
+                            if cx2 > cx1 and cy2 > cy1:
+                                self.enrollment_captured_samples = [
+                                    sample.copy() for sample in self.enrollment_face_samples
+                                ]
+                                self.enrollment_captured_frame = frame.copy()
+                                self.enrollment_captured_face = frame[cy1:cy2, cx1:cx2].copy()
+                                self.enrollment_capture_ready = True
+                                self._enrollment_preview_shown = False
+                                display_text = "DA QUET KHUON MAT - SAN SANG LUU"
+                                print("[ENROLLMENT] Tự động quét khuôn mặt hoàn tất sau 3 giây.")
             
             # Cập nhật biến trạng thái (Atomic)
             self.is_face_valid = display_locked
@@ -259,12 +314,45 @@ class CameraMixin:
         if hasattr(self, 'lbl_stat_conf'):
             c_val = getattr(self, 'current_conf', 0.0)
             self.lbl_stat_conf.configure(text=f"{c_val:.2f}" if c_val > 0 else "0.00")
+
+        # Snapshot hoàn tất được hiển thị một lần ở form và mở nút Lưu.
+        if (
+            getattr(self, "enrollment_capture_ready", False)
+            and not getattr(self, "_enrollment_preview_shown", False)
+        ):
+            captured_face = getattr(self, "enrollment_captured_face", None)
+            if captured_face is not None and captured_face.size > 0:
+                preview_rgb = cv2.cvtColor(captured_face, cv2.COLOR_BGR2RGB)
+                preview_pil = Image.fromarray(preview_rgb).resize(
+                    (160, 120), Image.Resampling.LANCZOS
+                )
+                preview_ctk = ctk.CTkImage(
+                    light_image=preview_pil,
+                    dark_image=preview_pil,
+                    size=(160, 120),
+                )
+                self.preview_label.configure(image=preview_ctk, text="")
+                self.preview_label.image = preview_ctk
+                self.preview_label.pack(pady=(5, 0))
+            if hasattr(self, "btn_capture"):
+                self.btn_capture.configure(state="normal", text="LƯU KHUÔN MẶT")
+            if hasattr(self, "status_label"):
+                self._set_status(
+                    "✓ Đã quét khuôn mặt. Nhập thông tin và bấm Lưu khuôn mặt.",
+                    CTK_SUCCESS,
+                )
+            self._enrollment_preview_shown = True
             
         if hasattr(self, 'cam_live_status'):
-            if self.is_face_valid:
+            if getattr(self, "enrollment_capture_ready", False):
                 self.cam_live_status.configure(
-                    text="● KHUÔN MẶT ĐƯỢC NHẬN DIỆN",
+                    text="● ĐÃ QUÉT KHUÔN MẶT · SẴN SÀNG LƯU",
                     text_color=CTK_SUCCESS
+                )
+            elif self.is_face_valid:
+                self.cam_live_status.configure(
+                    text=f"● {self.ai_status_text.upper()}",
+                    text_color=CTK_WARNING,
                 )
             elif getattr(self, 'current_conf', 0.0) > 0:
                 self.cam_live_status.configure(
@@ -283,6 +371,8 @@ class CameraMixin:
         """Tạm dừng / tiếp tục camera."""
         if self.camera_running:
             self.camera_running = False
+            if not getattr(self, "enrollment_capture_ready", False):
+                self._reset_enrollment_scan(clear_preview=True)
             self.btn_toggle_cam.configure(text="▶  Tiếp tục")
             self.cam_status_dot.configure(text="● PAUSED", text_color=CTK_WARNING)
             if hasattr(self, 'lbl_stat_status'):
@@ -305,6 +395,7 @@ class CameraMixin:
     def _restart_camera(self):
         """Khởi động lại camera."""
         self.camera_running = False
+        self._reset_enrollment_scan(clear_preview=True)
         if self.camera_cap is not None:
             self.camera_cap.release()
             self.camera_cap = None

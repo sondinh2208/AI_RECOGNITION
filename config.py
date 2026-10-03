@@ -119,6 +119,7 @@ ENROLLMENT_DETECTION_INTERVAL_SECONDS = 0.10  # AI đăng ký tối đa 10 lần
 ENROLLMENT_EMBEDDING_SAMPLES = 5      # Số vector lưu cho mỗi hồ sơ (chỉ lưu 1 ảnh)
 ENROLLMENT_MIN_SAMPLES = 3            # Tối thiểu mẫu hợp lệ để cho phép đăng ký
 ENROLLMENT_SAMPLE_INTERVAL_SECONDS = 0.20
+ENROLLMENT_AUTO_CAPTURE_SECONDS = 3.0 # Giữ mặt hợp lệ liên tục trước khi tự chụp
 KIOSK_FACE_STABLE_SECONDS = 0.7     # Khuôn mặt phải ổn định trước khi tự nhận diện
 KIOSK_FACE_LEAVE_SECONDS = 1.5      # Thời gian rời khung để mở lượt tiếp theo
 KIOSK_ATTENDANCE_COOLDOWN_SECONDS = 60  # Không ghi trùng cùng nhân viên trong khoảng này

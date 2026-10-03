@@ -42,19 +42,29 @@ class NavigationMixin:
         self.sidebar.grid(row=0, column=0, sticky="nswe")
         self.sidebar.grid_propagate(False)
         
-        # --- Logo FaceCheck Header (Khối vuông xanh bo góc + text) ---
+        # --- Logo FaceCheck Header (Professional badge + text) ---
         logo_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         logo_container.pack(fill="x", padx=16, pady=(20, 18))
         
-        badge_box = ctk.CTkFrame(
-            logo_container, width=38, height=38, corner_radius=9,
-            fg_color="#2563EB"
+        # Badge chuyên nghiệp: khung tròn gradient-style với viền mỏng
+        badge_outer = ctk.CTkFrame(
+            logo_container, width=42, height=42, corner_radius=12,
+            fg_color=("#DBEAFE", "#1E3A5F"),
         )
-        badge_box.pack(side="left", padx=(0, 10))
-        badge_box.pack_propagate(False)
+        badge_outer.pack(side="left", padx=(0, 11))
+        badge_outer.pack_propagate(False)
+        
+        badge_inner = ctk.CTkFrame(
+            badge_outer, width=34, height=34, corner_radius=9,
+            fg_color=("#2563EB", "#3B82F6"),
+        )
+        badge_inner.place(relx=0.5, rely=0.5, anchor="center")
+        badge_inner.pack_propagate(False)
+        
         ctk.CTkLabel(
-            badge_box, text="📷", font=ctk.CTkFont(size=17),
-            text_color="#FFFFFF"
+            badge_inner, text="⬡",
+            font=ctk.CTkFont(family="Segoe UI Symbol", size=18, weight="bold"),
+            text_color="#FFFFFF",
         ).place(relx=0.5, rely=0.5, anchor="center")
         
         logo_text_frame = ctk.CTkFrame(logo_container, fg_color="transparent")
@@ -62,7 +72,7 @@ class NavigationMixin:
         
         ctk.CTkLabel(
             logo_text_frame, text="FaceCheck",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=17, weight="bold"),
             text_color=CTK_TEXT, anchor="w",
         ).pack(fill="x")
         
@@ -78,9 +88,10 @@ class NavigationMixin:
         nav_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         nav_container.pack(fill="x", padx=9)
         self._nav_active_indicator = ctk.CTkFrame(
-            nav_container, width=3, height=30, corner_radius=2,
+            nav_container, width=3, height=32, corner_radius=2,
             fg_color=CTK_BTN_ACTIVE,
         )
+        self._nav_container = nav_container
         nav_items = [
             ("dashboard",     "📊  Bảng điều khiển"),
             ("add_employee",  "👤  Quét khuôn mặt"),
@@ -155,10 +166,23 @@ class NavigationMixin:
         """Trượt vạch active đến tab mới mà không chặn mainloop."""
         indicator = getattr(self, '_nav_active_indicator', None)
         row = getattr(self, 'nav_rows', {}).get(page_id)
+        nav_container = getattr(self, '_nav_container', None)
         if indicator is None or row is None or not row.winfo_exists():
             return
+        if nav_container is None or not nav_container.winfo_exists():
+            return
 
-        target_y = row.winfo_y() + max(0, (row.winfo_height() - 30) // 2)
+        # Tính vị trí chính xác bằng tọa độ tuyệt đối rooty rồi quy về tương đối
+        # Đảm bảo geometry đã sẵn sàng
+        row.update_idletasks()
+        nav_container.update_idletasks()
+
+        container_y = nav_container.winfo_rooty()
+        row_y = row.winfo_rooty()
+        row_h = row.winfo_height()
+        indicator_h = 32
+        target_y = (row_y - container_y) + max(0, (row_h - indicator_h) // 2)
+
         current_y = indicator.winfo_y() if indicator.winfo_manager() else target_y
         animation_id = getattr(self, '_nav_indicator_animation_id', 0) + 1
         self._nav_indicator_animation_id = animation_id

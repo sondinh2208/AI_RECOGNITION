@@ -4,7 +4,7 @@ ENROLLMENT MIXIN
 Chức năng đăng ký nhân viên mới:
 - Form nhập liệu thông tin cá nhân (Họ tên, Mã NV, Chức vụ/Phòng ban)
 - Cột hiển thị camera trực tiếp và Telemetry Metrics của hệ thống
-- Quy trình 1-click capture và trích xuất vector khuôn mặt DeepFace
+- Tự động quét sau 3 giây hợp lệ; nút Lưu chỉ ghi snapshot đã khóa
 - Xử lý anti-spam và lưu trữ ảnh + vector đa thư mục
 ==============================================================
 """
@@ -18,7 +18,6 @@ import numpy as np
 from tkinter import messagebox
 from datetime import datetime
 from pathlib import Path
-from PIL import Image
 import customtkinter as ctk
 
 from config import (
@@ -26,9 +25,8 @@ from config import (
     CTK_SUCCESS, CTK_WARNING, CTK_DANGER, CTK_SIDEBAR_HOVER,
     ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, DATA_FACES_DIR, DEEPFACE_MODEL_NAME,
     ENROLLMENT_EMBEDDING_SAMPLES, ENROLLMENT_MIN_SAMPLES,
-    FACE_CROP_PADDING_RATIO,
 )
-from ai_engine import detect_faces, align_face_crop
+from ai_engine import align_face_crop
 
 
 class EnrollmentMixin:
@@ -93,7 +91,7 @@ class EnrollmentMixin:
         ).pack(side="right")
         
         ctk.CTkLabel(
-            header, text="Nhập thông tin nhân viên và chụp ảnh khuôn mặt qua Camera AI",
+            header, text="Camera tự quét sau khi khuôn mặt hợp lệ và giữ yên trong 3 giây",
             font=ctk.CTkFont(size=12), text_color=CTK_TEXT_DIM, anchor="w",
         ).pack(fill="x", pady=(4, 0))
         
@@ -159,13 +157,14 @@ class EnrollmentMixin:
         btn_frame.pack(fill="x", padx=24, pady=(6, 12))
         
         self.btn_capture = ctk.CTkButton(
-            btn_frame, text="📸   QUÉT VÀ LƯU KHUÔN MẶT",
+            btn_frame, text="ĐANG CHỜ QUÉT KHUÔN MẶT...",
             font=ctk.CTkFont(size=13, weight="bold"), height=46,
             corner_radius=8,
             fg_color=("#2563eb", "#2563eb"),
             hover_color=("#1d4ed8", "#1d4ed8"),
             text_color=("#ffffff", "#ffffff"),
             command=self._start_enrollment_process,
+            state="disabled",
         )
         self.btn_capture.pack(fill="x", pady=(0, 6))
         
@@ -188,7 +187,7 @@ class EnrollmentMixin:
         
         ctk.CTkLabel(
             alert_box,
-            text="ⓘ  Hãy đảm bảo khuôn mặt nằm chính giữa khung hình và đủ ánh sáng.",
+            text="ⓘ  Giữ khuôn mặt hợp lệ trong 3 giây, sau đó nhập thông tin và bấm Lưu.",
             font=ctk.CTkFont(size=11), text_color=CTK_TEXT_DIM,
             anchor="w"
         ).pack(side="left", padx=14)
@@ -335,14 +334,35 @@ class EnrollmentMixin:
         device_text = "NVIDIA GPU" if getattr(self, 'device', 'cpu') in ['cuda', '0'] else "CPU"
         self.lbl_stat_device = create_telemetry_row(sys_rows, "🖥", "Thiết bị", device_text)
 
+    def _reset_enrollment_scan(self, clear_preview=True, wait_for_face_leave=False):
+        """Bỏ snapshot hiện tại và đưa camera về trạng thái tự quét lượt mới."""
+        self.enrollment_capture_ready = False
+        self.enrollment_captured_samples = []
+        self.enrollment_captured_frame = None
+        self.enrollment_captured_face = None
+        self._enrollment_valid_since = None
+        self._enrollment_preview_shown = False
+        self._enrollment_waiting_for_face_leave = wait_for_face_leave
+        self.enrollment_face_samples.clear()
+        self._last_enrollment_sample_at = 0.0
+        self.is_face_valid = False
+        self.ai_status_text = "Dua mat vao khung hinh"
+
+        if clear_preview and hasattr(self, "preview_label"):
+            self.preview_label.configure(image=None, text="")
+            self.preview_label.image = None
+            self.preview_label.pack_forget()
+        if hasattr(self, "btn_capture"):
+            self.btn_capture.configure(
+                state="disabled", text="ĐANG CHỜ QUÉT KHUÔN MẶT..."
+            )
+
     def _start_enrollment_process(self):
         """
-        Quy trình 1-click Quét và Lưu khuôn mặt (Main Thread):
-        1. Kiểm tra Họ tên và Mã NV hợp lệ.
-        2. Kiểm tra trạng thái AI (self.is_face_valid == True).
-        3. Cắt (crop) khuôn mặt tại frame hiện tại và hiển thị preview ngay.
-        4. Kích hoạt hiệu ứng loading (thanh tiến trình indeterminate, disable nút).
-        5. Đẩy việc trích xuất Vector AI (DeepFace) và lưu trữ sang Background Thread.
+        Lưu hồ sơ từ snapshot đã được camera tự quét sau 3 giây hợp lệ:
+        1. Kiểm tra thông tin nhân viên và mã trùng.
+        2. Kiểm tra snapshot tự động đã sẵn sàng.
+        3. Đẩy việc trích xuất vector và lưu trữ sang background thread.
         """
         # --- ANTI-SPAM LOGIC ---
         if not hasattr(self, 'spam_count'):
@@ -364,13 +384,14 @@ class EnrollmentMixin:
         if self.spam_count >= 5:
             self.is_capture_locked = True
             self.btn_capture.configure(state="disabled")
-            self._set_status("⏳ CẢNH BÁO: Bấm quá nhanh! Nút quét khóa 5 giây.", CTK_WARNING)
+            self._set_status("⏳ CẢNH BÁO: Bấm quá nhanh! Nút lưu khóa 5 giây.", CTK_WARNING)
             
             def unlock_capture():
                 self.is_capture_locked = False
                 self.spam_count = 0
-                self.btn_capture.configure(state="normal")
-                self._set_status("✅ Đã mở khóa nút quét. Bạn có thể tiếp tục.", CTK_SUCCESS)
+                state = "normal" if self.enrollment_capture_ready else "disabled"
+                self.btn_capture.configure(state=state)
+                self._set_status("✅ Đã mở khóa nút lưu. Bạn có thể tiếp tục.", CTK_SUCCESS)
                 
             self.after(5000, unlock_capture)
             return
@@ -425,48 +446,34 @@ class EnrollmentMixin:
             self._set_status("❌ Camera chưa sẵn sàng hoặc đang tạm dừng!", CTK_DANGER)
             return
             
-        # 2. Kiểm tra khuôn mặt hợp lệ (Khung Xanh lá)
-        if not getattr(self, 'is_face_valid', False):
-            self._set_status("❌ KHUÔN MẶT CHƯA HỢP LỆ: Vui lòng đưa mặt vào đúng vị trí khung xanh!", CTK_DANGER)
+        # 2. Chỉ lưu snapshot mà camera đã tự động quét đủ 3 giây.
+        if not getattr(self, "enrollment_capture_ready", False):
+            self._set_status(
+                "⏳ Chưa có khuôn mặt đã quét. Hãy giữ khuôn mặt hợp lệ trong 3 giây.",
+                CTK_WARNING,
+            )
             return
 
         buffered_samples = [
             sample.copy() for sample in list(
-                getattr(self, 'enrollment_face_samples', [])
+                getattr(self, "enrollment_captured_samples", [])
             )[-ENROLLMENT_EMBEDDING_SAMPLES:]
         ]
         if len(buffered_samples) < ENROLLMENT_MIN_SAMPLES:
             self._set_status(
-                f"⏳ Vui lòng giữ khuôn mặt trong khung thêm một chút "
-                f"({len(buffered_samples)}/{ENROLLMENT_MIN_SAMPLES} mẫu).",
+                "❌ Dữ liệu quét chưa đầy đủ. Vui lòng khởi động lại camera để quét lại.",
                 CTK_WARNING,
             )
             return
-        
-        frame = self.current_frame.copy()
-        fw, fh = self.frame_width, self.frame_height
-        
-        # 3. Cắt (crop) lấy khuôn mặt ngay tại frame hiện tại
-        faces = detect_faces(self.face_model, frame, self.device)
-        face_crop = frame
-        if len(faces) > 0:
-            fx1, fy1, fx2, fy2, _ = faces[0]
-            pad_x = int((fx2 - fx1) * FACE_CROP_PADDING_RATIO)
-            pad_y = int((fy2 - fy1) * FACE_CROP_PADDING_RATIO)
-            cx1 = max(0, fx1 - pad_x)
-            cy1 = max(0, fy1 - pad_y)
-            cx2 = min(fw, fx2 + pad_x)
-            cy2 = min(fh, fy2 + pad_y)
-            if cx2 > cx1 and cy2 > cy1:
-                face_crop = frame[cy1:cy2, cx1:cx2]
-        
-        # Hiển thị preview ngay lập tức
-        preview_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
-        preview_pil = Image.fromarray(preview_rgb).resize((160, 120), Image.LANCZOS)
-        preview_ctk = ctk.CTkImage(light_image=preview_pil, dark_image=preview_pil, size=(160, 120))
-        self.preview_label.configure(image=preview_ctk, text="")
-        self.preview_label.image = preview_ctk
-        self.preview_label.pack(pady=(5, 0))
+
+        captured_frame = getattr(self, "enrollment_captured_frame", None)
+        if captured_frame is None:
+            self._set_status(
+                "❌ Không tìm thấy ảnh đã quét. Vui lòng khởi động lại camera để quét lại.",
+                CTK_DANGER,
+            )
+            return
+        frame = captured_frame.copy()
         
         # 4. Kích hoạt Loading UI
         self.btn_capture.configure(state="disabled", text="⏳ Đang trích xuất Vector AI...")
@@ -474,7 +481,7 @@ class EnrollmentMixin:
         self.progress_bar.start()
         self._set_status("⏳ Đang trích xuất Vector AI và lưu dữ liệu...", CTK_WARNING)
         
-        # 5. Khởi chạy AI Thread chạy ngầm (Non-blocking UI)
+        # 4. Khởi chạy AI Thread chạy ngầm (Non-blocking UI)
         threading.Thread(
             target=self._ai_worker_save_face,
             args=(buffered_samples, frame, name, emp_id, role, department),
@@ -618,14 +625,12 @@ class EnrollmentMixin:
         self.progress_bar.stop()
         self.progress_bar.pack_forget()
         
-        # 2. Khôi phục nút bấm
-        self.btn_capture.configure(state="normal", text="📸   QUÉT VÀ LƯU KHUÔN MẶT")
-        
-        # 3. Cập nhật kết quả
+        # 2. Cập nhật kết quả
         if success:
-            self._set_status(f"✅ Quét và lưu khuôn mặt thành công: {name} ({emp_id})!", CTK_SUCCESS)
-            self.enrollment_face_samples.clear()
-            self._last_enrollment_sample_at = 0.0
+            self._reset_enrollment_scan(
+                clear_preview=True, wait_for_face_leave=True
+            )
+            self._set_status(f"✅ Lưu khuôn mặt thành công: {name} ({emp_id})!", CTK_SUCCESS)
             
             # Tự động xóa các ô nhập liệu
             self.entry_name.delete(0, "end")
@@ -640,6 +645,10 @@ class EnrollmentMixin:
             else:
                 self.db_data_loaded = False
         else:
+            self.btn_capture.configure(
+                state="normal" if self.enrollment_capture_ready else "disabled",
+                text="LƯU KHUÔN MẶT" if self.enrollment_capture_ready else "ĐANG CHỜ QUÉT KHUÔN MẶT...",
+            )
             self._set_status(f"❌ Lưu dữ liệu thất bại: {error_msg}", CTK_DANGER)
 
     def _capture_face(self):

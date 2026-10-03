@@ -81,6 +81,13 @@ class CoreMixin:
         self.prev_status = None
         self.enrollment_face_samples = deque(maxlen=ENROLLMENT_EMBEDDING_SAMPLES)
         self._last_enrollment_sample_at = 0.0
+        self._enrollment_valid_since = None
+        self.enrollment_capture_ready = False
+        self.enrollment_captured_samples = []
+        self.enrollment_captured_frame = None
+        self.enrollment_captured_face = None
+        self._enrollment_preview_shown = False
+        self._enrollment_waiting_for_face_leave = False
         
         # --- AI Models ---
         self.face_model = None
