@@ -44,26 +44,26 @@ class NavigationMixin:
         
         # --- Logo FaceCheck Header (Professional badge + text) ---
         logo_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        logo_container.pack(fill="x", padx=16, pady=(20, 18))
+        logo_container.pack(fill="x", padx=18, pady=(18, 20))
         
         # Badge chuyên nghiệp: khung tròn gradient-style với viền mỏng
         badge_outer = ctk.CTkFrame(
-            logo_container, width=42, height=42, corner_radius=12,
-            fg_color=("#DBEAFE", "#1E3A5F"),
+            logo_container, width=46, height=46, corner_radius=13,
+            fg_color=("#E8F1FF", "#1E3A5F"),
         )
         badge_outer.pack(side="left", padx=(0, 11))
         badge_outer.pack_propagate(False)
         
         badge_inner = ctk.CTkFrame(
-            badge_outer, width=34, height=34, corner_radius=9,
-            fg_color=("#2563EB", "#3B82F6"),
+            badge_outer, width=36, height=36, corner_radius=10,
+            fg_color=("#0F6EF4", "#3B82F6"),
         )
         badge_inner.place(relx=0.5, rely=0.5, anchor="center")
         badge_inner.pack_propagate(False)
         
         ctk.CTkLabel(
-            badge_inner, text="⬡",
-            font=ctk.CTkFont(family="Segoe UI Symbol", size=18, weight="bold"),
+            badge_inner, text="⬢",
+            font=ctk.CTkFont(family="Segoe UI Symbol", size=17, weight="bold"),
             text_color="#FFFFFF",
         ).place(relx=0.5, rely=0.5, anchor="center")
         
@@ -72,7 +72,7 @@ class NavigationMixin:
         
         ctk.CTkLabel(
             logo_text_frame, text="FaceCheck",
-            font=ctk.CTkFont(size=17, weight="bold"),
+            font=ctk.CTkFont(size=18, weight="bold"),
             text_color=CTK_TEXT, anchor="w",
         ).pack(fill="x")
         
@@ -86,28 +86,28 @@ class NavigationMixin:
         self.nav_buttons = {}
         self.nav_rows = {}
         nav_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        nav_container.pack(fill="x", padx=9)
+        nav_container.pack(fill="x", padx=10)
         self._nav_active_indicator = ctk.CTkFrame(
             nav_container, width=3, height=32, corner_radius=2,
             fg_color=CTK_BTN_ACTIVE,
         )
         self._nav_container = nav_container
         nav_items = [
-            ("dashboard",     "📊  Bảng điều khiển"),
-            ("add_employee",  "👤  Quét khuôn mặt"),
-            ("attendance",    "📍  Nhận diện điểm danh"),
-            ("database",      "📁  Người đăng ký"),
-            ("history",       "📋  Lịch sử ra vào"),
+            ("dashboard",     "⌂   Bảng điều khiển"),
+            ("add_employee",  "♙   Quét khuôn mặt"),
+            ("attendance",    "⌖   Nhận diện điểm danh"),
+            ("database",      "♧   Người đăng ký"),
+            ("history",       "▤   Lịch sử ra vào"),
         ]
         
         for page_id, label in nav_items:
-            nav_row = ctk.CTkFrame(nav_container, height=46, fg_color="transparent")
+            nav_row = ctk.CTkFrame(nav_container, height=48, fg_color="transparent")
             nav_row.pack(fill="x")
             nav_row.pack_propagate(False)
             btn = ctk.CTkButton(
                 nav_row, text=label,
-                font=ctk.CTkFont(size=13), height=40, anchor="w",
-                corner_radius=6, fg_color="transparent",
+                font=ctk.CTkFont(family="Segoe UI", size=13), height=42, anchor="w",
+                corner_radius=9, fg_color="transparent",
                 text_color=CTK_TEXT, hover_color=CTK_SIDEBAR_HOVER,
                 command=lambda pid=page_id: self._navigate(pid),
             )
@@ -123,19 +123,19 @@ class NavigationMixin:
         
         # --- Footer Widget Trạng thái hệ thống (Khớp chuẩn góc dưới bên trái mockup) ---
         status_box = ctk.CTkFrame(
-            self.sidebar, corner_radius=10,
-            fg_color=("#F9FAFB", "#0F172A"), border_width=1, border_color=CTK_ACCENT
+            self.sidebar, corner_radius=12,
+            fg_color=("#F8FAFD", "#0F172A"), border_width=1, border_color=("#DDE6F2", "#334155")
         )
-        status_box.pack(fill="x", padx=14, pady=(0, 6))
+        status_box.pack(fill="x", padx=16, pady=(0, 8))
         
         # Header box: icon + tiêu đề
         s_hdr = ctk.CTkFrame(status_box, fg_color="transparent")
         s_hdr.pack(fill="x", padx=10, pady=(8, 4))
         
-        s_ib = ctk.CTkFrame(s_hdr, width=26, height=26, corner_radius=6, fg_color=("#DCFCE7", "#064E3B"))
+        s_ib = ctk.CTkFrame(s_hdr, width=30, height=30, corner_radius=8, fg_color=("#DCFCE7", "#064E3B"))
         s_ib.pack(side="left", padx=(0, 8))
         s_ib.pack_propagate(False)
-        ctk.CTkLabel(s_ib, text="🖥", font=ctk.CTkFont(size=11), text_color="#10B981").place(relx=0.5, rely=0.5, anchor="center")
+        ctk.CTkLabel(s_ib, text="◆", font=ctk.CTkFont(size=12, weight="bold"), text_color="#10B981").place(relx=0.5, rely=0.5, anchor="center")
         
         s_title_f = ctk.CTkFrame(s_hdr, fg_color="transparent")
         s_title_f.pack(side="left", fill="both", expand=True)
@@ -173,9 +173,9 @@ class NavigationMixin:
         for pid, btn in self.nav_buttons.items():
             if pid == active_page_id:
                 btn.configure(
-                    fg_color=("#EAF4FF", "#0C4A6E"),
-                    hover_color=("#DCEEFF", "#075985"),
-                    text_color=("#0369A1", "#7DD3FC"),
+                    fg_color=("#E9F2FF", "#0C4A6E"),
+                    hover_color=("#DCEAFF", "#075985"),
+                    text_color=("#0B66D4", "#7DD3FC"),
                     font=ctk.CTkFont(size=13, weight="bold"),
                 )
             else:
@@ -336,18 +336,22 @@ class NavigationMixin:
             if page_id in ["database", "add_employee"]:
                 self.header_bar.grid_remove()
             else:
-                self.header_bar.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+                self.header_bar.grid(row=0, column=0, sticky="ew", pady=(0, 12))
                 if hasattr(self, 'header_title_label'):
                     if page_id == "attendance":
+                        self.header_icon_label.configure(text="⌖")
                         self.header_title_label.configure(text="Nhận diện điểm danh")
                         self.header_sub_label.configure(text="Quét khuôn mặt để ghi nhận thời gian vào/ra")
                     elif page_id == "history":
+                        self.header_icon_label.configure(text="▤")
                         self.header_title_label.configure(text="Lịch sử ra vào")
                         self.header_sub_label.configure(text="Xem toàn bộ dữ liệu ra vào của nhân sự")
                     elif page_id == "dashboard":
+                        self.header_icon_label.configure(text="⌂")
                         self.header_title_label.configure(text="Bảng điều khiển")
                         self.header_sub_label.configure(text="Tổng quan hoạt động điểm danh và quản lý nhân sự")
                     else:
+                        self.header_icon_label.configure(text="⚙")
                         self.header_title_label.configure(text="Cài đặt hệ thống")
                         self.header_sub_label.configure(text="Cấu hình hệ thống và tham số nhận diện")
 
@@ -486,7 +490,7 @@ class NavigationMixin:
     def _build_main_area(self):
         """Xây dựng khu vực chính gồm Header Bar và Container các Trang."""
         self.main_container = ctk.CTkFrame(self, fg_color=CTK_BG_MAIN)
-        self.main_container.grid(row=0, column=1, sticky="nswe", padx=18, pady=(16, 16))
+        self.main_container.grid(row=0, column=1, sticky="nswe", padx=16, pady=(14, 14))
         
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -498,24 +502,34 @@ class NavigationMixin:
         # ==========================================
         # TOP APP BAR (Tiêu đề, Đồng hồ, Profile Admin)
         # ==========================================
-        self.header_bar = ctk.CTkFrame(self.main_container, fg_color=CTK_BG_MAIN, height=56)
-        self.header_bar.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        self.header_bar = ctk.CTkFrame(self.main_container, fg_color=CTK_BG_MAIN, height=58)
+        self.header_bar.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         self.header_bar.grid_columnconfigure(0, weight=1)
         self.header_bar.grid_columnconfigure(1, weight=0)
         
         # Left: Title + Subtitle (Clean Enterprise Header)
         header_left = ctk.CTkFrame(self.header_bar, fg_color="transparent")
         header_left.grid(row=0, column=0, sticky="w")
+
+        self.header_icon_label = ctk.CTkLabel(
+            header_left, text="⌖", width=38, height=38, corner_radius=11,
+            fg_color=("#E8F1FF", "#172554"), text_color=("#0F6EF4", "#60A5FA"),
+            font=ctk.CTkFont(family="Segoe UI Symbol", size=20, weight="bold"),
+        )
+        self.header_icon_label.pack(side="left", padx=(0, 11))
+
+        header_copy = ctk.CTkFrame(header_left, fg_color="transparent")
+        header_copy.pack(side="left")
         
         self.header_title_label = ctk.CTkLabel(
-            header_left, text="Nhận diện điểm danh",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            header_copy, text="Nhận diện điểm danh",
+            font=ctk.CTkFont(size=21, weight="bold"),
             text_color=CTK_TEXT, anchor="w"
         )
         self.header_title_label.pack(anchor="w")
         
         self.header_sub_label = ctk.CTkLabel(
-            header_left, text="Quét khuôn mặt để ghi nhận thời gian vào/ra",
+            header_copy, text="Quét khuôn mặt để ghi nhận thời gian vào/ra",
             font=ctk.CTkFont(size=12), text_color=CTK_TEXT_DIM, anchor="w"
         )
         self.header_sub_label.pack(anchor="w", pady=(2, 0))
@@ -529,20 +543,20 @@ class NavigationMixin:
             header_right,
             text="+ Đăng ký mới",
             font=ctk.CTkFont(size=13, weight="bold"),
-            height=36,
-            corner_radius=8,
-            fg_color=("#2563EB", "#2563EB"),
+            height=38,
+            corner_radius=9,
+            fg_color=("#0F6EF4", "#2563EB"),
             hover_color=("#1D4ED8", "#1D4ED8"),
             text_color="#FFFFFF",
             command=lambda: self._navigate("add_employee"),
         )
-        self.btn_header_register.pack(side="left", padx=(0, 16))
+        self.btn_header_register.pack(side="left", padx=(0, 18))
         
         self.header_date_label = ctk.CTkLabel(
             header_right, text="Thứ Năm, 01/10/2026",
             font=ctk.CTkFont(size=12), text_color=CTK_TEXT_DIM, anchor="e"
         )
-        self.header_date_label.pack(side="left", padx=(0, 14))
+        self.header_date_label.pack(side="left", padx=(0, 16))
 
         # Ngăn cách ngày và giờ bằng một đường mảnh, tránh cảm giác như ô nhập liệu.
         clock_divider = ctk.CTkFrame(
@@ -552,7 +566,7 @@ class NavigationMixin:
         clock_divider.pack(side="left", padx=(0, 12))
 
         clock_pill = ctk.CTkFrame(
-            header_right, height=34, corner_radius=9,
+            header_right, height=36, corner_radius=10,
             fg_color=("#EAF2FF", "#172554"),
         )
         clock_pill.pack(side="left")

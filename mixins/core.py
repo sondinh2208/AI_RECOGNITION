@@ -61,13 +61,12 @@ class CoreMixin:
         self._kiosk_face_absent_since = None
         self._kiosk_active_face_area = None
         self._kiosk_unknown_attempts = 0
-        self._kiosk_conditional_candidate_id = None
-        self._kiosk_conditional_confirmations = 0
-        self._kiosk_conditional_attempts = 0
-        self._kiosk_conditional_started_at = None
-        self._kiosk_conditional_distances = []
-        self._kiosk_conditional_margins = []
-        self._kiosk_conditional_votes = {}
+        self._kiosk_strict_candidate_id = None
+        self._kiosk_strict_confirmations = 0
+        self._kiosk_strict_attempts = 0
+        self._kiosk_strict_started_at = None
+        self._kiosk_strict_distances = []
+        self._kiosk_strict_margins = []
         self._attendance_cooldowns = {}
         
         # --- Dữ liệu lịch sử điểm danh thực tế (lưu bền vững trên đĩa) ---
