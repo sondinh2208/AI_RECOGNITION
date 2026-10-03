@@ -126,23 +126,47 @@ class NavigationMixin:
             self.sidebar, corner_radius=10,
             fg_color=("#F9FAFB", "#0F172A"), border_width=1, border_color=CTK_ACCENT
         )
-        status_box.pack(fill="x", padx=14, pady=(0, 16))
+        status_box.pack(fill="x", padx=14, pady=(0, 6))
         
-        row1 = ctk.CTkFrame(status_box, fg_color="transparent")
-        row1.pack(fill="x", padx=12, pady=(10, 2))
-        ctk.CTkLabel(
-            row1, text="● ", font=ctk.CTkFont(size=10, weight="bold"),
-            text_color=CTK_SUCCESS
-        ).pack(side="left")
-        ctk.CTkLabel(
-            row1, text="Camera đang hoạt động",
-            font=ctk.CTkFont(size=11, weight="bold"), text_color=CTK_TEXT
-        ).pack(side="left")
+        # Header box: icon + tiêu đề
+        s_hdr = ctk.CTkFrame(status_box, fg_color="transparent")
+        s_hdr.pack(fill="x", padx=10, pady=(8, 4))
         
+        s_ib = ctk.CTkFrame(s_hdr, width=26, height=26, corner_radius=6, fg_color=("#DCFCE7", "#064E3B"))
+        s_ib.pack(side="left", padx=(0, 8))
+        s_ib.pack_propagate(False)
+        ctk.CTkLabel(s_ib, text="🖥", font=ctk.CTkFont(size=11), text_color="#10B981").place(relx=0.5, rely=0.5, anchor="center")
+        
+        s_title_f = ctk.CTkFrame(s_hdr, fg_color="transparent")
+        s_title_f.pack(side="left", fill="both", expand=True)
+        ctk.CTkLabel(s_title_f, text="Trạng thái vận hành", font=ctk.CTkFont(size=11, weight="bold"), text_color=CTK_TEXT, anchor="w").pack(fill="x")
+        ctk.CTkLabel(s_title_f, text="Kết nối ổn định", font=ctk.CTkFont(size=9), text_color=CTK_TEXT_DIM, anchor="w").pack(fill="x")
+        
+        # Divider
+        ctk.CTkFrame(status_box, height=1, fg_color=CTK_ACCENT).pack(fill="x", padx=8, pady=(2, 4))
+        
+        # 3 Rows: Camera, Thiết bị, Dữ liệu
+        items = [
+            ("Camera", "Hoạt động"),
+            ("Thiết bị", "Bình thường"),
+            ("Dữ liệu", "Đồng bộ tốt"),
+        ]
+        for label, val in items:
+            row = ctk.CTkFrame(status_box, fg_color="transparent")
+            row.pack(fill="x", padx=10, pady=1)
+            ctk.CTkLabel(row, text=label, font=ctk.CTkFont(size=10), text_color=CTK_TEXT_DIM, anchor="w").pack(side="left")
+            val_f = ctk.CTkFrame(row, fg_color="transparent")
+            val_f.pack(side="right")
+            ctk.CTkLabel(val_f, text="● ", font=ctk.CTkFont(size=7, weight="bold"), text_color="#10B981").pack(side="left")
+            ctk.CTkLabel(val_f, text=val, font=ctk.CTkFont(size=10, weight="bold"), text_color=CTK_TEXT).pack(side="left")
+        
+        ctk.CTkFrame(status_box, height=4, fg_color="transparent").pack()
+        
+        # Version label
         ctk.CTkLabel(
-            status_box, text="Kết nối ổn định",
-            font=ctk.CTkFont(size=10), text_color=("#9CA3AF", "#64748B"), anchor="w"
-        ).pack(fill="x", padx=14, pady=(0, 10))
+            self.sidebar, text="v1.0.0",
+            font=ctk.CTkFont(size=10), text_color=CTK_TEXT_DIM, anchor="w"
+        ).pack(fill="x", padx=16, pady=(0, 8))
         
     def _highlight_nav(self, active_page_id):
         """Đổi màu nút đang active trên sidebar theo chuẩn mockup (Image 2: Nền Cyan, chữ trắng đậm)."""
@@ -322,7 +346,7 @@ class NavigationMixin:
                         self.header_sub_label.configure(text="Xem toàn bộ dữ liệu ra vào của nhân sự")
                     elif page_id == "dashboard":
                         self.header_title_label.configure(text="Bảng điều khiển")
-                        self.header_sub_label.configure(text="Tổng quan hệ thống và trạng thái nhận diện khuôn mặt")
+                        self.header_sub_label.configure(text="Tổng quan hoạt động điểm danh và quản lý nhân sự")
                     else:
                         self.header_title_label.configure(text="Cài đặt hệ thống")
                         self.header_sub_label.configure(text="Cấu hình hệ thống và tham số nhận diện")
