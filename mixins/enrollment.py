@@ -283,56 +283,108 @@ class EnrollmentMixin:
         self.btn_restart_cam.pack(side="right", expand=True, fill="x", padx=(5, 0))
         
         # ==========================================
-        # CARD 2: THÔNG TIN HỆ THỐNG
+        # CARD 2: HƯỚNG DẪN QUÉT KHUÔN MẶT (COMMERCIAL eKYC GUIDE)
         # ==========================================
-        sys_card = ctk.CTkFrame(
+        guide_card = ctk.CTkFrame(
             right_container, fg_color=CTK_CARD, corner_radius=12,
             border_width=1, border_color=CTK_ACCENT
         )
-        sys_card.pack(fill="both", expand=True)
+        guide_card.pack(fill="both", expand=True)
         
         # Header
-        sys_header = ctk.CTkFrame(sys_card, fg_color="transparent")
-        sys_header.pack(fill="x", padx=18, pady=(14, 8))
+        guide_header = ctk.CTkFrame(guide_card, fg_color="transparent")
+        guide_header.pack(fill="x", padx=16, pady=(14, 8))
+        
+        h_left = ctk.CTkFrame(guide_header, fg_color="transparent")
+        h_left.pack(side="left", fill="x", expand=True)
+        
+        title_row = ctk.CTkFrame(h_left, fg_color="transparent")
+        title_row.pack(fill="x")
         
         ctk.CTkLabel(
-            sys_header, text="⏳  THÔNG TIN HỆ THỐNG",
+            title_row, text="📋", font=ctk.CTkFont(size=14),
+        ).pack(side="left", padx=(0, 6))
+        
+        ctk.CTkLabel(
+            title_row, text="HƯỚNG DẪN QUÉT KHUÔN MẶT",
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=CTK_TEXT, anchor="w",
         ).pack(side="left")
         
-        # Helper: Tạo dòng thông tin hệ thống
-        def create_telemetry_row(parent, icon, title, initial_val, is_highlight=False):
-            row = ctk.CTkFrame(parent, fg_color="transparent", height=26)
-            row.pack(fill="x", padx=18, pady=3)
-            row.pack_propagate(False)
+        # Trạng thái kết nối camera góc phải
+        self.lbl_stat_status = ctk.CTkLabel(
+            guide_header, text="● Sẵn sàng",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=CTK_SUCCESS, anchor="e",
+        )
+        self.lbl_stat_status.pack(side="right")
+        
+        # Danh sách hướng dẫn chuẩn eKYC dựa trên cấu hình dự án
+        guide_list = ctk.CTkFrame(guide_card, fg_color="transparent")
+        guide_list.pack(fill="both", expand=True, padx=4, pady=(2, 4))
+        
+        def create_guide_item(parent, icon, ibg, ic, title, desc):
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=3)
             
-            left = ctk.CTkFrame(row, fg_color="transparent")
-            left.pack(side="left")
+            ib = ctk.CTkFrame(row, width=28, height=28, corner_radius=8, fg_color=ibg)
+            ib.pack(side="left", padx=(0, 10))
+            ib.pack_propagate(False)
+            ctk.CTkLabel(ib, text=icon, font=ctk.CTkFont(size=13), text_color=ic).place(relx=0.5, rely=0.5, anchor="center")
+            
+            tb = ctk.CTkFrame(row, fg_color="transparent")
+            tb.pack(side="left", fill="both", expand=True)
+            
             ctk.CTkLabel(
-                left, text=f"{icon}  {title}",
-                font=ctk.CTkFont(size=12), text_color=CTK_TEXT_DIM, anchor="w"
-            ).pack(side="left")
+                tb, text=title, font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=CTK_TEXT, anchor="w",
+            ).pack(fill="x")
             
-            val_lbl = ctk.CTkLabel(
-                row, text=initial_val,
-                font=ctk.CTkFont(size=12, weight="bold" if is_highlight else "normal"),
-                text_color=CTK_SUCCESS if is_highlight else CTK_TEXT,
-                anchor="e"
-            )
-            val_lbl.pack(side="right")
-            return val_lbl
+            ctk.CTkLabel(
+                tb, text=desc, font=ctk.CTkFont(size=10),
+                text_color=CTK_TEXT_DIM, anchor="w",
+                wraplength=ADMIN_CAMERA_WIDTH - 60, justify="left",
+            ).pack(fill="x")
             
-        sys_rows = ctk.CTkFrame(sys_card, fg_color="transparent")
-        sys_rows.pack(fill="x", pady=(0, 14))
+        create_guide_item(
+            guide_list, "🎯", ("#EFF6FF", "#1E3A5F"), ("#2563EB", "#60A5FA"),
+            "1. Căn giữa khung ngắm eKYC",
+            "Đưa toàn bộ khuôn mặt vào giữa khung định vị elip trên màn hình camera.",
+        )
+        create_guide_item(
+            guide_list, "📏", ("#FEF3C7", "#78350F"), ("#F59E0B", "#FBBF24"),
+            "2. Khoảng cách tiêu chuẩn: 0.5m – 0.8m",
+            "Đứng cách camera vừa phải (không quá xa dưới 55% hoặc quá gần trên 90%).",
+        )
+        create_guide_item(
+            guide_list, "👁", ("#EDE9FE", "#3B0764"), ("#8B5CF6", "#A78BFA"),
+            "3. Nhìn thẳng, giữ đầu ngay ngắn",
+            "Mắt nhìn thẳng camera, không nghiêng đầu quá 10° hoặc quay ngang.",
+        )
+        create_guide_item(
+            guide_list, "💡", ("#DCFCE7", "#064E3B"), ("#10B981", "#34D399"),
+            "4. Đủ sáng, không che khuất khuôn mặt",
+            "Vui lòng tháo khẩu trang, kính râm và đảm bảo đủ ánh sáng rọi đều mặt.",
+        )
+        create_guide_item(
+            guide_list, "⏱", ("#E0F2FE", "#0C4A6E"), ("#0284C7", "#38BDF8"),
+            "5. Tự động chụp sau 3 giây",
+            "Khi khung viền chuyển XANH, giữ yên 3 giây để hệ thống tự động lưu mẫu.",
+        )
         
-        self.lbl_stat_model = create_telemetry_row(sys_rows, "🤖", "Model", f"YOLOv8 + {DEEPFACE_MODEL_NAME}")
-        self.lbl_stat_conf = create_telemetry_row(sys_rows, "🎯", "Độ tin cậy (Face)", "0.00")
-        self.lbl_stat_fps = create_telemetry_row(sys_rows, "⏱", "FPS", "30")
-        self.lbl_stat_status = create_telemetry_row(sys_rows, "🩺", "Trạng thái", "● Hoạt động tốt", is_highlight=True)
+        # Footer alert box
+        note_box = ctk.CTkFrame(
+            guide_card, fg_color=("#F8FAFC", "#080E1A"),
+            corner_radius=8, border_width=1, border_color=CTK_ACCENT,
+        )
+        note_box.pack(fill="x", padx=16, pady=(4, 12))
         
-        device_text = "NVIDIA GPU" if getattr(self, 'device', 'cpu') in ['cuda', '0'] else "CPU"
-        self.lbl_stat_device = create_telemetry_row(sys_rows, "🖥", "Thiết bị", device_text)
+        ctk.CTkLabel(
+            note_box,
+            text="ℹ️ Hệ thống AI tự động xác thực và khóa snapshot khi đạt tiêu chuẩn.",
+            font=ctk.CTkFont(size=10), text_color=CTK_TEXT_DIM,
+            wraplength=ADMIN_CAMERA_WIDTH - 40, justify="left",
+        ).pack(fill="x", padx=10, pady=7)
 
     def _reset_enrollment_scan(self, clear_preview=True, wait_for_face_leave=False):
         """Bỏ snapshot hiện tại và đưa camera về trạng thái tự quét lượt mới."""

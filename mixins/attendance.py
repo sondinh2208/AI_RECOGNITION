@@ -1516,26 +1516,65 @@ class AttendanceMixin:
         self.is_recognizing = False
 
     def _on_kiosk_recognition_ambiguous(self, best_distance, second_distance, margin):
-        """Từ chối an toàn khi Top 1 và Top 2 chưa tách biệt đủ rõ."""
+        """Từ chối và ghi nhận thất bại khi danh tính không đủ tin cậy."""
+        now = datetime.now()
+        now_str = now.strftime("%H:%M:%S · %d/%m/%Y")
+        now_short = now.strftime("%H:%M:%S %d/%m/%Y")
+
         self._is_kiosk_ui_idle = False
         self.kiosk_res_banner_frame.configure(fg_color="transparent")
         self.kiosk_res_icon.configure(
             text="!", fg_color=("#FEF3C7", "#422006"),
             text_color=("#B45309", "#FBBF24"),
         )
-        self.kiosk_res_title.configure(text="Kết quả chưa chắc chắn", text_color=CTK_TEXT)
-        self.kiosk_res_sub.configure(
-            text="Hai hồ sơ có mức tương đồng quá gần nhau", text_color=CTK_TEXT_DIM,
+        self.kiosk_res_title.configure(
+            text="Không thể xác minh danh tính", text_color=CTK_TEXT
         )
-        self.kiosk_name_label.configure(text="Vui lòng quét lại", text_color=CTK_TEXT)
+        self.kiosk_res_sub.configure(
+            text="Không có hồ sơ nào đủ độ tin cậy", text_color=CTK_TEXT_DIM,
+        )
+        self.kiosk_name_label.configure(text="Chưa xác định", text_color=CTK_TEXT)
         if hasattr(self, 'kiosk_id_title'):
             self.kiosk_id_title.configure(text="Mã NV: ")
         self.kiosk_id_badge.configure(text="---", text_color=CTK_TEXT_DIM)
         self.kiosk_role_label.configure(text="💼  Chức vụ: ---")
         self.kiosk_dept_label.configure(text="🏢  Phòng ban: ---")
         self._set_kiosk_avatar(None, None, border_color="#E2E8F0", size=(80, 80))
-        self.kiosk_status_title.configure(text="Cần xác minh lại khuôn mặt")
-        self.kiosk_status_desc.configure(text="Vui lòng nhìn thẳng và quét lại")
+
+        if hasattr(self, 'kiosk_greeting_card'):
+            self.kiosk_greeting_card.pack_forget()
+        if hasattr(self, 'kiosk_warning_line1'):
+            self.kiosk_warning_line1.configure(
+                text="Khuôn mặt không khớp đủ tin cậy với hồ sơ đã đăng ký."
+            )
+        if hasattr(self, 'kiosk_warning_line2'):
+            self.kiosk_warning_line2.configure(
+                text="Không ghi nhận điểm danh thành công."
+            )
+        if hasattr(self, 'kiosk_warning_box'):
+            self.kiosk_warning_box.pack(fill="x")
+
+        self.kiosk_time_label.configure(text=now_str)
+        if hasattr(self, 'kiosk_saved_badge'):
+            self.kiosk_saved_badge.pack_forget()
+        self.kiosk_status_title.configure(text="Xác minh không thành công")
+        self.kiosk_status_desc.configure(text="Vui lòng điều chỉnh khuôn mặt và quét lại")
+        if hasattr(self, 'kiosk_status_time'):
+            self.kiosk_status_time.configure(text=now_short)
+
+        self._add_attendance_record({
+            "time": now_short,
+            "name": "Chưa xác định",
+            "id": "—",
+            "role": "—",
+            "dept": "—",
+            "status": "Thất bại",
+            "reason": "Không đủ độ tin cậy",
+            "distance": round(float(best_distance), 4),
+            "second_distance": round(float(second_distance), 4),
+            "margin": round(float(margin), 4),
+        })
+
         self._show_retry_actions()
         if hasattr(self, 'btn_kiosk_register'):
             self.btn_kiosk_register.pack_forget()
@@ -1589,6 +1628,14 @@ class AttendanceMixin:
             self.kiosk_greeting_card.pack_forget()
         if hasattr(self, 'kiosk_warning_box'):
             self.kiosk_warning_box.pack(fill="x")
+        if hasattr(self, 'kiosk_warning_line1'):
+            self.kiosk_warning_line1.configure(
+                text="Khuôn mặt chưa có trong hệ thống dữ liệu."
+            )
+        if hasattr(self, 'kiosk_warning_line2'):
+            self.kiosk_warning_line2.configure(
+                text="Vui lòng đăng ký trước khi điểm danh."
+            )
         
         # 5. Thời gian
         self.kiosk_time_label.configure(text=now_str)
