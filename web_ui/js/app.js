@@ -30,9 +30,100 @@ const cameraImage = $("#cameraStream");
 cameraImage.addEventListener("load", () => cameraSurface.classList.add("loaded"));
 cameraImage.src = `/api/camera/stream?t=${Date.now()}`;
 
+function closeCameraFullscreen() {
+  cameraSurface.classList.remove("enrollment-fullscreen");
+  document.body.classList.remove("camera-fullscreen");
+}
+
+$(".camera-expand").addEventListener("click", () => {
+  const expanded = cameraSurface.classList.toggle("enrollment-fullscreen");
+  document.body.classList.toggle("camera-fullscreen", expanded);
+});
+addEventListener("keydown", event => { if (event.key === "Escape") closeCameraFullscreen(); });
+
 function moveCamera(route) {
   const slot = document.querySelector(`[data-camera-slot="${route}"]`);
   if (slot && cameraSurface.parentElement !== slot) slot.append(cameraSurface);
+}
+
+const enrollmentStatusLabels = [
+  [/DA QUET KHUON MAT|SAN SANG LUU/i, "Đã quét khuôn mặt · Sẵn sàng lưu"],
+  [/GIU YEN KHUON MAT:\s*([\d.]+)\s*GIAY/i, (_, seconds) => `Giữ yên khuôn mặt · còn ${seconds} giây`],
+  [/ROI KHOI KHUNG/i, "Vui lòng rời khung để quét người tiếp theo"],
+  [/Di chuyen lai gan hon/i, "Di chuyển lại gần camera hơn"],
+  [/Vui long lui lai/i, "Vui lòng lùi ra xa camera một chút"],
+  [/Khuon mat chua ro rang/i, "Khuôn mặt chưa rõ, hãy nhìn thẳng camera"],
+  [/Vui long dieu chinh goc ngang cui/i, "Điều chỉnh góc ngẩng hoặc cúi"],
+  [/Vui long giu dau thang/i, "Giữ đầu thẳng, không nghiêng"],
+  [/Vui long nhin thang vao camera/i, "Vui lòng nhìn thẳng vào camera"],
+  [/Goc mat hop le/i, "Góc mặt hợp lệ · Đang chuẩn bị quét"],
+  [/Dua mat vao khung hinh/i, "Đưa khuôn mặt vào giữa khung hình"],
+];
+
+function friendlyEnrollmentStatus(value) {
+  const status = String(value || "");
+  for (const [pattern, replacement] of enrollmentStatusLabels) {
+    if (pattern.test(status)) return status.replace(pattern, replacement);
+  }
+  return status || "Đang chờ khuôn mặt";
+}
+
+function setQuality(id, state, detail) {
+  const item = $(id);
+  item.classList.remove("pass", "warn", "fail", "pending");
+  item.classList.add(state);
+  item.querySelector("small").textContent = detail;
+}
+
+function renderEnrollment(state) {
+  const camera = state.camera || {};
+  const enrollment = state.enrollment || {};
+  const rawStatus = String(enrollment.status_text || "");
+  const normalized = rawStatus.toLowerCase();
+  const detected = Number(camera.confidence || 0) > 0;
+  const ready = Boolean(enrollment.capture_ready);
+  const scanning = /giu yen|goc mat hop le/.test(normalized);
+  const distanceIssue = /lai gan|lui lai/.test(normalized);
+  const poseIssue = /goc|dau thang|nhin thang|ngang cui/.test(normalized) && !scanning;
+  const clarityIssue = /chua ro/.test(normalized);
+  const offline = !camera.running;
+  const friendlyStatus = friendlyEnrollmentStatus(rawStatus);
+
+  $("#enrollmentFps").textContent = Math.round(camera.fps || 0);
+  $("#saveEnrollment").disabled = !ready || enrollment.saving;
+  $("#saveEnrollment span").textContent = enrollment.saving ? "Đang lưu khuôn mặt..." : "Lưu khuôn mặt";
+  $("#cameraBadgeText").textContent = offline ? "Camera ngoại tuyến" : "Camera trực tiếp";
+  $("#cameraFooterStatus").textContent = ready ? "Đã khóa ảnh khuôn mặt" : scanning ? "Đang tự động quét" : detected ? "Đã phát hiện khuôn mặt" : "Sẵn sàng nhận diện";
+
+  let visualState = "idle";
+  let title = "Đưa khuôn mặt vào khung";
+  let message = friendlyStatus;
+  let iconName = "user-scan";
+  if (offline) { visualState = "error"; title = "Camera chưa sẵn sàng"; message = "Kiểm tra kết nối camera để tiếp tục"; iconName = "x"; }
+  else if (enrollment.state === "error") { visualState = "error"; title = enrollment.title; message = enrollment.message; iconName = "x"; }
+  else if (enrollment.saving) { visualState = "scanning"; title = "Đang lưu khuôn mặt"; message = enrollment.message || "Đang trích xuất dữ liệu khuôn mặt..."; iconName = "save"; }
+  else if (enrollment.state === "success") { visualState = "success"; title = enrollment.title; message = enrollment.message; iconName = "check"; }
+  else if (ready) { visualState = "ready"; title = "Khuôn mặt đạt yêu cầu"; message = "Sẵn sàng lưu hồ sơ nhân viên"; iconName = "check"; }
+  else if (scanning) { visualState = "scanning"; title = "Đang quét khuôn mặt"; iconName = "user-scan"; }
+  else if (detected) { visualState = "warning"; title = "Cần căn chỉnh khuôn mặt"; iconName = "alert"; }
+
+  const result = $("#enrollmentResult");
+  result.dataset.state = visualState;
+  result.querySelector(".enrollment-result-icon use").setAttribute("href", `#i-${iconName}`);
+  $("#enrollmentResultTitle").textContent = title;
+  $("#enrollmentCameraStatus").textContent = message;
+  $("#enrollmentSteps").classList.toggle("complete", enrollment.state === "success");
+
+  setQuality("#qualityLight", offline ? "fail" : "pass", offline ? "Chưa kết nối" : `${Math.round(camera.fps || 0)} FPS`);
+  setQuality("#qualityPosition", ready || scanning ? "pass" : distanceIssue || poseIssue ? "warn" : "pending", ready ? "Đã căn chuẩn" : scanning ? "Giữ nguyên vị trí" : distanceIssue || poseIssue ? "Cần điều chỉnh" : "Chờ khuôn mặt");
+  setQuality("#qualityClarity", ready || scanning ? "pass" : clarityIssue ? "fail" : detected ? "warn" : "pending", ready ? "Đạt yêu cầu" : clarityIssue ? "Chưa rõ nét" : detected ? `Tin cậy ${Math.round((camera.confidence || 0) * 100)}%` : "Đang kiểm tra");
+
+  const guidance = offline
+    ? "Camera đang ngoại tuyến. Hãy kiểm tra thiết bị trước khi quét."
+    : ready
+      ? "Ảnh đã được khóa sau khi giữ ổn định 3 giây và thu đủ mẫu. Hãy kiểm tra thông tin rồi lưu."
+      : "Hệ thống tự kiểm tra một khuôn mặt, vị trí, khoảng cách và góc nhìn; giữ yên 3 giây khi khung đạt chuẩn.";
+  $("#enrollmentNotice").textContent = guidance;
 }
 
 function renderStatus(state) {
@@ -41,11 +132,7 @@ function renderStatus(state) {
   markDataStale(state.history_version);
   $("#sideCamera").textContent = state.camera.running ? "Hoạt động" : "Ngoại tuyến";
   $("#sideDevice").textContent = state.camera.device === "cpu" ? "CPU" : "GPU sẵn sàng";
-  $("#enrollmentFps").textContent = Math.round(state.camera.fps || 0);
-  $("#enrollmentCameraStatus").textContent = state.enrollment.capture_ready ? "Đã quét khuôn mặt · Sẵn sàng lưu" : state.enrollment.status_text;
-  $("#saveEnrollment").disabled = !state.enrollment.capture_ready || state.enrollment.saving;
-  $("#saveEnrollment").textContent = state.enrollment.saving ? "Đang lưu khuôn mặt..." : "Lưu khuôn mặt";
-  $("#enrollmentNotice").textContent = state.enrollment.message || state.enrollment.status_text;
+  renderEnrollment(state);
   if (recognitionChanged) renderRecognition(state.recognition);
   renderRecognitionTest(state.recognition_test);
   if (store.route === "recognition" && store.history.stale) loadRecent();
@@ -211,6 +298,7 @@ $("#recognitionImageInput").addEventListener("change", async event => {
 $("#enrollmentForm").addEventListener("submit", async event => { event.preventDefault(); try { await api.saveEnrollment(Object.fromEntries(new FormData(event.target))); toast("Đang lưu khuôn mặt..."); } catch (error) { toast(error.message, true); } });
 
 async function onNavigate(route) {
+  if (route !== "enrollment") closeCameraFullscreen();
   if (route === "recognition") { moveCamera("recognition"); await api.setMode("attendance"); await loadRecent(); }
   if (route === "enrollment") { moveCamera("enrollment"); await api.setMode("add_employee"); }
   if (route === "dashboard") { await api.setMode("idle"); await loadDashboard(); }

@@ -35,6 +35,11 @@
     <symbol id="i-bars" viewBox="0 0 24 24"><path d="M5 20V10M10 20V4M15 20v-7M20 20V7"/></symbol>
     <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
     <symbol id="i-user-add" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20c.4-4 2.4-6 6-6s5.6 2 6 6M18 8v6M15 11h6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h12l3 3v15H4V4l1-1Z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
   </svg>
 
   <div class="app-shell">
@@ -92,8 +97,46 @@
 
       <section class="page" data-page="enrollment">
         <div class="enrollment-grid">
-          <article class="card enrollment-form"><div class="section-head"><div><h2>Đăng ký khuôn mặt mới</h2><p>Nhập thông tin nhân viên và quét khuôn mặt qua Camera AI</p></div><button class="secondary" data-route="employees">Người đăng ký</button></div><form id="enrollmentForm"><label>Họ và tên nhân viên<input name="name" placeholder="Nguyễn Văn A" required></label><label>Mã nhân viên<input name="id" placeholder="NV001" required></label><label>Chức vụ<input name="role" placeholder="Kỹ sư phần mềm" required></label><label>Phòng ban<input name="department" placeholder="Phòng IT" required></label><button class="primary wide" id="saveEnrollment" disabled>Lưu khuôn mặt</button><div class="form-notice" id="enrollmentNotice">Hãy giữ khuôn mặt chính giữa khung hình và đủ ánh sáng.</div></form></article>
-          <article class="card camera-card"><div class="camera-card-head"><strong>Camera trực tiếp</strong><span class="live"><i></i> LIVE</span></div><div class="camera-slot" data-camera-slot="enrollment"></div><div class="camera-telemetry"><span id="enrollmentCameraStatus">Đang chờ khuôn mặt</span><span>FPS <b id="enrollmentFps">0</b></span></div></article>
+          <article class="card enrollment-form">
+            <div class="enrollment-steps" id="enrollmentSteps" aria-label="Tiến trình đăng ký">
+              <div class="step complete" data-step="1"><span><svg><use href="#i-check"/></svg></span><b>1. Thông tin</b></div><i></i>
+              <div class="step active" data-step="2"><span>2</span><b>2. Quét khuôn mặt</b></div><i></i>
+              <div class="step" data-step="3"><span>3</span><b>3. Hoàn tất</b></div>
+            </div>
+            <div class="enrollment-form-body">
+              <div class="form-intro"><h2>Thông tin nhân viên</h2><p>Nhập thông tin nhân viên để lưu cùng với khuôn mặt.</p></div>
+              <form id="enrollmentForm">
+                <label>Họ và tên nhân viên<span class="field-control"><svg><use href="#i-users"/></svg><input name="name" placeholder="Nguyễn Văn A" autocomplete="name" required></span></label>
+                <label>Mã nhân viên<span class="field-control"><svg><use href="#i-list"/></svg><input name="id" placeholder="NV001" autocomplete="off" required></span></label>
+                <label>Chức vụ<span class="field-control"><svg><use href="#i-briefcase"/></svg><input name="role" placeholder="Kỹ sư phần mềm" required></span></label>
+                <label>Phòng ban<span class="field-control"><svg><use href="#i-building"/></svg><input name="department" placeholder="Phòng IT" required></span></label>
+                <button class="primary wide enrollment-save" id="saveEnrollment" disabled><svg><use href="#i-save"/></svg><span>Lưu khuôn mặt</span></button>
+              </form>
+              <aside class="scan-notes">
+                <div class="scan-notes-title"><span><svg><use href="#i-info"/></svg></span><strong>Lưu ý khi quét</strong></div>
+                <ol>
+                  <li><span>1</span>Chỉ để một khuôn mặt trong khung quét</li>
+                  <li><span>2</span>Nhìn thẳng, đưa toàn bộ khuôn mặt vào khung</li>
+                  <li><span>3</span>Giữ yên 3 giây để hệ thống tự chụp đủ mẫu</li>
+                </ol>
+                <p id="enrollmentNotice">Hệ thống sẽ kiểm tra vị trí, kích thước và góc khuôn mặt trước khi cho phép lưu.</p>
+              </aside>
+            </div>
+          </article>
+          <article class="card camera-card enrollment-camera-card">
+            <div class="camera-card-head"><strong><svg><use href="#i-camera"/></svg>Camera trực tiếp</strong><button class="camera-expand" type="button" aria-label="Phóng to camera"><svg><use href="#i-expand"/></svg></button></div>
+            <div class="camera-slot" data-camera-slot="enrollment"></div>
+            <div class="quality-grid" aria-label="Chất lượng quét">
+              <div class="quality-item" id="qualityLight"><span><svg><use href="#i-sun"/></svg></span><b>Đủ sáng</b><small>Camera sẵn sàng</small></div>
+              <div class="quality-item" id="qualityPosition"><span><svg><use href="#i-user-scan"/></svg></span><b>Đúng vị trí</b><small>Chờ khuôn mặt</small></div>
+              <div class="quality-item" id="qualityClarity"><span><svg><use href="#i-users"/></svg></span><b>Khuôn mặt rõ</b><small>Đang kiểm tra</small></div>
+            </div>
+            <div class="enrollment-result" id="enrollmentResult" data-state="idle">
+              <span class="enrollment-result-icon"><svg><use href="#i-user-scan"/></svg></span>
+              <span><strong id="enrollmentResultTitle">Đưa khuôn mặt vào khung</strong><small id="enrollmentCameraStatus">Hệ thống sẽ tự động quét khi đạt yêu cầu</small></span>
+              <span class="camera-metric">FPS <b id="enrollmentFps">0</b></span>
+            </div>
+          </article>
         </div>
       </section>
 
@@ -118,7 +161,7 @@
     </main>
   </div>
 
-  <div id="cameraSurface" class="camera-surface"><img id="cameraStream" alt="Camera FaceCheck"><div class="camera-loading"><span></span><b>Đang kết nối camera...</b></div><div class="camera-badge"><i></i> Camera trực tiếp</div><div class="camera-footer"><i></i> Sẵn sàng nhận diện <span></span> Kiosk A</div></div>
+  <div id="cameraSurface" class="camera-surface"><img id="cameraStream" alt="Camera FaceCheck"><div class="camera-loading"><span></span><b>Đang kết nối camera...</b></div><div class="camera-badge"><i></i><span id="cameraBadgeText">Camera trực tiếp</span></div><div class="camera-footer"><span class="camera-footer-state"><i></i><b id="cameraFooterStatus">Sẵn sàng nhận diện</b></span><span class="camera-footer-divider"></span><span><svg><use href="#i-pin"/></svg> Kiosk A</span></div></div>
 
   <div class="modal-backdrop" id="modal" hidden><div class="modal" role="dialog" aria-modal="true" aria-label="Hộp thoại FaceCheck"><button class="modal-close" aria-label="Đóng"><svg><use href="#i-x"/></svg></button><div id="modalContent"></div></div></div>
   <div class="toast-region" id="toasts" aria-live="polite"></div>
