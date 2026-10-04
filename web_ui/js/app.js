@@ -50,6 +50,9 @@ const enrollmentStatusLabels = [
   [/DA QUET KHUON MAT|SAN SANG LUU/i, "Đã quét khuôn mặt · Sẵn sàng lưu"],
   [/GIU YEN KHUON MAT:\s*([\d.]+)\s*GIAY/i, (_, seconds) => `Giữ yên khuôn mặt · còn ${seconds} giây`],
   [/ROI KHOI KHUNG/i, "Vui lòng rời khung để quét người tiếp theo"],
+  [/Khuon mat bi che khuat.*Khong thay mieng.*/i, "Miệng đang bị che khuất"],
+  [/Khuon mat bi che khuat.*Khong thay mat.*/i, "Mắt hoặc trán đang bị che khuất"],
+  [/Khuon mat bi che khuat.*/i, "Khuôn mặt đang bị che khuất"],
   [/Di chuyen lai gan hon/i, "Di chuyển lại gần camera hơn"],
   [/Vui long lui lai/i, "Vui lòng lùi ra xa camera một chút"],
   [/Khuon mat chua ro rang/i, "Khuôn mặt chưa rõ, hãy nhìn thẳng camera"],
@@ -59,6 +62,7 @@ const enrollmentStatusLabels = [
   [/Goc mat hop le/i, "Góc mặt hợp lệ · Đang chuẩn bị quét"],
   [/Dua mat vao khung hinh/i, "Đưa khuôn mặt vào giữa khung hình"],
 ];
+let enrollmentCancelPending = false;
 
 function friendlyEnrollmentStatus(value) {
   const status = String(value || "");
@@ -75,6 +79,38 @@ function setQuality(id, state, detail) {
   item.querySelector("small").textContent = detail;
 }
 
+function enrollmentFormIsValid() {
+  const form = $("#enrollmentForm");
+  const values = Object.fromEntries(new FormData(form));
+  const complete = ["name", "id", "role", "department"].every(key => String(values[key] || "").trim());
+  const validId = !/[\s<>:"/\\|?*@]/.test(String(values.id || "").trim());
+  return complete && validId && form.checkValidity();
+}
+
+function updateEnrollmentSteps(enrollment = {}) {
+  const formValid = enrollmentFormIsValid();
+  const finishing = Boolean(enrollment.saving || enrollment.state === "success");
+  const successState = enrollment.state === "success";
+  const currentStep = finishing ? 3 : formValid ? 2 : 1;
+  const steps = [...document.querySelectorAll("#enrollmentSteps .step")];
+  const connectors = [...document.querySelectorAll("#enrollmentSteps > i")];
+
+  steps.forEach((step, index) => {
+    const number = index + 1;
+    const complete = number < currentStep || (successState && number === 3);
+    const active = number === currentStep;
+    const accessible = number === 1 || (number === 2 && formValid) || (number === 3 && finishing);
+    step.classList.toggle("complete", complete && number !== 3);
+    step.classList.toggle("success", successState && number === 3);
+    step.classList.toggle("active", active);
+    step.setAttribute("aria-disabled", String(!accessible));
+    if (active) step.setAttribute("aria-current", "step"); else step.removeAttribute("aria-current");
+    step.querySelector("span").innerHTML = complete ? icon("check") : String(number);
+  });
+  connectors.forEach((connector, index) => connector.classList.toggle("complete", currentStep > index + 1));
+  $("#enrollmentSteps").dataset.currentStep = String(currentStep);
+}
+
 function renderEnrollment(state) {
   const camera = state.camera || {};
   const enrollment = state.enrollment || {};
@@ -85,16 +121,16 @@ function renderEnrollment(state) {
   const scanning = /giu yen|goc mat hop le/.test(normalized);
   const distanceIssue = /lai gan|lui lai/.test(normalized);
   const poseIssue = /goc|dau thang|nhin thang|ngang cui/.test(normalized) && !scanning;
-  const clarityIssue = /chua ro/.test(normalized);
+  const clarityIssue = /chua ro|che khuat/.test(normalized);
   const offline = !camera.running;
   const friendlyStatus = friendlyEnrollmentStatus(rawStatus);
 
   $("#enrollmentFps").textContent = Math.round(camera.fps || 0);
   $("#saveEnrollment").disabled = !ready || enrollment.saving;
   $("#saveEnrollment span").textContent = enrollment.saving ? "Đang lưu khuôn mặt..." : "Lưu khuôn mặt";
-  $("#cameraBadgeText").textContent = offline ? "Camera ngoại tuyến" : "Camera trực tiếp";
-  $("#cameraFooterStatus").textContent = ready ? "Đã khóa ảnh khuôn mặt" : scanning ? "Đang tự động quét" : detected ? "Đã phát hiện khuôn mặt" : "Sẵn sàng nhận diện";
-
+  const cancelCapture = $("#cancelEnrollmentCapture");
+  cancelCapture.hidden = !ready || enrollment.saving;
+  cancelCapture.disabled = Boolean(enrollment.saving || enrollmentCancelPending);
   let visualState = "idle";
   let title = "Đưa khuôn mặt vào khung";
   let message = friendlyStatus;
@@ -102,8 +138,8 @@ function renderEnrollment(state) {
   if (offline) { visualState = "error"; title = "Camera chưa sẵn sàng"; message = "Kiểm tra kết nối camera để tiếp tục"; iconName = "x"; }
   else if (enrollment.state === "error") { visualState = "error"; title = enrollment.title; message = enrollment.message; iconName = "x"; }
   else if (enrollment.saving) { visualState = "scanning"; title = "Đang lưu khuôn mặt"; message = enrollment.message || "Đang trích xuất dữ liệu khuôn mặt..."; iconName = "save"; }
-  else if (enrollment.state === "success") { visualState = "success"; title = enrollment.title; message = enrollment.message; iconName = "check"; }
   else if (ready) { visualState = "ready"; title = "Khuôn mặt đạt yêu cầu"; message = "Sẵn sàng lưu hồ sơ nhân viên"; iconName = "check"; }
+  else if (enrollment.state === "success") { visualState = "success"; title = enrollment.title; message = enrollment.message; iconName = "check"; }
   else if (scanning) { visualState = "scanning"; title = "Đang quét khuôn mặt"; iconName = "user-scan"; }
   else if (detected) { visualState = "warning"; title = "Cần căn chỉnh khuôn mặt"; iconName = "alert"; }
 
@@ -112,17 +148,17 @@ function renderEnrollment(state) {
   result.querySelector(".enrollment-result-icon use").setAttribute("href", `#i-${iconName}`);
   $("#enrollmentResultTitle").textContent = title;
   $("#enrollmentCameraStatus").textContent = message;
-  $("#enrollmentSteps").classList.toggle("complete", enrollment.state === "success");
+  updateEnrollmentSteps(enrollment);
 
   setQuality("#qualityLight", offline ? "fail" : "pass", offline ? "Chưa kết nối" : `${Math.round(camera.fps || 0)} FPS`);
   setQuality("#qualityPosition", ready || scanning ? "pass" : distanceIssue || poseIssue ? "warn" : "pending", ready ? "Đã căn chuẩn" : scanning ? "Giữ nguyên vị trí" : distanceIssue || poseIssue ? "Cần điều chỉnh" : "Chờ khuôn mặt");
-  setQuality("#qualityClarity", ready || scanning ? "pass" : clarityIssue ? "fail" : detected ? "warn" : "pending", ready ? "Đạt yêu cầu" : clarityIssue ? "Chưa rõ nét" : detected ? `Tin cậy ${Math.round((camera.confidence || 0) * 100)}%` : "Đang kiểm tra");
+  setQuality("#qualityClarity", ready || scanning ? "pass" : clarityIssue ? "fail" : detected ? "warn" : "pending", ready ? "Đạt yêu cầu" : clarityIssue ? "Bị che khuất" : detected ? `Tin cậy ${Math.round((camera.confidence || 0) * 100)}%` : "Đang kiểm tra");
 
   const guidance = offline
     ? "Camera đang ngoại tuyến. Hãy kiểm tra thiết bị trước khi quét."
     : ready
       ? "Ảnh đã được khóa sau khi giữ ổn định 3 giây và thu đủ mẫu. Hãy kiểm tra thông tin rồi lưu."
-      : "Hệ thống tự kiểm tra một khuôn mặt, vị trí, khoảng cách và góc nhìn; giữ yên 3 giây khi khung đạt chuẩn.";
+      : "Hệ thống tự kiểm tra mắt, mũi, miệng, vị trí, khoảng cách và góc nhìn; giữ yên 3 giây khi khung đạt chuẩn.";
   $("#enrollmentNotice").textContent = guidance;
 }
 
@@ -294,6 +330,52 @@ $("#recognitionImageInput").addEventListener("change", async event => {
   event.target.value = "";
   if (!file) return;
   try { await api.testImage(file); } catch (error) { toast(error.message, true); }
+});
+$("#enrollmentForm").addEventListener("input", () => updateEnrollmentSteps(store.runtime?.enrollment));
+$("#cancelEnrollmentCapture").addEventListener("click", async event => {
+  if (enrollmentCancelPending) return;
+  const button = event.currentTarget;
+  enrollmentCancelPending = true;
+  button.disabled = true;
+  try {
+    const state = await api.resetEnrollment();
+    renderStatus(state);
+    toast("Đã hủy ảnh quét. Hãy rời khỏi khung trước khi quét lại.");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    enrollmentCancelPending = false;
+    button.disabled = false;
+  }
+});
+$("#enrollmentSteps").addEventListener("click", event => {
+  const step = event.target.closest(".step");
+  if (!step) return;
+  const number = Number(step.dataset.step);
+  const form = $("#enrollmentForm");
+  if (number === 1) {
+    const target = [...form.elements].find(field => field.matches?.("input") && !String(field.value || "").trim()) || form.querySelector("input");
+    target?.focus();
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  if (number === 2) {
+    if (!enrollmentFormIsValid()) {
+      form.reportValidity();
+      toast("Hãy nhập đầy đủ thông tin hợp lệ trước khi chuyển sang quét khuôn mặt.", true);
+      return;
+    }
+    $(".enrollment-camera-card").focus({ preventScroll: true });
+    $(".enrollment-camera-card").scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  const enrollment = store.runtime?.enrollment || {};
+  if (!enrollment.saving && enrollment.state !== "success") {
+    toast(enrollment.capture_ready ? "Hãy bấm Lưu khuôn mặt để hoàn tất đăng ký." : "Cần quét khuôn mặt đạt yêu cầu trước khi hoàn tất.", true);
+    return;
+  }
+  $("#enrollmentResult").focus({ preventScroll: true });
+  $("#enrollmentResult").scrollIntoView({ behavior: "smooth", block: "center" });
 });
 $("#enrollmentForm").addEventListener("submit", async event => { event.preventDefault(); try { await api.saveEnrollment(Object.fromEntries(new FormData(event.target))); toast("Đang lưu khuôn mặt..."); } catch (error) { toast(error.message, true); } });
 

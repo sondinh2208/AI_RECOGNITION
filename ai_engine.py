@@ -229,9 +229,12 @@ def analyze_face_quality(
     max_tilt_angle=None,
     yaw_ratio_range=None,
     pitch_ratio_range=None,
+    frame=None,
+    strict_mode=False,
 ):
     """
     Phân tích chất lượng khuôn mặt: ngẩng/cúi (pitch), quay ngang (yaw), nghiêng (roll).
+    ``strict_mode`` khôi phục kiểm tra che khuất mắt/mũi/miệng khi đăng ký.
     Returns:
         (is_valid, error_msg)
     """
@@ -264,6 +267,12 @@ def analyze_face_quality(
     
     if not best_detection or min_dist >= max(face_w, fy2 - fy1):
         return False, "Khuon mat chua ro rang"
+
+    if strict_mode:
+        categories = getattr(best_detection, "categories", None) or []
+        detection_score = float(categories[0].score) if categories else 0.0
+        if detection_score < 0.88:
+            return False, "Khuon mat bi che khuat"
     
     if len(best_detection.keypoints) < 4:
         return False, "Khuon mat chua ro rang"
@@ -306,10 +315,54 @@ def analyze_face_quality(
     pitch_ratio = dist_eye_nose / dist_nose_mouth
     if pitch_ratio > pitch_max or pitch_ratio < pitch_min:
         return False, "Vui long dieu chinh goc ngang cui"
+
+    if strict_mode:
+        face_h = fy2 - fy1
+        if face_h <= 0:
+            return False, "Khuon mat bi che khuat"
+        mouth_y_px = mouth.y * frame_height
+        eye_y_px = eye_cy * frame_height
+
+        # Hộp mặt méo bất thường thường xuất hiện khi tay/vật thể nhập vào vùng mặt.
+        aspect_ratio = face_w / face_h
+        if aspect_ratio < 0.65 or aspect_ratio > 1.10:
+            return False, "Khuon mat bi che khuat (Sai ty le)"
+
+        if fy2 - mouth_y_px < 0.08 * face_h:
+            return False, "Khuon mat bi che khuat (Khong thay cam)"
+
+        # Vùng miệng phải có đủ chi tiết và sắc môi; bề mặt tay/khẩu trang không đạt.
+        if frame is not None:
+            roi_w = max(4, int(0.25 * face_w))
+            roi_h = max(4, int(0.15 * face_h))
+            mx_px = int(mouth.x * frame_width)
+            my_px = int(mouth.y * frame_height)
+            rx1 = max(0, mx_px - roi_w // 2)
+            ry1 = max(0, my_px - roi_h // 2)
+            rx2 = min(frame_width, mx_px + roi_w // 2)
+            ry2 = min(frame_height, my_px + roi_h // 2)
+            if ry2 <= ry1 or rx2 <= rx1:
+                return False, "Khuon mat bi che khuat (Khong thay mieng)"
+
+            mouth_roi = frame[ry1:ry2, rx1:rx2]
+            gray = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2GRAY)
+            sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+            sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+            edge_density = float(np.mean(cv2.magnitude(sobel_x, sobel_y)))
+            cr_channel = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2YCrCb)[:, :, 1]
+            max_cr = int(np.max(cr_channel))
+            if edge_density < 25.0 or max_cr < 145:
+                return False, "Khuon mat bi che khuat (Khong thay mieng)"
+
+        if eye_y_px - fy1 < 0.18 * face_h:
+            return False, "Khuon mat bi che khuat (Khong thay mat)"
         
     return True, ""
     
-def check_face_constraints(faces, constraint_box, mp_results, frame_width, frame_height):
+def check_face_constraints(
+    faces, constraint_box, mp_results, frame_width, frame_height,
+    frame=None, strict_mode=False,
+):
     """
     Kiểm tra tất cả ràng buộc cho từng khuôn mặt.
     Returns:
@@ -325,7 +378,12 @@ def check_face_constraints(faces, constraint_box, mp_results, frame_width, frame
     cx1, cy1, cx2, cy2 = constraint_box
     box_w = cx2 - cx1
     
-    for (fx1, fy1, fx2, fy2, _fconf) in faces:
+    for (fx1, fy1, fx2, fy2, fconf) in faces:
+        if strict_mode and fconf < 0.88:
+            color = CV_COLOR_RED
+            status_text = "Khuon mat bi che khuat"
+            continue
+
         # 1. Kiểm tra vị trí
         if not is_fully_inside((fx1, fy1, fx2, fy2), constraint_box):
             continue
@@ -344,7 +402,8 @@ def check_face_constraints(faces, constraint_box, mp_results, frame_width, frame
         
         # 3. Ràng buộc góc nghiêng, quay, ngẩng và độ rõ nét khuôn mặt
         is_valid_pose, pose_error = analyze_face_quality(
-            (fx1, fy1, fx2, fy2), mp_results, frame_width, frame_height
+            (fx1, fy1, fx2, fy2), mp_results, frame_width, frame_height,
+            frame=frame, strict_mode=strict_mode,
         )
         
         if not is_valid_pose:

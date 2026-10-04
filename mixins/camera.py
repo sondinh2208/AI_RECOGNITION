@@ -166,9 +166,15 @@ class CameraMixin:
                             self._enrollment_waiting_for_face_leave = False
                             red_streak = 0
                             display_text = "Dua mat vao khung hinh"
+                            on_face_left = getattr(
+                                self, "_on_enrollment_face_left", None
+                            )
+                            if callable(on_face_left):
+                                on_face_left()
                 else:
                     current_color, status_text, is_locked = check_face_constraints(
-                        faces, self.constraint_box, mp_results, fw, fh
+                        faces, self.constraint_box, mp_results, fw, fh,
+                        frame=frame, strict_mode=True,
                     )
 
                     # State machine chỉ đếm kết quả AI mới, không đếm frame video lặp.
@@ -255,21 +261,6 @@ class CameraMixin:
                 print(f"[{icon}] {display_text}")
                 self.prev_status = display_text
                 
-            # --- Vẽ Bounding Box & Confidence (Dành cho Debug) ---
-            for (fx1, fy1, fx2, fy2, fconf) in faces:
-                cv2.rectangle(frame, (fx1, fy1), (fx2, fy2), (255, 150, 0), 2)
-                cv2.putText(frame, f"YOLO: {fconf:.2f}", (fx1, fy1 - 10), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 150, 0), 2)
-                            
-            if mp_results and mp_results.detections:
-                for det in mp_results.detections:
-                    mp_score = det.categories[0].score
-                    bbox = det.bounding_box
-                    mx = int(bbox.origin_x)
-                    my = int(bbox.origin_y)
-                    cv2.putText(frame, f"MP: {mp_score:.2f}", (mx, my - 10), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            
             # --- Render HUD ---
             if self.ekyc_mask is not None:
                 output = render_full_hud(
@@ -288,9 +279,6 @@ class CameraMixin:
                 smoothed_fps = instant_fps
             else:
                 smoothed_fps = 0.9 * smoothed_fps + 0.1 * instant_fps
-                
-            cv2.putText(output, f"FPS: {int(smoothed_fps)}", (20, 40), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
                 
             try:
                 output_resized = cv2.resize(output, (ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT), interpolation=cv2.INTER_LINEAR)

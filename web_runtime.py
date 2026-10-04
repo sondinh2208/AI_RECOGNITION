@@ -517,11 +517,32 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             }
         self._publish()
 
+    def _on_enrollment_face_left(self):
+        """Mở lượt đăng ký mới sau khi người của lượt trước rời camera."""
+        if self.enrollment_result.get("state") != "success":
+            return
+        self.enrollment_result = {
+            "state": "idle",
+            "title": "Chờ khuôn mặt hợp lệ",
+            "message": "Giữ yên khuôn mặt trong 3 giây để hệ thống tự động quét.",
+        }
+        self._publish()
+
     def reset_enrollment(self):
-        self._reset_enrollment_scan(clear_preview=False)
+        if self._enrollment_saving:
+            raise ValueError("Không thể hủy khi hệ thống đang lưu khuôn mặt")
+        had_captured_face = bool(self.enrollment_capture_ready)
+        self._reset_enrollment_scan(
+            clear_preview=False,
+            wait_for_face_leave=had_captured_face,
+        )
         self.enrollment_result = {
             "state": "idle", "title": "Chờ khuôn mặt hợp lệ",
-            "message": "Giữ yên khuôn mặt trong 3 giây để hệ thống tự động quét.",
+            "message": (
+                "Đã hủy ảnh quét. Vui lòng rời khỏi khung trước khi quét lại."
+                if had_captured_face else
+                "Giữ yên khuôn mặt trong 3 giây để hệ thống tự động quét."
+            ),
         }
         self._publish()
         return self.snapshot()
