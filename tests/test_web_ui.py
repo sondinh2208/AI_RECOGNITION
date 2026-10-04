@@ -16,7 +16,9 @@ os.environ["FACECHECK_WEB_SKIP_AI"] = "1"
 from web_backend.app import app  # noqa: E402
 from web_runtime import WebFaceCheckRuntime  # noqa: E402
 from web_admin import _reserve_server_socket  # noqa: E402
-from ai_engine import analyze_face_quality  # noqa: E402
+from ai_engine import (  # noqa: E402
+    analyze_face_quality, check_face_constraints, measure_face_brightness,
+)
 
 
 class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
@@ -44,6 +46,8 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
             "success", "duplicate", "ambiguous", "unknown", "error",
         })
         self.assertIn("capture_ready", state["enrollment"])
+        self.assertIn("brightness", state["camera"])
+        self.assertIn("light_ok", state["camera"])
 
         employees = (await self.client.get(
             "/api/employees", params={"page": 1, "page_size": 2}
@@ -154,7 +158,7 @@ class EnrollmentFaceQualityTests(unittest.TestCase):
         )
 
         self.assertFalse(valid)
-        self.assertIn("che khuat", message)
+        self.assertEqual(message, "Khuon mat chua ro rang")
 
     def test_non_strict_pose_check_remains_available_for_attendance(self):
         results = SimpleNamespace(detections=[self._face_detection()])
@@ -165,6 +169,40 @@ class EnrollmentFaceQualityTests(unittest.TestCase):
 
         self.assertTrue(valid)
         self.assertEqual(message, "")
+
+    def test_face_brightness_rejects_dark_and_overexposed_frames(self):
+        face_box = (100, 60, 300, 300)
+        dark_ok, dark_value = measure_face_brightness(
+            np.full((400, 400, 3), 20, dtype=np.uint8), face_box
+        )
+        normal_ok, normal_value = measure_face_brightness(
+            np.full((400, 400, 3), 120, dtype=np.uint8), face_box
+        )
+        overexposed_ok, _ = measure_face_brightness(
+            np.full((400, 400, 3), 250, dtype=np.uint8), face_box
+        )
+
+        self.assertFalse(dark_ok)
+        self.assertLess(dark_value, normal_value)
+        self.assertTrue(normal_ok)
+        self.assertFalse(overexposed_ok)
+
+    def test_dark_face_cannot_lock_enrollment_scan(self):
+        results = SimpleNamespace(detections=[self._face_detection()])
+        dark_frame = np.full((400, 400, 3), 20, dtype=np.uint8)
+
+        _color, message, locked = check_face_constraints(
+            [(100, 60, 300, 300, 0.95)],
+            (50, 40, 350, 340),
+            results,
+            400,
+            400,
+            frame=dark_frame,
+            strict_mode=True,
+        )
+
+        self.assertFalse(locked)
+        self.assertEqual(message, "Khuon mat chua ro rang")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from config import (
     FACE_MODEL_PATH, MP_FACE_MODEL_PATH,
     FACE_CONFIDENCE, PERSON_CONFIDENCE, PERSON_CLASS_ID,
     FACE_MIN_SIZE_RATIO, FACE_MAX_SIZE_RATIO, FACE_MAX_TILT_ANGLE,
+    FACE_MIN_BRIGHTNESS, FACE_MIN_SHADOW_LEVEL, FACE_MAX_BRIGHTNESS,
     KIOSK_MIN_FACE_CONFIDENCE, KIOSK_FACE_EDGE_MARGIN_RATIO,
     KIOSK_MAX_ROLL_ANGLE, KIOSK_MIN_YAW_RATIO, KIOSK_MAX_YAW_RATIO,
     KIOSK_MIN_PITCH_RATIO, KIOSK_MAX_PITCH_RATIO,
@@ -221,6 +222,34 @@ def is_fully_inside(face_box, constraint_box):
     return (fx1 >= cx1 and fy1 >= cy1 and fx2 <= cx2 and fy2 <= cy2)
 
 
+def measure_face_brightness(frame, face_box):
+    """Đo ánh sáng trên phần trung tâm khuôn mặt, bỏ tóc và nền quanh hộp YOLO."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return False, 0.0
+    frame_h, frame_w = frame.shape[:2]
+    fx1, fy1, fx2, fy2 = [int(value) for value in face_box]
+    face_w, face_h = fx2 - fx1, fy2 - fy1
+    if face_w <= 0 or face_h <= 0:
+        return False, 0.0
+
+    # Tập trung vào mắt-mũi-miệng; vùng tóc và nền tối không làm sai kết quả.
+    x1 = max(0, fx1 + int(face_w * 0.15))
+    x2 = min(frame_w, fx2 - int(face_w * 0.15))
+    y1 = max(0, fy1 + int(face_h * 0.18))
+    y2 = min(frame_h, fy2 - int(face_h * 0.12))
+    if x2 <= x1 or y2 <= y1:
+        return False, 0.0
+
+    gray = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+    mean_light = float(np.mean(gray))
+    shadow_level = float(np.percentile(gray, 20))
+    light_ok = (
+        FACE_MIN_BRIGHTNESS <= mean_light <= FACE_MAX_BRIGHTNESS
+        and shadow_level >= FACE_MIN_SHADOW_LEVEL
+    )
+    return light_ok, mean_light
+
+
 def analyze_face_quality(
     face_box,
     mp_results,
@@ -272,7 +301,7 @@ def analyze_face_quality(
         categories = getattr(best_detection, "categories", None) or []
         detection_score = float(categories[0].score) if categories else 0.0
         if detection_score < 0.88:
-            return False, "Khuon mat bi che khuat"
+            return False, "Khuon mat chua ro rang"
     
     if len(best_detection.keypoints) < 4:
         return False, "Khuon mat chua ro rang"
@@ -319,17 +348,17 @@ def analyze_face_quality(
     if strict_mode:
         face_h = fy2 - fy1
         if face_h <= 0:
-            return False, "Khuon mat bi che khuat"
+            return False, "Khuon mat chua ro rang"
         mouth_y_px = mouth.y * frame_height
         eye_y_px = eye_cy * frame_height
 
         # Hộp mặt méo bất thường thường xuất hiện khi tay/vật thể nhập vào vùng mặt.
         aspect_ratio = face_w / face_h
         if aspect_ratio < 0.65 or aspect_ratio > 1.10:
-            return False, "Khuon mat bi che khuat (Sai ty le)"
+            return False, "Khuon mat chua ro rang"
 
         if fy2 - mouth_y_px < 0.08 * face_h:
-            return False, "Khuon mat bi che khuat (Khong thay cam)"
+            return False, "Khuon mat chua ro rang"
 
         # Vùng miệng phải có đủ chi tiết và sắc môi; bề mặt tay/khẩu trang không đạt.
         if frame is not None:
@@ -342,7 +371,7 @@ def analyze_face_quality(
             rx2 = min(frame_width, mx_px + roi_w // 2)
             ry2 = min(frame_height, my_px + roi_h // 2)
             if ry2 <= ry1 or rx2 <= rx1:
-                return False, "Khuon mat bi che khuat (Khong thay mieng)"
+                return False, "Khuon mat chua ro rang"
 
             mouth_roi = frame[ry1:ry2, rx1:rx2]
             gray = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2GRAY)
@@ -352,10 +381,10 @@ def analyze_face_quality(
             cr_channel = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2YCrCb)[:, :, 1]
             max_cr = int(np.max(cr_channel))
             if edge_density < 25.0 or max_cr < 145:
-                return False, "Khuon mat bi che khuat (Khong thay mieng)"
+                return False, "Khuon mat chua ro rang"
 
         if eye_y_px - fy1 < 0.18 * face_h:
-            return False, "Khuon mat bi che khuat (Khong thay mat)"
+            return False, "Khuon mat chua ro rang"
         
     return True, ""
     
@@ -381,7 +410,7 @@ def check_face_constraints(
     for (fx1, fy1, fx2, fy2, fconf) in faces:
         if strict_mode and fconf < 0.88:
             color = CV_COLOR_RED
-            status_text = "Khuon mat bi che khuat"
+            status_text = "Khuon mat chua ro rang"
             continue
 
         # 1. Kiểm tra vị trí
@@ -399,6 +428,15 @@ def check_face_constraints(
             color = CV_COLOR_RED
             status_text = "Vui long lui lai"
             continue
+
+        if strict_mode:
+            light_ok, _brightness = measure_face_brightness(
+                frame, (fx1, fy1, fx2, fy2)
+            )
+            if not light_ok:
+                color = CV_COLOR_RED
+                status_text = "Khuon mat chua ro rang"
+                continue
         
         # 3. Ràng buộc góc nghiêng, quay, ngẩng và độ rõ nét khuôn mặt
         is_valid_pose, pose_error = analyze_face_quality(

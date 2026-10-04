@@ -84,6 +84,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._enrollment_preview_shown = False
         self._enrollment_waiting_for_face_leave = False
         self._enrollment_saving = False
+        self.current_face_brightness = None
+        self.is_face_bright = False
 
         self.face_model = None
         self.face_detector = None
@@ -180,6 +182,11 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                         else self.current_fps
                     ), 1),
                     "confidence": round(float(self.current_conf), 3),
+                    "brightness": (
+                        round(float(self.current_face_brightness) / 255.0 * 100.0, 1)
+                        if self.current_face_brightness is not None else None
+                    ),
+                    "light_ok": bool(self.is_face_bright),
                     "faces": int(self.kiosk_face_count),
                     "device": self.device,
                 },

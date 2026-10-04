@@ -50,12 +50,9 @@ const enrollmentStatusLabels = [
   [/DA QUET KHUON MAT|SAN SANG LUU/i, "Đã quét khuôn mặt · Sẵn sàng lưu"],
   [/GIU YEN KHUON MAT:\s*([\d.]+)\s*GIAY/i, (_, seconds) => `Giữ yên khuôn mặt · còn ${seconds} giây`],
   [/ROI KHOI KHUNG/i, "Vui lòng rời khung để quét người tiếp theo"],
-  [/Khuon mat bi che khuat.*Khong thay mieng.*/i, "Miệng đang bị che khuất"],
-  [/Khuon mat bi che khuat.*Khong thay mat.*/i, "Mắt hoặc trán đang bị che khuất"],
-  [/Khuon mat bi che khuat.*/i, "Khuôn mặt đang bị che khuất"],
   [/Di chuyen lai gan hon/i, "Di chuyển lại gần camera hơn"],
   [/Vui long lui lai/i, "Vui lòng lùi ra xa camera một chút"],
-  [/Khuon mat chua ro rang/i, "Khuôn mặt chưa rõ, hãy nhìn thẳng camera"],
+  [/Khuon mat chua ro rang/i, "Khuôn mặt chưa rõ ràng"],
   [/Vui long dieu chinh goc ngang cui/i, "Điều chỉnh góc ngẩng hoặc cúi"],
   [/Vui long giu dau thang/i, "Giữ đầu thẳng, không nghiêng"],
   [/Vui long nhin thang vao camera/i, "Vui lòng nhìn thẳng vào camera"],
@@ -117,11 +114,12 @@ function renderEnrollment(state) {
   const rawStatus = String(enrollment.status_text || "");
   const normalized = rawStatus.toLowerCase();
   const detected = Number(camera.confidence || 0) > 0;
+  const brightness = camera.brightness == null ? null : Number(camera.brightness);
   const ready = Boolean(enrollment.capture_ready);
   const scanning = /giu yen|goc mat hop le/.test(normalized);
   const distanceIssue = /lai gan|lui lai/.test(normalized);
   const poseIssue = /goc|dau thang|nhin thang|ngang cui/.test(normalized) && !scanning;
-  const clarityIssue = /chua ro|che khuat/.test(normalized);
+  const clarityIssue = /chua ro/.test(normalized);
   const offline = !camera.running;
   const friendlyStatus = friendlyEnrollmentStatus(rawStatus);
 
@@ -150,9 +148,13 @@ function renderEnrollment(state) {
   $("#enrollmentCameraStatus").textContent = message;
   updateEnrollmentSteps(enrollment);
 
-  setQuality("#qualityLight", offline ? "fail" : "pass", offline ? "Chưa kết nối" : `${Math.round(camera.fps || 0)} FPS`);
+  setQuality(
+    "#qualityLight",
+    offline ? "fail" : !detected || brightness == null ? "pending" : camera.light_ok ? "pass" : "fail",
+    offline ? "Chưa kết nối" : !detected || brightness == null ? "Chờ khuôn mặt" : camera.light_ok ? `Độ sáng ${Math.round(brightness)}%` : `Thiếu sáng ${Math.round(brightness)}%`,
+  );
   setQuality("#qualityPosition", ready || scanning ? "pass" : distanceIssue || poseIssue ? "warn" : "pending", ready ? "Đã căn chuẩn" : scanning ? "Giữ nguyên vị trí" : distanceIssue || poseIssue ? "Cần điều chỉnh" : "Chờ khuôn mặt");
-  setQuality("#qualityClarity", ready || scanning ? "pass" : clarityIssue ? "fail" : detected ? "warn" : "pending", ready ? "Đạt yêu cầu" : clarityIssue ? "Bị che khuất" : detected ? `Tin cậy ${Math.round((camera.confidence || 0) * 100)}%` : "Đang kiểm tra");
+  setQuality("#qualityClarity", ready || scanning ? "pass" : clarityIssue ? "fail" : detected ? "warn" : "pending", ready ? "Đạt yêu cầu" : clarityIssue ? "Chưa rõ ràng" : detected ? `Tin cậy ${Math.round((camera.confidence || 0) * 100)}%` : "Đang kiểm tra");
 
   const guidance = offline
     ? "Camera đang ngoại tuyến. Hãy kiểm tra thiết bị trước khi quét."

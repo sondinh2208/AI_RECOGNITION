@@ -20,7 +20,7 @@ from config import (
     ENROLLMENT_MIN_SAMPLES, FACE_CROP_PADDING_RATIO,
     CTK_SUCCESS, CTK_DANGER, CTK_WARNING,
 )
-from ai_engine import detect_faces, check_face_constraints
+from ai_engine import detect_faces, check_face_constraints, measure_face_brightness
 from ekyc_renderer import compute_ekyc_layout, create_rounded_rect_mask, render_full_hud
 
 
@@ -137,6 +137,20 @@ class CameraMixin:
             if detection_now - last_detection_at >= ENROLLMENT_DETECTION_INTERVAL_SECONDS:
                 last_detection_at = detection_now
                 faces = detect_faces(self.face_model, frame, self.device)
+
+                if faces:
+                    primary_face = max(
+                        faces,
+                        key=lambda face: (face[2] - face[0]) * (face[3] - face[1]),
+                    )
+                    light_ok, brightness = measure_face_brightness(
+                        frame, primary_face[:4]
+                    )
+                    self.current_face_brightness = brightness
+                    self.is_face_bright = light_ok
+                else:
+                    self.current_face_brightness = None
+                    self.is_face_bright = False
 
                 mp_results = None
                 if self.face_detector is not None and len(faces) > 0:

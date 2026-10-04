@@ -87,6 +87,8 @@ class CoreMixin:
         self.enrollment_captured_face = None
         self._enrollment_preview_shown = False
         self._enrollment_waiting_for_face_leave = False
+        self.current_face_brightness = None
+        self.is_face_bright = False
         
         # --- AI Models ---
         self.face_model = None

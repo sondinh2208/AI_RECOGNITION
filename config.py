@@ -43,6 +43,9 @@ PERSON_CLASS_ID = 0
 FACE_MIN_SIZE_RATIO = 0.55    # face_w >= 50% box_w
 FACE_MAX_SIZE_RATIO = 0.9    # face_w <= 90% box_w
 FACE_MAX_TILT_ANGLE = 10     # Góc nghiêng tối đa (độ)
+FACE_MIN_BRIGHTNESS = 55.0   # Độ sáng trung bình tối thiểu của vùng mặt (0-255)
+FACE_MIN_SHADOW_LEVEL = 28.0 # Phân vị tối 20%; chống mặt sáng một phía nhưng nửa còn lại quá tối
+FACE_MAX_BRIGHTNESS = 225.0  # Chống cháy sáng làm mất chi tiết mắt/mũi/miệng
 
 
 # ============================================
