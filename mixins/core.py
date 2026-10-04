@@ -60,6 +60,9 @@ class CoreMixin:
         self._kiosk_face_stable_since = None
         self._kiosk_face_absent_since = None
         self._kiosk_active_face_area = None
+        self._kiosk_active_face_box = None
+        self._kiosk_suppressed_face_tracks = []
+        self._kiosk_result_hold_until = 0.0
         self._kiosk_unknown_attempts = 0
         self._kiosk_strict_candidate_id = None
         self._kiosk_strict_confirmations = 0

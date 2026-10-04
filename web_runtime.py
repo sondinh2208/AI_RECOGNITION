@@ -60,6 +60,9 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._kiosk_face_stable_since = None
         self._kiosk_face_absent_since = None
         self._kiosk_active_face_area = None
+        self._kiosk_active_face_box = None
+        self._kiosk_suppressed_face_tracks = []
+        self._kiosk_result_hold_until = 0.0
         self._kiosk_unknown_attempts = 0
         self._kiosk_strict_candidate_id = None
         self._kiosk_strict_confirmations = 0
@@ -354,7 +357,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             "employee": employee, "timestamp": now_display,
             "metrics": {"distance": round(float(distance), 4)},
         }
-        self._kiosk_waiting_for_departure = True
+        self._hold_result_and_suppress_active_face()
         self.is_recognizing = False
         self._is_kiosk_ui_idle = False
         self._publish()
@@ -376,7 +379,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             "timestamp": now_value,
             "metrics": {"distance": best_distance, "margin": margin},
         }
-        self._kiosk_waiting_for_departure = True
+        self._hold_result_and_suppress_active_face()
         self.is_recognizing = False
         self._is_kiosk_ui_idle = False
         self._publish()
@@ -394,7 +397,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             "message": "Khuôn mặt chưa có trong hệ thống",
             "timestamp": now_value,
         }
-        self._kiosk_waiting_for_departure = True
+        self._hold_result_and_suppress_active_face()
         self.is_recognizing = False
         self._is_kiosk_ui_idle = False
         self._publish()
@@ -404,6 +407,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._kiosk_waiting_for_departure = False
         self._kiosk_idle_reset_pending = False
         self._kiosk_active_face_area = None
+        self._kiosk_active_face_box = None
         self._kiosk_face_stable_since = None
         self._kiosk_unknown_attempts = 0
         self._clear_strict_confirmation()
@@ -412,6 +416,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._publish()
 
     def retry_recognition(self):
+        self._kiosk_suppressed_face_tracks = []
+        self._kiosk_result_hold_until = 0.0
         self.set_idle_state()
         self._kiosk_face_stable_since = time.time()
         return self.snapshot()

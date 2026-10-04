@@ -120,6 +120,41 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertEqual(runtime.enrollment_result["state"], "idle")
         self.assertIn("Giữ yên khuôn mặt", runtime.enrollment_result["message"])
 
+    def test_processed_face_does_not_block_next_person(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        first = (100, 80, 260, 300, 0.95)
+        second = (350, 90, 500, 310, 0.94)
+        runtime._kiosk_active_face_box = first[:4]
+        runtime._hold_result_and_suppress_active_face(now=10.0)
+
+        eligible = runtime._filter_processed_kiosk_faces(
+            [first, second], now=11.6
+        )
+
+        self.assertEqual(eligible, [second])
+
+    def test_processed_face_suppression_expires_without_empty_frame(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        face = (100, 80, 260, 300, 0.95)
+        runtime._kiosk_active_face_box = face[:4]
+        runtime._hold_result_and_suppress_active_face(now=10.0)
+
+        eligible = runtime._filter_processed_kiosk_faces([face], now=13.1)
+
+        self.assertEqual(eligible, [face])
+        self.assertEqual(runtime._kiosk_suppressed_face_tracks, [])
+
+    def test_result_resume_keeps_processed_face_suppressed(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime._kiosk_active_face_box = (100, 80, 260, 300)
+        runtime._hold_result_and_suppress_active_face(now=10.0)
+
+        runtime._resume_kiosk_after_result()
+
+        self.assertFalse(runtime._kiosk_waiting_for_departure)
+        self.assertEqual(runtime.recognition_state["state"], "idle")
+        self.assertEqual(len(runtime._kiosk_suppressed_face_tracks), 1)
+
 
 class WebAdminSingleInstanceTests(unittest.TestCase):
     def test_port_is_reserved_before_backend_startup(self):

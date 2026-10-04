@@ -28,9 +28,10 @@ from config import (
     ARCFACE_STRICT_MAX_ATTEMPTS, ARCFACE_STRICT_WINDOW_SECONDS,
     KIOSK_MIN_FACE_WIDTH,
     FACE_CROP_PADDING_RATIO,
-    KIOSK_PRIMARY_FACE_MIN_AREA_RATIO, KIOSK_PRIMARY_FACE_LEAVE_AREA_RATIO,
+    KIOSK_PRIMARY_FACE_MIN_AREA_RATIO,
     KIOSK_FACE_STABLE_SECONDS, KIOSK_CONFIRMATION_INTERVAL_SECONDS,
-    KIOSK_FACE_LEAVE_SECONDS,
+    KIOSK_RESULT_HOLD_SECONDS, KIOSK_PROCESSED_FACE_TTL_SECONDS,
+    KIOSK_PROCESSED_FACE_ABSENCE_SECONDS,
     KIOSK_ATTENDANCE_COOLDOWN_SECONDS, KIOSK_UNKNOWN_CONFIRMATIONS,
     KIOSK_DETECTION_INTERVAL_SECONDS,
 )
@@ -55,6 +56,89 @@ def classify_recognition_score(distance, margin):
 
 class AttendanceMixin:
     """Mixin quản lý toàn bộ giao diện và nghiệp vụ nhận diện điểm danh (Kiosk Mode)."""
+
+    @staticmethod
+    def _kiosk_box_iou(first, second):
+        """Tính IoU giữa hai khung mặt để theo dõi nhẹ mà không thêm model tracker."""
+        ax1, ay1, ax2, ay2 = first
+        bx1, by1, bx2, by2 = second
+        intersection_w = max(0, min(ax2, bx2) - max(ax1, bx1))
+        intersection_h = max(0, min(ay2, by2) - max(ay1, by1))
+        intersection = intersection_w * intersection_h
+        first_area = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+        second_area = max(0, bx2 - bx1) * max(0, by2 - by1)
+        union = first_area + second_area - intersection
+        return intersection / union if union > 0 else 0.0
+
+    @classmethod
+    def _kiosk_same_face_track(cls, first, second):
+        """Ghép hai khung gần nhau; dung sai cho phép người dùng di chuyển nhẹ."""
+        if cls._kiosk_box_iou(first, second) >= 0.20:
+            return True
+        ax1, ay1, ax2, ay2 = first
+        bx1, by1, bx2, by2 = second
+        first_w, first_h = max(1, ax2 - ax1), max(1, ay2 - ay1)
+        second_w, second_h = max(1, bx2 - bx1), max(1, by2 - by1)
+        first_area = first_w * first_h
+        second_area = second_w * second_h
+        area_ratio = second_area / first_area
+        center_distance = ((ax1 + ax2 - bx1 - bx2) ** 2 + (ay1 + ay2 - by1 - by2) ** 2) ** 0.5 / 2
+        scale = max(first_w, first_h, second_w, second_h)
+        return 0.45 <= area_ratio <= 2.20 and center_distance <= 0.35 * scale
+
+    def _hold_result_and_suppress_active_face(self, now=None):
+        """Giữ kết quả ngắn hạn, nhưng không buộc toàn bộ camera phải trống."""
+        now = time.time() if now is None else now
+        active_box = getattr(self, '_kiosk_active_face_box', None)
+        tracks = list(getattr(self, '_kiosk_suppressed_face_tracks', []))
+        if active_box is not None:
+            tracks.append({
+                "box": tuple(active_box),
+                "suppressed_at": now,
+                "last_seen": now,
+            })
+        self._kiosk_suppressed_face_tracks = tracks
+        self._kiosk_result_hold_until = now + KIOSK_RESULT_HOLD_SECONDS
+        self._kiosk_waiting_for_departure = True
+
+    def _filter_processed_kiosk_faces(self, faces, now=None):
+        """Bỏ qua tạm thời các mặt đã xử lý và trả về hàng đợi mặt mới."""
+        now = time.time() if now is None else now
+        tracks = [
+            dict(track)
+            for track in getattr(self, '_kiosk_suppressed_face_tracks', [])
+            if now - track["suppressed_at"] < KIOSK_PROCESSED_FACE_TTL_SECONDS
+        ]
+        matched_face_indexes = set()
+        live_tracks = []
+        for track in tracks:
+            best_index = None
+            best_iou = -1.0
+            for index, face in enumerate(faces):
+                if index in matched_face_indexes:
+                    continue
+                box = tuple(face[:4])
+                if not self._kiosk_same_face_track(track["box"], box):
+                    continue
+                iou = self._kiosk_box_iou(track["box"], box)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_index = index
+            if best_index is not None:
+                track["box"] = tuple(faces[best_index][:4])
+                track["last_seen"] = now
+                matched_face_indexes.add(best_index)
+                live_tracks.append(track)
+            elif now - track["last_seen"] < KIOSK_PROCESSED_FACE_ABSENCE_SECONDS:
+                live_tracks.append(track)
+        self._kiosk_suppressed_face_tracks = live_tracks
+        return [face for index, face in enumerate(faces) if index not in matched_face_indexes]
+
+    def _resume_kiosk_after_result(self):
+        """Mở lượt tiếp theo sau khi đủ thời gian đọc kết quả."""
+        self._kiosk_waiting_for_departure = False
+        self._kiosk_result_hold_until = 0.0
+        self.set_idle_state()
 
     def _build_attendance_page(self):
         """
@@ -712,8 +796,10 @@ class AttendanceMixin:
             self.kiosk_face_count = len(faces)
             
             # 2. Chọn khuôn mặt gần camera nhất theo diện tích bounding box.
+            curr_now = time.time()
+            eligible_faces = self._filter_processed_kiosk_faces(faces, curr_now)
             ranked_faces = sorted(
-                faces,
+                eligible_faces,
                 key=lambda face: (face[2] - face[0]) * (face[3] - face[1]),
                 reverse=True,
             )
@@ -746,18 +832,10 @@ class AttendanceMixin:
                     thickness=3 if is_primary else 1,
                 )
                 
-            curr_now = time.time()
             waiting_for_departure = getattr(
                 self, '_kiosk_waiting_for_departure', False
             )
-            tracked_primary_present = bool(primary_face)
-            active_area = getattr(self, '_kiosk_active_face_area', None)
-            if waiting_for_departure and active_area:
-                tracked_primary_present = (
-                    primary_area >= active_area * KIOSK_PRIMARY_FACE_LEAVE_AREA_RATIO
-                )
-
-            if tracked_primary_present:
+            if primary_face:
                 self._kiosk_face_absent_since = None
                 if not waiting_for_departure:
                     if primary_is_clear and self._kiosk_face_stable_since is None:
@@ -773,20 +851,18 @@ class AttendanceMixin:
                 if self._kiosk_face_absent_since is None:
                     self._kiosk_face_absent_since = curr_now
 
-                # Chỉ mở lượt mới sau khi người hiện tại thực sự rời khỏi khung hình.
-                face_absent_for = curr_now - self._kiosk_face_absent_since
-                if (
-                    face_absent_for >= KIOSK_FACE_LEAVE_SECONDS
-                    and not self.is_recognizing
-                    and not getattr(self, '_kiosk_idle_reset_pending', False)
-                    and (
-                        getattr(self, '_kiosk_waiting_for_departure', False)
-                        or not getattr(self, '_is_kiosk_ui_idle', True)
-                    )
-                ):
-                    self._kiosk_waiting_for_departure = False
-                    self._kiosk_idle_reset_pending = True
-                    self._safe_after(0, self.set_idle_state)
+
+            # Kết quả chỉ được giữ trong một khoảng ngắn. Sau đó hệ thống
+            # mở lượt mới ngay cả khi camera vẫn còn người; vùng mặt vừa
+            # xử lý đã bị loại tạm thời khỏi hàng đợi phía trên.
+            if (
+                waiting_for_departure
+                and curr_now >= getattr(self, '_kiosk_result_hold_until', 0.0)
+                and not self.is_recognizing
+                and not getattr(self, '_kiosk_idle_reset_pending', False)
+            ):
+                self._kiosk_idle_reset_pending = True
+                self._safe_after(0, self._resume_kiosk_after_result)
 
             # 3. Cơ chế kích hoạt Nhận diện Tự Động (Auto Inference Trigger):
             face_stable_for = (
@@ -836,6 +912,7 @@ class AttendanceMixin:
                         # Đặt cờ self.is_recognizing = True để bỏ qua các frame tiếp theo
                         self.is_recognizing = True
                         self._kiosk_active_face_area = primary_area
+                        self._kiosk_active_face_box = (fx1, fy1, fx2, fy2)
                         self._kiosk_face_stable_since = None
                         
                         self._safe_after(0, self._on_kiosk_recognizing_started)
@@ -1422,7 +1499,7 @@ class AttendanceMixin:
         - Đổi ảnh Avatar sang ảnh của nhân viên đó (load từ database/images/).
         - Cập nhật text Họ Tên, Mã NV, Chức vụ, Phòng ban.
         - Đổi Status Header sang thành công (icon tròn xanh lá ✓, text xanh).
-        - Chờ khuôn mặt rời khung rồi tự động mở lượt tiếp theo.
+        - Hiện kết quả ngắn hạn rồi tự động mở lượt tiếp theo.
         """
         name = emp_info.get("name", "Nhân viên")
         emp_id = emp_info.get("id", "NV---")
@@ -1503,16 +1580,16 @@ class AttendanceMixin:
                 "status": "Thành công"
             })
 
-        # 8. Không cần thao tác thủ công; chờ người hiện tại rời khung hình.
+        # 8. Không cần thao tác thủ công; tự chuyển sang người tiếp theo.
         if hasattr(self, 'btn_kiosk_register'):
             self.btn_kiosk_register.pack_forget()
         status_text = (
-            "●  Đã ghi nhận trước đó · Vui lòng rời khung hình"
+            "●  Đã ghi nhận trước đó · Đang chuyển lượt tiếp theo"
             if is_duplicate else
-            "●  Đã ghi nhận · Vui lòng rời khung hình"
+            "●  Đã ghi nhận · Đang chuyển lượt tiếp theo"
         )
         self._show_auto_scan_status(status_text)
-        self._kiosk_waiting_for_departure = True
+        self._hold_result_and_suppress_active_face()
         self.is_recognizing = False
 
     def _on_kiosk_recognition_ambiguous(self, best_distance, second_distance, margin):
@@ -1578,7 +1655,7 @@ class AttendanceMixin:
         self._show_retry_actions()
         if hasattr(self, 'btn_kiosk_register'):
             self.btn_kiosk_register.pack_forget()
-        self._kiosk_waiting_for_departure = True
+        self._hold_result_and_suppress_active_face()
         self.is_recognizing = False
         print(
             f"[KIOSK AI] Từ chối kết quả mơ hồ: top1={best_distance:.4f}, "
@@ -1596,7 +1673,7 @@ class AttendanceMixin:
           + Mã NV: '🪪  Mã NV: —'
           + Hộp thông báo màu xanh nhạt có icon ⓘ
           + Nút Quét lại và nút đăng ký nhân viên.
-        - Người dùng có thể thử lại ngay hoặc rời khung để hệ thống tự mở lượt mới.
+        - Người dùng có thể thử lại ngay; hệ thống cũng tự mở lượt mới sau khi hiện kết quả.
         """
         now = datetime.now()
         now_str = now.strftime("%H:%M:%S · %d/%m/%Y")
@@ -1664,7 +1741,7 @@ class AttendanceMixin:
         self._show_retry_actions()
         if hasattr(self, 'btn_kiosk_register'):
             self.btn_kiosk_register.pack(fill="x", padx=14, pady=(0, 8))
-        self._kiosk_waiting_for_departure = True
+        self._hold_result_and_suppress_active_face()
         self.is_recognizing = False
 
     def _reset_for_next_scan(self):
@@ -1675,6 +1752,8 @@ class AttendanceMixin:
         3. Mở khóa cờ self.is_recognizing = False để camera quét người mới.
         """
         self._kiosk_waiting_for_departure = False
+        self._kiosk_suppressed_face_tracks = []
+        self._kiosk_result_hold_until = 0.0
         self._kiosk_face_stable_since = time.time()
         if hasattr(self, 'btn_scan_next'):
             self.btn_scan_next.pack_forget()
@@ -1695,6 +1774,7 @@ class AttendanceMixin:
         self._kiosk_waiting_for_departure = False
         self._kiosk_idle_reset_pending = False
         self._kiosk_active_face_area = None
+        self._kiosk_active_face_box = None
         self._kiosk_face_stable_since = None
         self._kiosk_unknown_attempts = 0
         self._clear_strict_confirmation()
