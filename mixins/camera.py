@@ -15,6 +15,7 @@ import customtkinter as ctk
 
 from config import (
     ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, ADMIN_CAMERA_FPS_DELAY,
+    CAMERA_DEVICE_IDS,
     ENROLLMENT_DETECTION_INTERVAL_SECONDS,
     ENROLLMENT_SAMPLE_INTERVAL_SECONDS, ENROLLMENT_AUTO_CAPTURE_SECONDS,
     ENROLLMENT_MIN_SAMPLES, FACE_CROP_PADDING_RATIO,
@@ -33,7 +34,8 @@ class CameraMixin:
             self.camera_cap.release()
             self.camera_cap = None
         
-        for cam_id in [1, 0]:
+        print(f"[CAMERA] Thứ tự thiết bị ưu tiên: {CAMERA_DEVICE_IDS}")
+        for cam_id in CAMERA_DEVICE_IDS:
             for backend in [cv2.CAP_DSHOW, cv2.CAP_ANY]:
                 cap = cv2.VideoCapture(cam_id, backend) if backend != cv2.CAP_ANY else cv2.VideoCapture(cam_id)
                 if not cap.isOpened():

@@ -14,6 +14,19 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
 # ============================================
+# CẤU HÌNH CAMERA
+# ============================================
+# Máy hiện tại gán webcam ngoài cho ID=0. Có thể đổi mà không sửa
+# code bằng biến môi trường FACECHECK_CAMERA_INDEX, ví dụ: 1 hoặc 2.
+try:
+    CAMERA_PREFERRED_ID = int(os.environ.get("FACECHECK_CAMERA_INDEX", "0"))
+except ValueError:
+    CAMERA_PREFERRED_ID = 0
+
+CAMERA_DEVICE_IDS = tuple(dict.fromkeys((CAMERA_PREFERRED_ID, 0, 1, 2)))
+
+
+# ============================================
 # CẤU HÌNH AI MODELS
 # ============================================
 FACE_MODEL_PATH = "models/model.pt"

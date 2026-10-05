@@ -20,7 +20,7 @@ GPU: NVIDIA CUDA (RTX 40-series)
 
 import cv2
 import mediapipe as mp
-from config import KIOSK_WINDOW_NAME
+from config import KIOSK_WINDOW_NAME, CAMERA_DEVICE_IDS
 from ai_engine import (
     check_gpu,
     load_face_model, load_person_model, load_mediapipe_detector,
@@ -36,9 +36,9 @@ from ekyc_renderer import (
 def init_camera():
     """
     Khởi tạo camera với DirectShow và MJPG 30 FPS.
-    Thử camera ID = 1 trước (camera ngoài), nếu lỗi lùi về ID = 0.
+    Thử camera ưu tiên trong config trước, sau đó mới dùng các ID dự phòng.
     """
-    for cam_id in [1, 0]:
+    for cam_id in CAMERA_DEVICE_IDS:
         print(f"[INFO] Đang thử mở camera ID = {cam_id}...")
         for backend in [cv2.CAP_DSHOW, cv2.CAP_ANY]:
             cap = cv2.VideoCapture(cam_id, backend) if backend != cv2.CAP_ANY else cv2.VideoCapture(cam_id)
