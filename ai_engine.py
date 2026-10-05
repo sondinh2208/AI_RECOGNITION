@@ -25,6 +25,10 @@ from config import (
     FACE_CONFIDENCE, PERSON_CONFIDENCE, PERSON_CLASS_ID,
     FACE_MIN_SIZE_RATIO, FACE_MAX_SIZE_RATIO, FACE_MAX_TILT_ANGLE,
     FACE_MIN_BRIGHTNESS, FACE_MIN_SHADOW_LEVEL, FACE_MAX_BRIGHTNESS,
+    ENROLLMENT_MIN_YOLO_CONFIDENCE, ENROLLMENT_MIN_MEDIAPIPE_CONFIDENCE,
+    ENROLLMENT_MIN_YAW_RATIO, ENROLLMENT_MAX_YAW_RATIO,
+    ENROLLMENT_MIN_PITCH_RATIO, ENROLLMENT_MAX_PITCH_RATIO,
+    ENROLLMENT_MOUTH_MIN_EDGE_DENSITY, ENROLLMENT_MOUTH_MIN_CR,
     KIOSK_MIN_FACE_CONFIDENCE, KIOSK_FACE_EDGE_MARGIN_RATIO,
     KIOSK_MAX_ROLL_ANGLE, KIOSK_MIN_YAW_RATIO, KIOSK_MAX_YAW_RATIO,
     KIOSK_MIN_PITCH_RATIO, KIOSK_MAX_PITCH_RATIO,
@@ -270,8 +274,12 @@ def analyze_face_quality(
     max_tilt_angle = (
         FACE_MAX_TILT_ANGLE if max_tilt_angle is None else max_tilt_angle
     )
-    yaw_min, yaw_max = yaw_ratio_range or (0.75, 1.30)
-    pitch_min, pitch_max = pitch_ratio_range or (0.70, 1.60)
+    yaw_min, yaw_max = yaw_ratio_range or (
+        ENROLLMENT_MIN_YAW_RATIO, ENROLLMENT_MAX_YAW_RATIO
+    )
+    pitch_min, pitch_max = pitch_ratio_range or (
+        ENROLLMENT_MIN_PITCH_RATIO, ENROLLMENT_MAX_PITCH_RATIO
+    )
 
     if not mp_results or not mp_results.detections:
         return False, "Khuon mat chua ro rang"
@@ -300,7 +308,7 @@ def analyze_face_quality(
     if strict_mode:
         categories = getattr(best_detection, "categories", None) or []
         detection_score = float(categories[0].score) if categories else 0.0
-        if detection_score < 0.88:
+        if detection_score < ENROLLMENT_MIN_MEDIAPIPE_CONFIDENCE:
             return False, "Khuon mat chua ro rang"
     
     if len(best_detection.keypoints) < 4:
@@ -380,7 +388,10 @@ def analyze_face_quality(
             edge_density = float(np.mean(cv2.magnitude(sobel_x, sobel_y)))
             cr_channel = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2YCrCb)[:, :, 1]
             max_cr = int(np.max(cr_channel))
-            if edge_density < 25.0 or max_cr < 145:
+            if (
+                edge_density < ENROLLMENT_MOUTH_MIN_EDGE_DENSITY
+                or max_cr < ENROLLMENT_MOUTH_MIN_CR
+            ):
                 return False, "Khuon mat chua ro rang"
 
         if eye_y_px - fy1 < 0.18 * face_h:
@@ -408,7 +419,7 @@ def check_face_constraints(
     box_w = cx2 - cx1
     
     for (fx1, fy1, fx2, fy2, fconf) in faces:
-        if strict_mode and fconf < 0.88:
+        if strict_mode and fconf < ENROLLMENT_MIN_YOLO_CONFIDENCE:
             color = CV_COLOR_RED
             status_text = "Khuon mat chua ro rang"
             continue

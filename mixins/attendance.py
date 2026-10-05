@@ -25,6 +25,7 @@ from config import (
     CTK_SUCCESS, CTK_DANGER, CTK_SIDEBAR_HOVER, CTK_BG_MAIN, ADMIN_CAMERA_FPS_DELAY,
     DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, ARCFACE_TOP2_MARGIN,
     ARCFACE_UNCERTAIN_THRESHOLD, ARCFACE_STRICT_CONFIRMATIONS,
+    ARCFACE_HIGH_CONFIDENCE_THRESHOLD, ARCFACE_HIGH_CONFIDENCE_MARGIN,
     ARCFACE_STRICT_MAX_ATTEMPTS, ARCFACE_STRICT_WINDOW_SECONDS,
     KIOSK_MIN_FACE_WIDTH,
     FACE_CROP_PADDING_RATIO,
@@ -52,6 +53,14 @@ def classify_recognition_score(distance, margin):
     if distance <= ARCFACE_UNCERTAIN_THRESHOLD:
         return "ambiguous"
     return "unknown"
+
+
+def is_high_confidence_recognition(distance, margin):
+    """Cho phép xác nhận nhanh duy nhất khi Top 1 vừa gần mẫu vừa cách xa Top 2."""
+    return bool(
+        distance <= ARCFACE_HIGH_CONFIDENCE_THRESHOLD
+        and margin >= ARCFACE_HIGH_CONFIDENCE_MARGIN
+    )
 
 
 class AttendanceMixin:
@@ -934,6 +943,13 @@ class AttendanceMixin:
             # 5. Lưu frame và chuẩn bị ảnh PIL trong Background Thread (Không làm nặng UI Thread)
             self.kiosk_latest_frame = frame
             self._current_frame_id = getattr(self, '_current_frame_id', 0) + 1
+            # Web runtime phát trực tiếp frame BGR qua MJPEG. Không tạo thêm
+            # preview PIL và lớp alpha dành riêng cho giao diện Tk cũ.
+            if getattr(self, '_web_stream_only', False):
+                if not getattr(self, '_first_processed_logged', False):
+                    print("[ATTENDANCE] first processed frame")
+                    self._first_processed_logged = True
+                continue
             try:
                 fh, fw = frame.shape[:2]
                 lbl_w = getattr(self, '_cached_kiosk_w', 460)
@@ -1132,7 +1148,7 @@ class AttendanceMixin:
         )
 
     def _record_strict_vote(self, candidate_id, distance, margin, now=None):
-        """Ghi chuỗi strict liên tiếp; ID khác sẽ bắt đầu lại chuỗi."""
+        """Ghi phiếu strict trong cửa sổ; một ID strict khác sẽ bắt đầu lại chuỗi."""
         now = time.time() if now is None else now
         candidate_id = str(candidate_id or "")
         if (
@@ -1155,7 +1171,7 @@ class AttendanceMixin:
         return self._strict_window_state()
 
     def _record_strict_noise(self, now=None):
-        """Frame không strict ngắt chuỗi liên tiếp nhưng giữ giới hạn phiên."""
+        """Tính frame nhiễu vào số lượt nhưng không xóa các phiếu strict hợp lệ trước đó."""
         now = time.time() if now is None else now
         if self._kiosk_strict_started_at is None:
             return None
@@ -1163,10 +1179,6 @@ class AttendanceMixin:
             self._kiosk_strict_attempts = ARCFACE_STRICT_MAX_ATTEMPTS
             return self._strict_window_state()
         self._kiosk_strict_attempts += 1
-        self._kiosk_strict_candidate_id = None
-        self._kiosk_strict_confirmations = 0
-        self._kiosk_strict_distances = []
-        self._kiosk_strict_margins = []
         return self._strict_window_state()
 
     def _strict_window_state(self):
@@ -1186,7 +1198,7 @@ class AttendanceMixin:
 
     @staticmethod
     def _strict_state_is_acceptable(state):
-        """Cho phép thành công sớm khi đủ chuỗi strict cùng một ID."""
+        """Cho phép thành công khi đủ phiếu strict cùng một ID trong cửa sổ."""
         return bool(
             state
             and state.get("candidate_id")
@@ -1418,31 +1430,45 @@ class AttendanceMixin:
 
             if best_emp is not None and decision == "strict":
                 self._kiosk_unknown_attempts = 0
-                candidate_id = str(best_emp.get("id", ""))
-                state = self._record_strict_vote(
-                    candidate_id, best_dist, top2_margin
-                )
-                accepted = self._strict_state_is_acceptable(state)
-                if accepted:
-                    confirmed_distance = state["median_distance"]
+                if is_high_confidence_recognition(best_dist, top2_margin):
+                    print(
+                        "[KIOSK AI] Xác nhận nhanh độ tin cậy cao: "
+                        f"distance={best_dist:.4f} <= "
+                        f"{ARCFACE_HIGH_CONFIDENCE_THRESHOLD:.4f}, "
+                        f"margin={top2_margin:.4f} >= "
+                        f"{ARCFACE_HIGH_CONFIDENCE_MARGIN:.4f}"
+                    )
                     self._clear_strict_confirmation()
                     self._safe_after(
                         0, self._on_kiosk_recognition_success,
-                        best_emp, confirmed_distance,
-                    )
-                elif not state["exhausted"]:
-                    self._schedule_next_strict_frame()
-                    self._safe_after(
-                        0, self._on_kiosk_strict_confirmation_pending,
-                        state["votes"], state["attempts"],
-                        best_dist, top2_margin,
+                        best_emp, best_dist,
                     )
                 else:
-                    self._clear_strict_confirmation()
-                    self._safe_after(
-                        0, self._on_kiosk_recognition_ambiguous,
-                        best_dist, second_dist, top2_margin,
+                    candidate_id = str(best_emp.get("id", ""))
+                    state = self._record_strict_vote(
+                        candidate_id, best_dist, top2_margin
                     )
+                    accepted = self._strict_state_is_acceptable(state)
+                    if accepted:
+                        confirmed_distance = state["median_distance"]
+                        self._clear_strict_confirmation()
+                        self._safe_after(
+                            0, self._on_kiosk_recognition_success,
+                            best_emp, confirmed_distance,
+                        )
+                    elif not state["exhausted"]:
+                        self._schedule_next_strict_frame()
+                        self._safe_after(
+                            0, self._on_kiosk_strict_confirmation_pending,
+                            state["votes"], state["attempts"],
+                            best_dist, top2_margin,
+                        )
+                    else:
+                        self._clear_strict_confirmation()
+                        self._safe_after(
+                            0, self._on_kiosk_recognition_ambiguous,
+                            best_dist, second_dist, top2_margin,
+                        )
             elif best_emp is not None and decision == "ambiguous":
                 self._kiosk_unknown_attempts = 0
                 state = self._record_strict_noise()

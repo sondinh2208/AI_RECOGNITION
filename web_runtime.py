@@ -34,6 +34,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._event_version = 0
         self._started = False
         self._load_ai_requested = load_ai
+        self._web_stream_only = True
 
         self.camera_cap = None
         self.camera_running = False
@@ -46,6 +47,9 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._current_frame_id = 0
         self._last_cached_frame_id = -1
         self._last_cached_jpeg = None
+        self._last_jpeg_encoded_at = 0.0
+        self._jpeg_lock = threading.Lock()
+        self._jpeg_min_interval = 1.0 / 20.0
 
         self.kiosk_running = False
         self.is_recognizing = False
@@ -199,6 +203,12 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                     **self.enrollment_result,
                     "capture_ready": bool(self.enrollment_capture_ready),
                     "saving": bool(self._enrollment_saving),
+                    "sample_count": len(
+                        self.enrollment_captured_samples
+                        if self.enrollment_capture_ready
+                        else self.enrollment_face_samples
+                    ),
+                    "sample_target": ENROLLMENT_EMBEDDING_SAMPLES,
                     "status_text": self.ai_status_text,
                 },
                 "history_version": self._attendance_history_version,
@@ -220,6 +230,10 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             if worker is not None and worker.is_alive():
                 worker.join(timeout=0.5)
         self.current_page = mode
+        with self._jpeg_lock:
+            self._last_cached_frame_id = -1
+            self._last_cached_jpeg = None
+            self._last_jpeg_encoded_at = 0.0
         if self.camera_running and mode != "idle":
             if mode == "attendance":
                 self._start_kiosk_worker()
@@ -233,32 +247,42 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         return self.snapshot()
 
     def camera_jpeg_frame(self):
-        """Trả về (frame_id, jpeg_bytes) có bộ nhớ đệm, chỉ nén ảnh khi có khung hình mới."""
-        frame = None
-        if self.current_page == "attendance":
-            if self.kiosk_latest_frame is not None:
-                frame = self.kiosk_latest_frame
-            elif self.kiosk_latest_pil is not None:
-                frame = cv2.cvtColor(np.asarray(self.kiosk_latest_pil), cv2.COLOR_RGB2BGR)
-        elif self.latest_processed_frame is not None:
-            frame = self.latest_processed_frame
-        if frame is None:
-            return 0, None
+        """Trả một JPEG dùng chung cho mọi client, tối đa 20 lần nén mỗi giây."""
+        with self._jpeg_lock:
+            frame = None
+            if self.current_page == "attendance":
+                if self.kiosk_latest_frame is not None:
+                    frame = self.kiosk_latest_frame
+                elif self.kiosk_latest_pil is not None:
+                    frame = cv2.cvtColor(
+                        np.asarray(self.kiosk_latest_pil), cv2.COLOR_RGB2BGR
+                    )
+            elif self.latest_processed_frame is not None:
+                frame = self.latest_processed_frame
+            if frame is None:
+                return 0, None
 
-        frame_id = getattr(self, "_current_frame_id", 0)
-        cached_id = getattr(self, "_last_cached_frame_id", -1)
-        cached_bytes = getattr(self, "_last_cached_jpeg", None)
+            frame_id = getattr(self, "_current_frame_id", 0)
+            cached_id = getattr(self, "_last_cached_frame_id", -1)
+            cached_bytes = getattr(self, "_last_cached_jpeg", None)
+            now = time.perf_counter()
 
-        if frame_id == cached_id and cached_bytes is not None:
-            return frame_id, cached_bytes
+            if cached_bytes is not None and (
+                frame_id == cached_id
+                or now - self._last_jpeg_encoded_at < self._jpeg_min_interval
+            ):
+                return cached_id, cached_bytes
 
-        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        if ok:
-            cached_bytes = encoded.tobytes()
-            self._last_cached_frame_id = frame_id
-            self._last_cached_jpeg = cached_bytes
-            return frame_id, cached_bytes
-        return frame_id, None
+            ok, encoded = cv2.imencode(
+                ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80]
+            )
+            if ok:
+                cached_bytes = encoded.tobytes()
+                self._last_cached_frame_id = frame_id
+                self._last_cached_jpeg = cached_bytes
+                self._last_jpeg_encoded_at = now
+                return frame_id, cached_bytes
+            return frame_id, None
 
     def camera_jpeg(self):
         _, bytes_data = self.camera_jpeg_frame()
@@ -338,7 +362,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             "name": emp_info.get("name", "Nhân viên"),
             "role": emp_info.get("role", "Nhân viên"),
             "department": emp_info.get("department") or emp_info.get("dept") or "Phòng IT",
-            "image_url": f"/api/employees/{emp_id}/image",
+            "image_url": self._employee_image_url(emp_id, emp_info),
         }
         if not duplicate:
             self._attendance_cooldowns[emp_id] = (time.time(), now_display)
@@ -585,6 +609,15 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             candidates.extend(folder.glob(f"{emp_id}_*"))
         return next((path for path in candidates if path.exists()), None)
 
+    def _employee_image_url(self, emp_id, profile=None):
+        """Gắn phiên bản tệp vào URL để trình duyệt không giữ ảnh hồ sơ cũ."""
+        image = self._profile_image(emp_id, profile)
+        try:
+            version = image.stat().st_mtime_ns if image is not None else 0
+        except OSError:
+            version = 0
+        return f"/api/employees/{emp_id}/image?v={version}"
+
     def list_employees(self, query="", page=1, page_size=10):
         profiles = self.embeddings_cache
         if profiles is None:
@@ -607,7 +640,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 "role": profile.get("role") or "Nhân viên",
                 "department": profile.get("department") or profile.get("dept") or "Phòng IT",
                 "recognition_enabled": bool(profile.get("recognition_enabled", True)),
-                "image_url": f"/api/employees/{emp_id}/image",
+                "image_url": self._employee_image_url(emp_id, profile),
                 "timestamp": profile.get("timestamp"),
             })
         records.sort(key=lambda item: item["id"].casefold())

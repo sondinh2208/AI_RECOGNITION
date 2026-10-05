@@ -2,6 +2,7 @@
 venv/
 env/
 .env
+firmware/**/secrets.h
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -22,6 +23,7 @@ models/
 # IDEs and Editors
 .vscode/
 .idea/
+.pio/
 *.swp
 *.swo
 

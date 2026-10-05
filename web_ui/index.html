@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/css/layout.css">
   <link rel="stylesheet" href="/css/components.css">
   <link rel="stylesheet" href="/css/pages.css">
+  <link rel="stylesheet" href="/css/kiosk.css">
   <link rel="stylesheet" href="/css/animations.css">
 </head>
 <body>
@@ -109,6 +110,7 @@
                 <label>Mã nhân viên<span class="field-control"><svg><use href="#i-list"/></svg><input name="id" placeholder="NV001" autocomplete="off" required></span></label>
                 <label>Chức vụ<span class="field-control"><svg><use href="#i-briefcase"/></svg><input name="role" placeholder="Kỹ sư phần mềm" required></span></label>
                 <label>Phòng ban<span class="field-control"><svg><use href="#i-building"/></svg><input name="department" placeholder="Phòng IT" required></span></label>
+                <button class="primary wide enrollment-start" id="startEnrollmentScan" type="button" disabled><svg><use href="#i-user-scan"/></svg><span>Bắt đầu quét tại kiosk</span></button>
                 <button class="primary wide enrollment-save" id="saveEnrollment" disabled><svg><use href="#i-save"/></svg><span>Lưu khuôn mặt</span></button>
               </form>
               <aside class="scan-notes">
@@ -123,7 +125,7 @@
             </div>
           </article>
           <article class="card camera-card enrollment-camera-card" tabindex="-1">
-            <div class="camera-card-head"><strong><svg><use href="#i-camera"/></svg>Camera trực tiếp</strong><button class="camera-expand" type="button" aria-label="Phóng to camera"><svg><use href="#i-expand"/></svg></button></div>
+            <div class="camera-card-head"><strong><svg><use href="#i-camera"/></svg><span id="enrollmentCameraHeading">Camera trực tiếp</span></strong><button class="camera-expand" type="button" aria-label="Phóng to camera"><svg><use href="#i-expand"/></svg></button></div>
             <div class="camera-slot" data-camera-slot="enrollment"></div>
             <div class="quality-grid" aria-label="Chất lượng quét">
               <div class="quality-item" id="qualityLight"><span><svg><use href="#i-sun"/></svg></span><b>Đủ sáng</b><small>Camera sẵn sàng</small></div>
@@ -160,7 +162,7 @@
     </main>
   </div>
 
-  <div id="cameraSurface" class="camera-surface"><img id="cameraStream" alt="Camera FaceCheck"><div class="camera-loading"><span></span><b>Đang kết nối camera...</b></div></div>
+  <div id="cameraSurface" class="camera-surface"><img id="cameraStream" alt="Camera FaceCheck"><div class="camera-loading"><span></span><b id="cameraLoadingText">Đang kết nối camera...</b></div></div>
 
   <div class="modal-backdrop" id="modal" hidden><div class="modal" role="dialog" aria-modal="true" aria-label="Hộp thoại FaceCheck"><button class="modal-close" aria-label="Đóng"><svg><use href="#i-x"/></svg></button><div id="modalContent"></div></div></div>
   <div class="toast-region" id="toasts" aria-live="polite"></div>

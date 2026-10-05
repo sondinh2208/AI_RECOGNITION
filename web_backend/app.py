@@ -89,7 +89,13 @@ async def employee_image(request: Request):
     image = runtime.employee_image(request.path_params["employee_id"])
     if image is None:
         return JSONResponse({"error": "Không tìm thấy ảnh"}, status_code=404)
-    return FileResponse(image)
+    return FileResponse(
+        image,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 async def employee_update(request: Request):

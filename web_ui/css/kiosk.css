@@ -1,0 +1,337 @@
+/* Responsive kiosk view, including the 3.5-inch 480x320 simulation. */
+.kiosk-view {
+    overflow: hidden;
+    background: #edf3fa;
+}
+
+.kiosk-view .app-shell {
+    grid-template-columns: 1fr;
+}
+
+.kiosk-view .sidebar,
+.kiosk-view .topbar,
+.kiosk-view .recent-card,
+.kiosk-view #testRecognitionImage {
+    display: none !important;
+}
+
+.kiosk-view .main {
+    height: 100vh;
+    overflow: hidden;
+    padding: 10px;
+}
+
+.kiosk-view .connection-bar.visible {
+    position: fixed;
+    z-index: 100;
+    top: 10px;
+    left: 50%;
+    width: min(520px, calc(100vw - 20px));
+    height: auto;
+    transform: translateX(-50%);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .16);
+}
+
+.kiosk-view .page {
+    height: 100%;
+    padding: 0;
+}
+
+.kiosk-view .page:not([data-page="recognition"]):not([data-page="enrollment"]) {
+    display: none !important;
+}
+
+.kiosk-view .page[data-page="recognition"].active,
+.kiosk-view .page[data-page="enrollment"].active {
+    display: block;
+}
+
+.kiosk-view .page[data-page="enrollment"] {
+    height: 100%;
+    overflow: hidden;
+}
+
+.kiosk-view .page[data-page="enrollment"] .enrollment-grid {
+    height: 100%;
+    display: grid;
+    place-items: center;
+}
+
+.kiosk-view .enrollment-form {
+    display: none !important;
+}
+
+.kiosk-view .enrollment-camera-card {
+    width: min(100%, 1180px);
+    height: min(100%, 720px);
+    grid-template-rows: 34px minmax(250px, 1fr) 54px 70px;
+    gap: 7px;
+    padding: 8px;
+}
+
+.kiosk-view .enrollment-camera-card .camera-surface img {
+    object-fit: contain;
+    object-position: center;
+    background: #111827;
+}
+
+.kiosk-view .enrollment-camera-card .camera-expand,
+.kiosk-view .enrollment-camera-card .cancel-capture {
+    display: none !important;
+}
+
+.kiosk-view .recognition-grid {
+    height: 100%;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1.9fr) minmax(280px, .72fr);
+    gap: 10px;
+}
+
+.kiosk-view .recognition-camera {
+    height: 100%;
+    min-height: 0;
+    padding: 8px;
+}
+
+.kiosk-view .recognition-camera .camera-slot,
+.kiosk-view .recognition-camera .camera-surface {
+    height: 100%;
+    min-height: 0;
+}
+
+.kiosk-view .result-panel {
+    min-height: 0;
+    overflow: hidden;
+    padding: 14px;
+    gap: 10px;
+}
+
+.kiosk-view .result-icon {
+    width: 46px;
+    height: 46px;
+}
+
+.kiosk-view .result-icon svg {
+    width: 23px;
+    height: 23px;
+}
+
+.kiosk-view .result-header h2 {
+    font-size: 17px;
+}
+
+.kiosk-view .employee-summary {
+    padding: 12px;
+    gap: 12px;
+}
+
+.kiosk-view .avatar {
+    width: 66px;
+    height: 66px;
+}
+
+.kiosk-view .employee-summary h3 {
+    margin-bottom: 6px;
+    font-size: 17px;
+}
+
+.kiosk-view .employee-summary p {
+    margin: 4px 0;
+    font-size: 11px;
+}
+
+.kiosk-view .result-notice,
+.kiosk-view .result-time {
+    padding: 11px 12px;
+}
+
+.kiosk-view .result-actions {
+    margin-top: auto;
+}
+
+@media (max-width: 850px), (max-height: 520px) {
+    .kiosk-view .main {
+        padding: 6px;
+    }
+
+    .kiosk-view .recognition-grid {
+        grid-template-columns: minmax(0, 1.8fr) minmax(250px, .7fr);
+        gap: 6px;
+    }
+
+    .kiosk-view .result-panel {
+        padding: 10px;
+        gap: 7px;
+    }
+
+    .kiosk-view .result-notice {
+        display: none;
+    }
+}
+
+/* Màn kiosk 3.5 inch: ưu tiên hình camera và một thông báo thật dễ đọc. */
+@media (max-width: 600px), (max-height: 400px) {
+    .kiosk-view .main {
+        padding: 0;
+        background: #0f172a;
+    }
+
+    .kiosk-view .page,
+    .kiosk-view .recognition-grid,
+    .kiosk-view .recognition-camera,
+    .kiosk-view .recognition-camera .camera-slot,
+    .kiosk-view .recognition-camera .camera-surface {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+    }
+
+    .kiosk-view .recognition-grid {
+        position: relative;
+        display: block;
+    }
+
+    .kiosk-view .recognition-camera {
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: #0f172a;
+    }
+
+    .kiosk-view .recognition-camera .camera-surface,
+    .kiosk-view .enrollment-camera-card .camera-surface {
+        border: 0;
+        border-radius: 0;
+    }
+
+    .kiosk-view .recognition-camera .camera-surface img,
+    .kiosk-view .enrollment-camera-card .camera-surface img {
+        object-fit: contain;
+        object-position: center;
+    }
+
+    .kiosk-view .result-panel {
+        position: absolute;
+        z-index: 4;
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        min-height: 0;
+        padding: 8px 10px;
+        border: 1px solid rgba(255, 255, 255, .24);
+        border-radius: 12px;
+        background: rgba(15, 23, 42, .9);
+        color: #fff;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, .28);
+        backdrop-filter: blur(8px);
+    }
+
+    .kiosk-view .result-header {
+        gap: 9px;
+    }
+
+    .kiosk-view .result-icon {
+        width: 38px;
+        height: 38px;
+    }
+
+    .kiosk-view .result-icon svg {
+        width: 20px;
+        height: 20px;
+    }
+
+    .kiosk-view .result-header h2 {
+        color: #fff;
+        font-size: 16px;
+        line-height: 1.1;
+    }
+
+    .kiosk-view .result-header p {
+        margin-top: 3px;
+        color: #dbeafe;
+        font-size: 10px;
+        line-height: 1.2;
+    }
+
+    .kiosk-view .employee-summary,
+    .kiosk-view .result-notice,
+    .kiosk-view .result-time,
+    .kiosk-view .result-actions {
+        display: none !important;
+    }
+
+    .kiosk-view .page[data-page="enrollment"] .enrollment-grid,
+    .kiosk-view .enrollment-camera-card {
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        max-height: none;
+    }
+
+    .kiosk-view .enrollment-camera-card {
+        position: relative;
+        display: block;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: #0f172a;
+    }
+
+    .kiosk-view .enrollment-camera-card .camera-card-head,
+    .kiosk-view .enrollment-camera-card .quality-grid {
+        display: none;
+    }
+
+    .kiosk-view .enrollment-camera-card .camera-slot {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+    }
+
+    .kiosk-view .enrollment-result {
+        position: absolute;
+        z-index: 4;
+        top: 8px;
+        left: 8px;
+        right: 8px;
+        min-height: 54px;
+        padding: 8px 10px;
+        border-color: rgba(255, 255, 255, .24);
+        background: rgba(15, 23, 42, .9);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, .28);
+        backdrop-filter: blur(8px);
+    }
+
+    .kiosk-view .enrollment-result-icon {
+        width: 38px;
+        height: 38px;
+    }
+
+    .kiosk-view .enrollment-result strong {
+        color: #fff !important;
+        font-size: 15px;
+    }
+
+    .kiosk-view .enrollment-result small {
+        color: #dbeafe;
+        font-size: 10px;
+    }
+
+    .kiosk-view .enrollment-result-actions {
+        display: none;
+    }
+
+    .kiosk-view .camera-loading {
+        background: #0f172a;
+        color: #fff;
+        font-size: 13px;
+    }
+
+    .kiosk-view .connection-bar.visible {
+        top: 6px;
+        width: calc(100vw - 12px);
+        padding: 7px 10px;
+        font-size: 10px;
+    }
+}

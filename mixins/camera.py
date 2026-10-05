@@ -15,9 +15,10 @@ import customtkinter as ctk
 
 from config import (
     ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, ADMIN_CAMERA_FPS_DELAY,
-    CAMERA_DEVICE_IDS,
+    CAMERA_DEVICE_IDS, CAMERA_SOURCES,
     ENROLLMENT_DETECTION_INTERVAL_SECONDS,
     ENROLLMENT_SAMPLE_INTERVAL_SECONDS, ENROLLMENT_AUTO_CAPTURE_SECONDS,
+    ENROLLMENT_VALID_STREAK, ENROLLMENT_INVALID_STREAK,
     ENROLLMENT_MIN_SAMPLES, FACE_CROP_PADDING_RATIO,
     CTK_SUCCESS, CTK_DANGER, CTK_WARNING,
 )
@@ -34,18 +35,20 @@ class CameraMixin:
             self.camera_cap.release()
             self.camera_cap = None
         
-        print(f"[CAMERA] Thứ tự thiết bị ưu tiên: {CAMERA_DEVICE_IDS}")
-        for cam_id in CAMERA_DEVICE_IDS:
-            for backend in [cv2.CAP_DSHOW, cv2.CAP_ANY]:
+        print(f"[CAMERA] Nguồn ưu tiên: {CAMERA_SOURCES}")
+        for cam_id in CAMERA_SOURCES:
+            backends = [cv2.CAP_FFMPEG, cv2.CAP_ANY] if isinstance(cam_id, str) else [cv2.CAP_DSHOW, cv2.CAP_ANY]
+            for backend in backends:
                 cap = cv2.VideoCapture(cam_id, backend) if backend != cv2.CAP_ANY else cv2.VideoCapture(cam_id)
                 if not cap.isOpened():
                     continue
                 
                 # Cấu hình tối ưu phần cứng (đặc biệt chuẩn nén MJPG 30 FPS cho webcam Logitech C270)
-                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                cap.set(cv2.CAP_PROP_FPS, 30)
+                if not isinstance(cam_id, str):
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    cap.set(cv2.CAP_PROP_FPS, 30)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
                 ret, frame = cap.read()
@@ -201,10 +204,10 @@ class CameraMixin:
                         red_streak += 1
                         green_streak = 0
 
-                    if green_streak >= 5:
+                    if green_streak >= ENROLLMENT_VALID_STREAK:
                         display_locked = True
                         display_color = current_color
-                    elif red_streak >= 2:
+                    elif red_streak >= ENROLLMENT_INVALID_STREAK:
                         display_locked = False
                         display_color = current_color
                         display_text = status_text
@@ -214,7 +217,10 @@ class CameraMixin:
 
                     # Khi mặt hợp lệ, bắt đầu đếm 3 giây và tự thu các mẫu vào RAM.
                     sample_now = time.perf_counter()
-                    if display_locked and len(faces) == 1:
+                    # Chỉ lưu những frame hiện tại thực sự đạt kiểm tra chất lượng.
+                    # Debounce được phép giữ bộ đếm qua vài frame nhiễu nhưng không
+                    # được đưa chính các frame nhiễu đó vào tập vector đăng ký.
+                    if display_locked and is_locked and len(faces) == 1:
                         if self._enrollment_valid_since is None:
                             self._enrollment_valid_since = sample_now
                             self.enrollment_face_samples.clear()
@@ -296,12 +302,16 @@ class CameraMixin:
             else:
                 smoothed_fps = 0.9 * smoothed_fps + 0.1 * instant_fps
                 
-            try:
-                output_resized = cv2.resize(output, (ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT), interpolation=cv2.INTER_LINEAR)
-                frame_rgb = cv2.cvtColor(output_resized, cv2.COLOR_BGR2RGB)
-                self.latest_pil_image = Image.fromarray(frame_rgb)
-            except Exception:
-                pass
+            # Trình duyệt dùng trực tiếp ``latest_processed_frame``. Chỉ tạo
+            # PIL preview khi chạy giao diện Tk cũ để tránh resize/chuyển màu
+            # lần thứ hai trên mỗi frame.
+            if not getattr(self, '_web_stream_only', False):
+                try:
+                    output_resized = cv2.resize(output, (ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT), interpolation=cv2.INTER_LINEAR)
+                    frame_rgb = cv2.cvtColor(output_resized, cv2.COLOR_BGR2RGB)
+                    self.latest_pil_image = Image.fromarray(frame_rgb)
+                except Exception:
+                    pass
                 
             self.latest_processed_frame = output
             self._current_frame_id = getattr(self, '_current_frame_id', 0) + 1

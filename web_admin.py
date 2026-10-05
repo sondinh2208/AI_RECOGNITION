@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import socket
 import threading
 import time
@@ -16,6 +17,49 @@ import uvicorn
 HOST = "127.0.0.1"
 PORT = 8765
 URL = f"http://{HOST}:{PORT}"
+KIOSK_URL = f"{URL}/?view=kiosk#recognition"
+ADMIN_URL = f"{URL}/#dashboard"
+SIMULATED_ADMIN_URL = f"{URL}/?view=admin#dashboard"
+
+
+def _window_specs(simulate_pi=False):
+    """Return pywebview window definitions without starting the UI runtime."""
+    if simulate_pi:
+        return [
+            {
+                "title": "FaceCheck - Kiosk 3.5 inch (480x320)",
+                "url": KIOSK_URL,
+                "width": 480,
+                "height": 320,
+                "min_size": (320, 240),
+            },
+            {
+                "title": "FaceCheck - Quản trị",
+                "url": SIMULATED_ADMIN_URL,
+                "width": 1440,
+                "height": 900,
+                "min_size": (1150, 720),
+            },
+        ]
+    return [
+        {
+            "title": "FaceCheck - HỆ THỐNG ĐIỂM DANH & QUẢN TRỊ AI",
+            "url": URL,
+            "width": 1440,
+            "height": 900,
+            "min_size": (1150, 720),
+        }
+    ]
+
+
+def _parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Khoi dong giao dien FaceCheck")
+    parser.add_argument(
+        "--simulate-pi",
+        action="store_true",
+        help="Mo dong thoi Kiosk 3.5 inch 480x320 va cua so quan tri tren laptop",
+    )
+    return parser.parse_args(argv)
 
 
 def _make_server():
@@ -63,7 +107,7 @@ def _reserve_server_socket(host=HOST, port=PORT):
         return None
 
 
-def main():
+def main(simulate_pi=False):
     listener = _reserve_server_socket()
     owns_server = listener is not None
     uvicorn_server = None
@@ -94,8 +138,10 @@ def main():
     try:
         import webview
     except ImportError:
-        print(f"[WEB UI] Chưa cài pywebview; mở trình duyệt tại {URL}")
-        webbrowser.open(URL)
+        urls = [spec["url"] for spec in _window_specs(simulate_pi)]
+        print(f"[WEB UI] Chưa cài pywebview; mở trình duyệt tại {', '.join(urls)}")
+        for window_url in urls:
+            webbrowser.open(window_url)
         if not owns_server:
             return
         try:
@@ -107,11 +153,15 @@ def main():
         finally:
             listener.close()
         return
-    window = webview.create_window(
-        "FaceCheck - HỆ THỐNG ĐIỂM DANH & QUẢN TRỊ AI",
-        URL, width=1440, height=900, min_size=(1150, 720),
-        background_color="#F6F8FC",
-    )
+    for spec in _window_specs(simulate_pi):
+        webview.create_window(
+            spec["title"],
+            spec["url"],
+            width=spec["width"],
+            height=spec["height"],
+            min_size=spec["min_size"],
+            background_color="#F6F8FC",
+        )
     try:
         webview.start(debug=False)
     finally:
@@ -122,4 +172,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(simulate_pi=_parse_args().simulate_pi)

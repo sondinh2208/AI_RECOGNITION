@@ -8,9 +8,10 @@ const meta = {
   history: ["Lịch sử ra vào", "Xem toàn bộ dữ liệu ra vào của nhân sự", "#i-list"],
 };
 
-export function createRouter(onNavigate) {
+export function createRouter(onNavigate, { lockedRoute = null } = {}) {
   const main = document.querySelector(".main");
   const navigate = async (route, push = true) => {
+    if (lockedRoute) route = lockedRoute;
     if (!meta[route]) route = "recognition";
     const previous = store.route;
     store.scroll.set(previous, main.scrollTop);
@@ -23,7 +24,7 @@ export function createRouter(onNavigate) {
     document.querySelector(".page-icon use").setAttribute("href", icon);
     if (push) history.pushState({ route }, "", `#${route}`);
     main.scrollTop = store.scroll.get(route) || 0;
-    await onNavigate(route);
+    await onNavigate(route, previous);
   };
   document.addEventListener("click", event => {
     const target = event.target.closest("[data-route]");

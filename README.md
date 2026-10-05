@@ -49,6 +49,20 @@ pip install -r requirements.txt
 python web_admin.py
 ```
 
+### Mô phỏng Raspberry Pi khi chưa có phần cứng
+
+Chạy một backend và một camera nhưng mở hai cửa sổ: kiosk 3.5 inch 480x320 và giao diện
+quản trị desktop.
+
+```powershell
+python web_admin.py --simulate-pi
+```
+
+Cửa sổ Kiosk bị khóa ở trang nhận diện và không hiển thị thanh điều hướng, form
+quản trị hay bảng lịch sử. Các trang Dashboard, Người đăng ký và Lịch sử ở cửa
+sổ quản trị không làm dừng camera. Khi thoát khỏi trang đăng ký, camera tự quay
+lại chế độ điểm danh.
+
 Ứng dụng khởi động API nội bộ tại `http://127.0.0.1:8765` và mở trong cửa sổ
 desktop. Nếu máy chưa có `pywebview`, hệ thống sẽ mở cùng giao diện trong trình
 duyệt mặc định.

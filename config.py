@@ -24,6 +24,16 @@ except ValueError:
     CAMERA_PREFERRED_ID = 0
 
 CAMERA_DEVICE_IDS = tuple(dict.fromkeys((CAMERA_PREFERRED_ID, 0, 1, 2)))
+CAMERA_STREAM_URL = os.environ.get("FACECHECK_CAMERA_URL", "").strip()
+CAMERA_SOURCES = (
+    (CAMERA_STREAM_URL,) + CAMERA_DEVICE_IDS
+    if CAMERA_STREAM_URL else CAMERA_DEVICE_IDS
+)
+CAMERA_PROFILE = os.environ.get(
+    "FACECHECK_CAMERA_PROFILE",
+    "embedded_ov3660" if CAMERA_STREAM_URL else "webcam",
+).strip().lower()
+IS_EMBEDDED_CAMERA = CAMERA_PROFILE == "embedded_ov3660"
 
 
 # ============================================
@@ -35,9 +45,11 @@ DEEPFACE_MODEL_NAME = "ArcFace"   # ArcFace: Vector đặc trưng 512 chiều (5
 ARCFACE_THRESHOLD = 0.480         # Ngưỡng strict ưu tiên chống chấp nhận người lạ
 ARCFACE_TOP2_MARGIN = 0.075       # Top 1 phải tách biệt đủ rõ với Top 2
 ARCFACE_UNCERTAIN_THRESHOLD = 0.620  # Chỉ để phân loại "chưa chắc chắn", không được ghi điểm danh
-ARCFACE_STRICT_CONFIRMATIONS = 3  # Chấp nhận sớm khi có 3 frame strict liên tiếp cùng ID
-ARCFACE_STRICT_MAX_ATTEMPTS = 5
-ARCFACE_STRICT_WINDOW_SECONDS = 2.0
+ARCFACE_HIGH_CONFIDENCE_THRESHOLD = 0.400  # Một frame chỉ được xác nhận nhanh khi thực sự rất gần mẫu
+ARCFACE_HIGH_CONFIDENCE_MARGIN = 0.100     # Và phải tách biệt rõ với người đứng thứ hai
+ARCFACE_STRICT_CONFIRMATIONS = 3  # Cần 3 frame strict cùng ID trong cửa sổ xác minh
+ARCFACE_STRICT_MAX_ATTEMPTS = 8   # Chịu được vài frame mờ/nhiễu từ camera truyền USB/Wi-Fi
+ARCFACE_STRICT_WINDOW_SECONDS = 3.0
 KIOSK_MIN_FACE_WIDTH = 100        # Kích thước mặt tối thiểu (px) để kích hoạt nhận diện
 FACE_CROP_PADDING_RATIO = 0.10    # Dùng thống nhất khi đăng ký, điểm danh và kiểm thử
 KIOSK_PRIMARY_FACE_MIN_AREA_RATIO = 1.25  # Mặt gần phải lớn hơn mặt thứ hai 25%
@@ -58,6 +70,17 @@ FACE_MAX_TILT_ANGLE = 10     # Góc nghiêng tối đa (độ)
 FACE_MIN_BRIGHTNESS = 55.0   # Độ sáng trung bình tối thiểu của vùng mặt (0-255)
 FACE_MIN_SHADOW_LEVEL = 28.0 # Phân vị tối 20%; chống mặt sáng một phía nhưng nửa còn lại quá tối
 FACE_MAX_BRIGHTNESS = 225.0  # Chống cháy sáng làm mất chi tiết mắt/mũi/miệng
+
+# Profile đăng ký. OV3660 640x480 có ảnh nén/mềm hơn webcam C270 nên dùng
+# ngưỡng riêng; vẫn giữ kiểm tra landmark và vùng miệng để chống ảnh che khuất.
+ENROLLMENT_MIN_YOLO_CONFIDENCE = 0.72 if IS_EMBEDDED_CAMERA else 0.88
+ENROLLMENT_MIN_MEDIAPIPE_CONFIDENCE = 0.65 if IS_EMBEDDED_CAMERA else 0.88
+ENROLLMENT_MIN_YAW_RATIO = 0.65 if IS_EMBEDDED_CAMERA else 0.75
+ENROLLMENT_MAX_YAW_RATIO = 1.50 if IS_EMBEDDED_CAMERA else 1.30
+ENROLLMENT_MIN_PITCH_RATIO = 0.55 if IS_EMBEDDED_CAMERA else 0.70
+ENROLLMENT_MAX_PITCH_RATIO = 1.90 if IS_EMBEDDED_CAMERA else 1.60
+ENROLLMENT_MOUTH_MIN_EDGE_DENSITY = 12.0 if IS_EMBEDDED_CAMERA else 25.0
+ENROLLMENT_MOUTH_MIN_CR = 132 if IS_EMBEDDED_CAMERA else 145
 
 
 # ============================================
@@ -133,7 +156,9 @@ ENROLLMENT_DETECTION_INTERVAL_SECONDS = 0.10  # AI đăng ký tối đa 10 lần
 ENROLLMENT_EMBEDDING_SAMPLES = 5      # Số vector lưu cho mỗi hồ sơ (chỉ lưu 1 ảnh)
 ENROLLMENT_MIN_SAMPLES = 3            # Tối thiểu mẫu hợp lệ để cho phép đăng ký
 ENROLLMENT_SAMPLE_INTERVAL_SECONDS = 0.20
-ENROLLMENT_AUTO_CAPTURE_SECONDS = 3.0 # Giữ mặt hợp lệ liên tục trước khi tự chụp
+ENROLLMENT_AUTO_CAPTURE_SECONDS = 2.2 if IS_EMBEDDED_CAMERA else 3.0
+ENROLLMENT_VALID_STREAK = 3 if IS_EMBEDDED_CAMERA else 5
+ENROLLMENT_INVALID_STREAK = 4 if IS_EMBEDDED_CAMERA else 2
 KIOSK_FACE_STABLE_SECONDS = 0.7     # Khuôn mặt phải ổn định trước khi tự nhận diện
 KIOSK_CONFIRMATION_INTERVAL_SECONDS = 0.25  # Nhịp lấy frame xác minh sau lần đầu
 KIOSK_RESULT_HOLD_SECONDS = 1.5     # Thời gian hiển thị kết quả trước khi tự mở lượt mới

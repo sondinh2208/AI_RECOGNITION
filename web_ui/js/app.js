@@ -4,6 +4,13 @@ import { markDataStale, store } from "./state.js";
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
+const viewRole = new URLSearchParams(location.search).get("view");
+const kioskView = viewRole === "kiosk";
+const simulatedAdminView = viewRole === "admin";
+document.body.classList.toggle("kiosk-view", kioskView);
+document.body.classList.toggle("simulated-admin-view", simulatedAdminView);
+if (kioskView) document.title = "FaceCheck - Kiosk điểm danh";
+if (simulatedAdminView) $("#enrollmentCameraHeading").textContent = "Theo dõi quét tại kiosk";
 const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 const success = value => String(value || "").includes("Thành công");
 
@@ -27,8 +34,55 @@ updateClock(); setInterval(updateClock, 1000);
 
 const cameraSurface = $("#cameraSurface");
 const cameraImage = $("#cameraStream");
+const cameraLoadingText = $("#cameraLoadingText");
+let cameraStreamActive = false;
 cameraImage.addEventListener("load", () => cameraSurface.classList.add("loaded"));
-cameraImage.src = `/api/camera/stream?t=${Date.now()}`;
+
+function setCameraStreamActive(active, inactiveMessage = "Đang kết nối camera...") {
+  cameraLoadingText.textContent = active ? "Đang kết nối camera..." : inactiveMessage;
+  cameraSurface.classList.toggle("remote-status", simulatedAdminView && !active);
+  if (active === cameraStreamActive) return;
+  cameraStreamActive = active;
+  if (active) {
+    cameraImage.src = `/api/camera/stream?t=${Date.now()}`;
+    return;
+  }
+  cameraImage.removeAttribute("src");
+  cameraSurface.classList.remove("loaded");
+}
+
+function syncCameraStream() {
+  const mode = store.runtime?.mode;
+  const visible = !document.hidden || kioskView;
+  let active = false;
+  let message = "Camera trực tiếp được hiển thị tại kiosk";
+
+  if (kioskView) {
+    active = visible && ["attendance", "add_employee"].includes(mode);
+    message = mode === "add_employee"
+      ? "Đang kết nối camera đăng ký khuôn mặt..."
+      : "Đang kết nối camera điểm danh...";
+  } else if (!simulatedAdminView && store.route === "enrollment") {
+    active = visible && mode === "add_employee";
+  } else if (!simulatedAdminView && store.route === "recognition") {
+    active = visible && mode === "attendance";
+  } else if (store.route === "enrollment" && mode !== "add_employee") {
+    message = "Nhập đủ thông tin rồi bấm “Bắt đầu quét tại kiosk”";
+  }
+
+  setCameraStreamActive(active, message);
+}
+
+function syncKioskMode(state) {
+  if (!kioskView) return;
+  const enrollmentMode = state.mode === "add_employee";
+  const enrollmentPage = document.querySelector('[data-page="enrollment"]');
+  const recognitionPage = document.querySelector('[data-page="recognition"]');
+  enrollmentPage.classList.toggle("active", enrollmentMode);
+  recognitionPage.classList.toggle("active", !enrollmentMode);
+  document.body.classList.toggle("kiosk-enrollment-mode", enrollmentMode);
+  moveCamera(enrollmentMode ? "enrollment" : "recognition");
+}
 
 function closeCameraFullscreen() {
   cameraSurface.classList.remove("enrollment-fullscreen");
@@ -60,6 +114,7 @@ const enrollmentStatusLabels = [
   [/Dua mat vao khung hinh/i, "Đưa khuôn mặt vào giữa khung hình"],
 ];
 let enrollmentCancelPending = false;
+let enrollmentReturnTimer = null;
 
 function friendlyEnrollmentStatus(value) {
   const status = String(value || "");
@@ -108,6 +163,16 @@ function updateEnrollmentSteps(enrollment = {}) {
   $("#enrollmentSteps").dataset.currentStep = String(currentStep);
 }
 
+function updateEnrollmentControls(state) {
+  const enrollment = state.enrollment || {};
+  const active = state.mode === "add_employee";
+  const formValid = enrollmentFormIsValid();
+  const startButton = $("#startEnrollmentScan");
+  startButton.disabled = active || !formValid || enrollment.saving;
+  startButton.querySelector("span").textContent = active ? "Kiosk đang quét khuôn mặt" : "Bắt đầu quét tại kiosk";
+  $("#saveEnrollment").disabled = !active || !enrollment.capture_ready || enrollment.saving || !formValid;
+}
+
 function renderEnrollment(state) {
   const camera = state.camera || {};
   const enrollment = state.enrollment || {};
@@ -121,10 +186,13 @@ function renderEnrollment(state) {
   const poseIssue = /goc|dau thang|nhin thang|ngang cui/.test(normalized) && !scanning;
   const clarityIssue = /chua ro/.test(normalized);
   const offline = !camera.running;
-  const friendlyStatus = friendlyEnrollmentStatus(rawStatus);
+  const sampleCount = Number(enrollment.sample_count || 0);
+  const sampleTarget = Number(enrollment.sample_target || 5);
+  const friendlyStatus = sampleCount > 0 && !ready
+    ? `${friendlyEnrollmentStatus(rawStatus)} · ${sampleCount}/${sampleTarget} mẫu`
+    : friendlyEnrollmentStatus(rawStatus);
 
   $("#enrollmentFps").textContent = Math.round(camera.fps || 0);
-  $("#saveEnrollment").disabled = !ready || enrollment.saving;
   $("#saveEnrollment span").textContent = enrollment.saving ? "Đang lưu khuôn mặt..." : "Lưu khuôn mặt";
   const cancelCapture = $("#cancelEnrollmentCapture");
   cancelCapture.hidden = !ready || enrollment.saving;
@@ -167,10 +235,22 @@ function renderEnrollment(state) {
 function renderStatus(state) {
   const recognitionChanged = !store.runtime || store.runtime.version !== state.version;
   store.runtime = state;
+  syncKioskMode(state);
+  syncCameraStream();
   markDataStale(state.history_version);
   $("#sideCamera").textContent = state.camera.running ? "Hoạt động" : "Ngoại tuyến";
   $("#sideDevice").textContent = state.camera.device === "cpu" ? "CPU" : "GPU sẵn sàng";
   renderEnrollment(state);
+  updateEnrollmentControls(state);
+  if (!kioskView && state.mode === "add_employee" && state.enrollment?.state === "success" && !enrollmentReturnTimer) {
+    enrollmentReturnTimer = setTimeout(async () => {
+      enrollmentReturnTimer = null;
+      try { renderStatus(await api.setMode("attendance")); } catch (error) { toast(error.message, true); }
+    }, 3000);
+  } else if (state.enrollment?.state !== "success" && enrollmentReturnTimer) {
+    clearTimeout(enrollmentReturnTimer);
+    enrollmentReturnTimer = null;
+  }
   if (recognitionChanged) renderRecognition(state.recognition);
   renderRecognitionTest(state.recognition_test);
   if (store.route === "recognition" && store.history.stale) loadRecent();
@@ -333,7 +413,26 @@ $("#recognitionImageInput").addEventListener("change", async event => {
   if (!file) return;
   try { await api.testImage(file); } catch (error) { toast(error.message, true); }
 });
-$("#enrollmentForm").addEventListener("input", () => updateEnrollmentSteps(store.runtime?.enrollment));
+$("#enrollmentForm").addEventListener("input", () => {
+  updateEnrollmentSteps(store.runtime?.enrollment);
+  if (store.runtime) updateEnrollmentControls(store.runtime);
+});
+$("#startEnrollmentScan").addEventListener("click", async () => {
+  const form = $("#enrollmentForm");
+  if (!enrollmentFormIsValid()) {
+    form.reportValidity();
+    toast("Hãy nhập đầy đủ thông tin hợp lệ trước khi bắt đầu quét.", true);
+    return;
+  }
+  try {
+    await api.resetEnrollment();
+    const state = await api.setMode("add_employee");
+    renderStatus(state);
+    toast("Kiosk đã chuyển sang chế độ đăng ký khuôn mặt.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
 $("#cancelEnrollmentCapture").addEventListener("click", async event => {
   if (enrollmentCancelPending) return;
   const button = event.currentTarget;
@@ -381,16 +480,25 @@ $("#enrollmentSteps").addEventListener("click", event => {
 });
 $("#enrollmentForm").addEventListener("submit", async event => { event.preventDefault(); try { await api.saveEnrollment(Object.fromEntries(new FormData(event.target))); toast("Đang lưu khuôn mặt..."); } catch (error) { toast(error.message, true); } });
 
-async function onNavigate(route) {
+async function onNavigate(route, previous) {
   if (route !== "enrollment") closeCameraFullscreen();
-  if (route === "recognition") { moveCamera("recognition"); await api.setMode("attendance"); await loadRecent(); }
-  if (route === "enrollment") { moveCamera("enrollment"); await api.setMode("add_employee"); }
-  if (route === "dashboard") { await api.setMode("idle"); await loadDashboard(); }
-  if (route === "employees") { await api.setMode("idle"); await loadEmployees(); }
-  if (route === "history") { await api.setMode("idle"); await loadHistory(); }
+  syncCameraStream();
+  if (route === "recognition") {
+    moveCamera("recognition");
+    if (!kioskView) renderStatus(await api.setMode("attendance"));
+    await loadRecent();
+  }
+  if (route === "enrollment") moveCamera("enrollment");
+  if (!kioskView && ["dashboard", "employees", "history"].includes(route) && previous === "enrollment" && store.runtime?.mode === "add_employee") renderStatus(await api.setMode("attendance"));
+  if (route === "dashboard") await loadDashboard();
+  if (route === "employees") await loadEmployees();
+  if (route === "history") await loadHistory();
 }
 
-const navigate = createRouter(onNavigate);
+const navigate = createRouter(onNavigate, kioskView ? { lockedRoute: "recognition" } : {});
+document.addEventListener("visibilitychange", () => {
+  syncCameraStream();
+});
 connectStateSocket(renderStatus, connected => { const bar = $("#connectionBar"); bar.classList.toggle("visible", !connected); bar.textContent = connected ? "" : "Mất kết nối với Python Core · Đang thử kết nối lại..."; });
 api.state().then(renderStatus).catch(error => toast(error.message, true));
-navigate(location.hash.slice(1) || "recognition", false).catch(error => toast(error.message, true));
+navigate(kioskView ? "recognition" : location.hash.slice(1) || "recognition", false).catch(error => toast(error.message, true));
