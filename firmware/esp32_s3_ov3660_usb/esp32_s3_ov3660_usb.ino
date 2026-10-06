@@ -29,6 +29,19 @@ constexpr size_t kUsbChunkSize = 2048;
 constexpr unsigned long kWriteTimeoutMs = 1500;
 uint32_t frame_id = 0;
 
+// CRC-32/IEEE giong zlib.crc32() o bridge Python. Checksum cho phep
+// laptop bo qua frame bi hong thay vi dua anh soc mau vao AI/giao dien.
+uint32_t crc32_ieee(const uint8_t *data, size_t length) {
+  uint32_t crc = 0xffffffffu;
+  for (size_t i = 0; i < length; ++i) {
+    crc ^= data[i];
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+    }
+  }
+  return crc ^ 0xffffffffu;
+}
+
 void put_u32_le(uint8_t *target, uint32_t value) {
   target[0] = value & 0xff;
   target[1] = (value >> 8) & 0xff;
@@ -72,17 +85,20 @@ bool start_camera() {
   config.pin_sccb_scl = CAM_PIN_SIOC;
   config.pin_pwdn = CAM_PIN_PWDN;
   config.pin_reset = CAM_PIN_RESET;
+  // Giu XCLK/JPEG da cho chat luong tot, nhung chi dung mot framebuffer de
+  // camera khong ghi frame moi vao PSRAM trong luc frame hien tai dang gui USB.
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size = FRAMESIZE_VGA;   // 640x480 da xac nhan on dinh qua USB.
-  config.jpeg_quality = 10;            // So nho hon = JPEG chat luong cao hon.
-  config.fb_count = 2;
+  config.jpeg_quality = 10;
+  config.fb_count = 1;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.grab_mode = CAMERA_GRAB_LATEST;
+  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
 
   const esp_err_t error = esp_camera_init(&config);
   if (error != ESP_OK) {
     Serial.printf("[CAMERA] Khoi tao that bai: 0x%x\n", error);
+    CameraUSB.printf("[CAMERA] Khoi tao that bai: 0x%x\n", error);
     return false;
   }
 
@@ -100,20 +116,24 @@ bool start_camera() {
 
 void setup() {
   Serial.begin(115200);  // Log qua cong USB-UART/COM11 khi phat trien.
+  // Khoi dong USB truoc camera de van doc duoc loi khoi tao tren cong OTG.
+  CameraUSB.begin(115200);
+  USB.begin();
   delay(500);
   Serial.println("\n[BOOT] FaceCheck USB Camera");
+  CameraUSB.println("\n[BOOT] FaceCheck USB Camera");
 
   if (!psramFound()) {
     Serial.println("[PSRAM] Khong tim thay PSRAM.");
+    CameraUSB.println("[PSRAM] Khong tim thay PSRAM.");
     while (true) delay(1000);
   }
   if (!start_camera()) {
     while (true) delay(1000);
   }
 
-  CameraUSB.begin(115200);
-  USB.begin();
   Serial.println("[USB] Cam cong USB-OTG vao laptop; du lieu camera se o COM rieng.");
+  CameraUSB.println("[USB] Camera san sang; bat dau phat frame FCM2.");
 }
 
 void loop() {
@@ -125,9 +145,11 @@ void loop() {
   }
 
   if (frame->format == PIXFORMAT_JPEG && frame->len > 0 && frame->len < 500000) {
-    uint8_t header[12] = {'F', 'C', 'A', 'M'};
+    // Protocol FCM2: magic + frame_id + jpeg_length + jpeg_crc32.
+    uint8_t header[16] = {'F', 'C', 'M', '2'};
     put_u32_le(header + 4, ++frame_id);
     put_u32_le(header + 8, static_cast<uint32_t>(frame->len));
+    put_u32_le(header + 12, crc32_ieee(frame->buf, frame->len));
     if (!usb_write_all(header, sizeof(header)) ||
         !usb_write_all(frame->buf, frame->len)) {
       delay(10);  // Chua co host hoac host vua ngat ket noi.

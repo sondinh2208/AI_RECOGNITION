@@ -7,14 +7,18 @@ import json
 import struct
 import threading
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import serial
 from serial.tools import list_ports
 
 
-MAGIC = b"FCAM"
+MAGIC_V1 = b"FCAM"
+MAGIC_V2 = b"FCM2"
+MAGICS = (MAGIC_V1, MAGIC_V2)
 MAX_JPEG_BYTES = 500_000
+FRAME_HEADER = struct.Struct("<III")
 
 
 class FrameStore:
@@ -24,9 +28,11 @@ class FrameStore:
         self.frame_id = 0
         self.received_at = 0.0
         self.frames = 0
+        self.corrupt_frames = 0
         self.started_at = time.monotonic()
         self.port = ""
         self.connected = False
+        self.protocol = ""
 
     def update(self, frame_id: int, jpeg: bytes) -> None:
         with self.condition:
@@ -39,6 +45,11 @@ class FrameStore:
     def fps(self) -> float:
         elapsed = time.monotonic() - self.started_at
         return self.frames / elapsed if elapsed > 0 else 0.0
+
+    def discard_corrupt(self) -> int:
+        with self.condition:
+            self.corrupt_frames += 1
+            return self.corrupt_frames
 
 
 STORE = FrameStore()
@@ -65,16 +76,18 @@ def read_exact(device: serial.Serial, length: int) -> bytes:
     return bytes(data)
 
 
-def seek_magic(device: serial.Serial) -> None:
-    matched = 0
-    while matched < len(MAGIC):
+def seek_magic(device: serial.Serial) -> bytes:
+    window = bytearray()
+    while True:
         value = device.read(1)
         if not value:
             raise TimeoutError("Khong nhan duoc frame tu USB camera")
-        if value[0] == MAGIC[matched]:
-            matched += 1
-        else:
-            matched = 1 if value == MAGIC[:1] else 0
+        window.extend(value)
+        if len(window) > 4:
+            del window[:-4]
+        magic = bytes(window)
+        if magic in MAGICS:
+            return magic
 
 
 def serial_worker(preferred_port: str | None) -> None:
@@ -93,16 +106,33 @@ def serial_worker(preferred_port: str | None) -> None:
                 STORE.connected = True
                 STORE.started_at = time.monotonic()
                 STORE.frames = 0
+                STORE.corrupt_frames = 0
                 print(f"[USB-BRIDGE] Da ket noi {port}")
                 while True:
                     try:
-                        seek_magic(device)
-                        frame_id, length = struct.unpack("<II", read_exact(device, 8))
+                        magic = seek_magic(device)
+                        STORE.protocol = "crc32" if magic == MAGIC_V2 else "legacy"
+                        if magic == MAGIC_V2:
+                            frame_id, length, expected_crc = FRAME_HEADER.unpack(
+                                read_exact(device, FRAME_HEADER.size)
+                            )
+                        else:
+                            frame_id, length = struct.unpack("<II", read_exact(device, 8))
+                            expected_crc = None
                         if not 512 <= length <= MAX_JPEG_BYTES:
                             raise ValueError(f"Kich thuoc JPEG khong hop le: {length}")
                         jpeg = read_exact(device, length)
                         if not jpeg.startswith(b"\xff\xd8") or not jpeg.endswith(b"\xff\xd9"):
                             raise ValueError("Frame JPEG bi loi; dang dong bo lai")
+                        actual_crc = zlib.crc32(jpeg) & 0xFFFFFFFF
+                        if expected_crc is not None and actual_crc != expected_crc:
+                            discarded = STORE.discard_corrupt()
+                            print(
+                                "[USB-BRIDGE] Bo frame hong "
+                                f"id={frame_id}: CRC {actual_crc:08x} != "
+                                f"{expected_crc:08x} (tong={discarded})"
+                            )
+                            continue
                         STORE.update(frame_id, jpeg)
                     except TimeoutError:
                         # Giu cong mo: dong/mo CDC lien tuc co the reset hoac lam
@@ -152,8 +182,10 @@ class CameraHandler(BaseHTTPRequestHandler):
             body = json.dumps({
                 "ok": STORE.connected and STORE.jpeg is not None and (age_ms or 0) < 3000,
                 "transport": "usb-otg",
+                "protocol": STORE.protocol,
                 "port": STORE.port,
                 "frames": STORE.frames,
+                "corrupt_frames": STORE.corrupt_frames,
                 "fps": round(STORE.fps(), 1),
                 "frame_age_ms": age_ms,
             }).encode("utf-8")
