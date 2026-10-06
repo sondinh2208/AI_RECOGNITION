@@ -103,6 +103,11 @@ uint32_t renderedFrameCount = 0;
 uint32_t renderedWindowStarted = 0;
 float renderedFpsValue = 0.0f;
 String previousStatusKey;
+String previousMode = "idle";
+
+bool isEnrollmentMode() {
+  return kiosk.mode == "add_employee";
+}
 HTTPClient stateHttp;
 HTTPClient frameHttp;
 WiFiClient stateClient;
@@ -268,11 +273,18 @@ bool fetchAndDrawFrame() {
   const uint32_t jpegReceived = millis();
   bool drawn = false;
   if (received == static_cast<size_t>(length)) {
+    const bool enrollment = isEnrollmentMode();
     if (!frameAreaPrepared) {
-      display.fillRect(0, 0, 480, 250, TFT_BLACK);
+      display.fillScreen(TFT_BLACK);
       frameAreaPrepared = true;
     }
-    drawn = display.drawJpg(jpeg, length, 0, 0, 480, 250);
+    if (enrollment) {
+      // Che do dang ky: Ve toan man hinh 480x320 (khong co thanh trang thai che)
+      drawn = display.drawJpg(jpeg, length, 0, 0, 480, 320);
+    } else {
+      // Che do diem danh / nhan dien: Ve 480x250, danh 70px duoi cho thanh trang thai
+      drawn = display.drawJpg(jpeg, length, 0, 0, 480, 250);
+    }
   }
   const uint32_t frameDrawn = millis();
   free(jpeg);
@@ -347,30 +359,33 @@ void loop() {
     return;
   }
 
-  // Trang thai thay doi cham hon video; 900 ms la du nhanh cho thong bao
-  // nhan dien ma khong chen them qua nhieu HTTP request vao luong anh.
-  if (now - lastStateFetch >= 900) {
+  // Cap nhat trang thai tu laptop
+  if (now - lastStateFetch >= 800) {
     lastStateFetch = now;
     if (fetchState()) {
-      String key = kiosk.mode + kiosk.state + kiosk.title + kiosk.name
-          + String(static_cast<int>(renderedFpsValue * 10));
-      if (key != previousStatusKey) {
-        previousStatusKey = key;
-        drawStatusPanel();
+      if (!isEnrollmentMode()) {
+        // Che do diem danh / nhan dien: Giu nguyen thanh panel trang thai o duoi!
+        String key = kiosk.mode + kiosk.state + kiosk.title + kiosk.name
+            + String(static_cast<int>(renderedFpsValue * 10));
+        if (key != previousStatusKey) {
+          previousStatusKey = key;
+          drawStatusPanel();
+        }
+      } else if (previousMode != "add_employee") {
+        // Chuyen tu diem danh sang dang ky: Xoa panel cu de camera phu kin toan man hinh 480x320
+        display.fillScreen(TFT_BLACK);
+        previousStatusKey = "";
       }
+      previousMode = kiosk.mode;
     }
   }
 
   // Thu lay toi da ~14 FPS de man hinh co the bam sat nguon camera 8-10 FPS.
-  // Backend van chi tra frame moi nhat, do do khong tao hang doi anh cu.
   if (now - lastFrameFetch >= 70) {
     lastFrameFetch = now;
     fetchAndDrawFrame();
   }
 
-  // Cac HTTP request o tren co the cap nhat lastSuccessfulRequest sau thoi
-  // diem `now` duoc lay dau vong lap. Lay lai millis de tranh phep tru unsigned
-  // bi tran va hien nham trang "Mat ket noi" xen ke voi khung camera.
   const uint32_t connectionCheckNow = millis();
   if (lastSuccessfulRequest != 0 &&
       connectionCheckNow - lastSuccessfulRequest > 3500) {

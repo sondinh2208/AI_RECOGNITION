@@ -275,18 +275,22 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         }
 
     def display_jpeg_frame(self):
-        """Tao luong 480x250 phu kin TFT; khong thay doi anh dua vao AI/Web UI."""
+        """Dong bo frame toan man hinh 480x320 giong y het 100% tren may tinh."""
         with self._display_jpeg_lock:
             frame = None
             if self.current_page == "attendance":
-                frame = self.kiosk_latest_frame
-                if frame is None and self.kiosk_latest_pil is not None:
+                target_width, target_height = 480, 250
+                if self.kiosk_latest_frame is not None:
+                    frame = self.kiosk_latest_frame
+                elif self.kiosk_latest_pil is not None:
                     frame = cv2.cvtColor(np.asarray(self.kiosk_latest_pil), cv2.COLOR_RGB2BGR)
-            elif self.current_frame is not None:
-                # Tab dang ky tren desktop dung overlay 4:3. Neu cat overlay do
-                # sang TFT 480x250, khung tron va chu se bi cat/tran vien.
-                # TFT lay frame sach, sau do ve guide rieng theo dung ti le rong.
-                frame = self.current_frame.copy()
+            else:
+                # Che do dang ky eKYC: lay truc tiep frame laptop, dung toan man hinh 480x320
+                target_width, target_height = 480, 320
+                if self.latest_processed_frame is not None:
+                    frame = self.latest_processed_frame
+                elif self.current_frame is not None:
+                    frame = self.current_frame
             if frame is None:
                 return 0, None
 
@@ -298,88 +302,13 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             ):
                 return self._display_cached_frame_id, self._display_cached_jpeg
 
-            height, width = frame.shape[:2]
-            target_width, target_height = 480, 250
-            target_ratio = target_width / target_height
-            source_ratio = width / max(height, 1)
-            if source_ratio < target_ratio:
-                crop_height = max(1, int(width / target_ratio))
-                y0 = max(0, (height - crop_height) // 2)
-                cropped = frame[y0:y0 + crop_height, :]
-            else:
-                crop_width = max(1, int(height * target_ratio))
-                x0 = max(0, (width - crop_width) // 2)
-                cropped = frame[:, x0:x0 + crop_width]
-            resized = cv2.resize(
-                cropped, (target_width, target_height), interpolation=cv2.INTER_AREA
-            )
-            if self.current_page == "add_employee":
-                ready = bool(self.enrollment_capture_ready)
-                valid = bool(self.is_face_valid)
-                color = (80, 220, 120) if (ready or valid) else (40, 75, 245)
+            # Resize dung kich thuoc tuong ung tung che do:
+            # - Diem danh: 480x250 (danh 70px cho khung trang thai diem danh o duoi)
+            # - Dang ky: 480x320 (toan man hinh, khong con vung den, mat va cam giong y het laptop)
+            resized = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
 
-                # Lop mat na bo tron rieng cho TFT 480x250: giu khuon mat sang,
-                # lam toi ben ngoai giong giao dien quet tren desktop.
-                mask = np.zeros((target_height, target_width), dtype=np.uint8)
-                face_left, face_top = 118, 20
-                face_right, face_bottom = 362, 211
-                radius = 62
-                cv2.rectangle(
-                    mask,
-                    (face_left + radius, face_top),
-                    (face_right - radius, face_bottom),
-                    255,
-                    -1,
-                )
-                cv2.rectangle(
-                    mask,
-                    (face_left, face_top + radius),
-                    (face_right, face_bottom - radius),
-                    255,
-                    -1,
-                )
-                for center in (
-                    (face_left + radius, face_top + radius),
-                    (face_right - radius, face_top + radius),
-                    (face_left + radius, face_bottom - radius),
-                    (face_right - radius, face_bottom - radius),
-                ):
-                    cv2.circle(mask, center, radius, 255, -1)
-                dimmed = np.clip(resized.astype(np.float32) * 0.38, 0, 255).astype(np.uint8)
-                resized = np.where(mask[..., None] > 0, resized, dimmed)
-
-                # Bon goc can chinh va thanh huong dan nam gon trong vung video.
-                left, top, right, bottom = 92, 12, 388, 218
-                corner, thickness = 30, 4
-                for x1, y1, x2, y2 in (
-                    (left, top, left + corner, top),
-                    (left, top, left, top + corner),
-                    (right, top, right - corner, top),
-                    (right, top, right, top + corner),
-                    (left, bottom, left + corner, bottom),
-                    (left, bottom, left, bottom - corner),
-                    (right, bottom, right - corner, bottom),
-                    (right, bottom, right, bottom - corner),
-                ):
-                    cv2.line(resized, (x1, y1), (x2, y2), color, thickness, cv2.LINE_AA)
-                cv2.line(resized, (0, 220), (target_width - 1, 220), color, 3, cv2.LINE_AA)
-                guide_text = "GIU YEN KHUON MAT" if (ready or valid) else "DUA MAT VAO KHUNG HINH"
-                text_size, _ = cv2.getTextSize(
-                    guide_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1
-                )
-                text_x = max(4, (target_width - text_size[0]) // 2)
-                cv2.putText(
-                    resized,
-                    guide_text,
-                    (text_x, 242),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.48,
-                    color,
-                    1,
-                    cv2.LINE_AA,
-                )
             ok, encoded = cv2.imencode(
-                ".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 50]
+                ".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 55]
             )
             if not ok:
                 return frame_id, None
