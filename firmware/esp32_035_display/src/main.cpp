@@ -138,8 +138,13 @@ String fitTextToWidth(const String& source, int32_t maxWidth) {
   return fitted.length() ? fitted + "..." : "";
 }
 
+bool isSuccessState() {
+  return kiosk.state == "success" || kiosk.state == "duplicate" || kiosk.state == "ready" ||
+         (kiosk.employeeId.length() > 0 && kiosk.state != "unknown" && kiosk.state != "ambiguous" && kiosk.state != "error");
+}
+
 uint32_t statusColor() {
-  if (kiosk.state == "success" || kiosk.state == "ready") return kGreen;
+  if (isSuccessState()) return kGreen;
   if (kiosk.state == "unknown" || kiosk.state == "ambiguous" || kiosk.state == "error") return kRed;
   if (kiosk.state == "validating" || kiosk.state == "strict_confirmation") return kOrange;
   return kBlue;
@@ -168,7 +173,11 @@ void drawStatusPanel() {
   display.setTextDatum(lgfx::textdatum_t::middle_center);
   display.setTextColor(TFT_WHITE, color);
   display.setTextSize(2);
-  display.drawString(kiosk.state == "success" || kiosk.state == "ready" ? "OK" : "o", 35, 285);
+  display.drawString(
+      isSuccessState() ? "OK" :
+      (kiosk.state == "unknown" || kiosk.state == "error" ? "X" :
+      (kiosk.state == "validating" || kiosk.state == "strict_confirmation" ? "!" : "o")),
+      35, 285);
 
   display.setFont(&fonts::Font2);
   display.setTextDatum(lgfx::textdatum_t::top_left);
@@ -277,6 +286,9 @@ bool fetchAndDrawFrame() {
     if (!frameAreaPrepared) {
       display.fillScreen(TFT_BLACK);
       frameAreaPrepared = true;
+      if (!enrollment) {
+        drawStatusPanel();
+      }
     }
     if (enrollment) {
       // Che do dang ky: Ve toan man hinh 480x320 (khong co thanh trang thai che)
@@ -349,6 +361,9 @@ void setup() {
   drawConnectionScreen("Khoi dong bo man hinh");
   WiFi.mode(WIFI_STA);
   ensureWiFi();
+  if (!isEnrollmentMode()) {
+    drawStatusPanel();
+  }
 }
 
 void loop() {
@@ -360,14 +375,14 @@ void loop() {
   }
 
   // Cap nhat trang thai tu laptop
-  if (now - lastStateFetch >= 800) {
+  if (now - lastStateFetch >= 500) {
     lastStateFetch = now;
     if (fetchState()) {
       if (!isEnrollmentMode()) {
-        // Che do diem danh / nhan dien: Giu nguyen thanh panel trang thai o duoi!
+        // Che do diem danh / nhan dien: Luon giu khung panel trang thai o duoi!
         String key = kiosk.mode + kiosk.state + kiosk.title + kiosk.name
             + String(static_cast<int>(renderedFpsValue * 10));
-        if (key != previousStatusKey) {
+        if (key != previousStatusKey || previousMode == "add_employee") {
           previousStatusKey = key;
           drawStatusPanel();
         }

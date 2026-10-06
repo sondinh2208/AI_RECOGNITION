@@ -255,6 +255,10 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         else:
             source = state["recognition"]
             screen_state = source.get("state", "idle")
+            # Khi da nhan dien nhan vien (ke ca luot quet lai "duplicate" trong thoi gian cooldown),
+            # man hinh luon the hien trang thai thanh cong de hien thi mau xanh OK
+            if screen_state == "duplicate":
+                screen_state = "success"
             title = source.get("title")
             message = source.get("message")
             employee = source.get("employee") or {}
