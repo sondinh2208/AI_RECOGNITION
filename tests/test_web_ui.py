@@ -14,8 +14,9 @@ import numpy as np
 
 
 os.environ["FACECHECK_WEB_SKIP_AI"] = "1"
+os.environ["FACECHECK_DISPLAY_TOKEN"] = "test-display-token"
 
-from web_backend.app import app  # noqa: E402
+from web_backend.app import app, display_app  # noqa: E402
 from web_runtime import WebFaceCheckRuntime  # noqa: E402
 from web_admin import (  # noqa: E402
     _parse_args as parse_web_admin_args,
@@ -59,9 +60,13 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         )
+        self.display_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=display_app), base_url="http://display"
+        )
 
     async def asyncTearDown(self):
         await self.client.aclose()
+        await self.display_client.aclose()
 
     async def test_spa_shell_contains_all_existing_pages(self):
         response = await self.client.get("/")
@@ -85,6 +90,15 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sample_target", state["enrollment"])
         self.assertIn("brightness", state["camera"])
         self.assertIn("light_ok", state["camera"])
+
+        forbidden = await self.display_client.get("/state")
+        self.assertEqual(forbidden.status_code, 403)
+        display_state = (await self.display_client.get(
+            "/state", headers={"x-facecheck-token": "test-display-token"}
+        )).json()
+        self.assertIn(display_state["mode"], {"attendance", "add_employee", "idle"})
+        self.assertIn("title", display_state)
+        self.assertIn("fps", display_state)
 
         employees = (await self.client.get(
             "/api/employees", params={"page": 1, "page_size": 2}

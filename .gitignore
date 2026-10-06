@@ -3,6 +3,7 @@ venv/
 env/
 .env
 firmware/**/secrets.h
+firmware/**/factory_backup.bin
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

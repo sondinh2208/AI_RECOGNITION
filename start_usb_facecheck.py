@@ -17,6 +17,20 @@ HEALTH_URL = "http://127.0.0.1:8766/health"
 STREAM_URL = "http://127.0.0.1:8766/stream"
 
 
+def load_local_environment(environment):
+    """Nap cau hinh thiet bi cuc bo; tep .env khong duoc Git theo doi."""
+    path = ROOT / ".env"
+    if not path.exists():
+        return environment
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        environment.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    return environment
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Khoi dong FaceCheck voi camera ESP32-S3 qua USB-OTG",
@@ -59,7 +73,7 @@ def main(simulate_display=False) -> int:
             return 1
 
     print(f"[START] Camera san sang: {STREAM_URL}")
-    environment = os.environ.copy()
+    environment = load_local_environment(os.environ.copy())
     environment["FACECHECK_CAMERA_URL"] = STREAM_URL
     environment["FACECHECK_CAMERA_PROFILE"] = "embedded_ov3660"
     command = [sys.executable, str(ROOT / "web_admin.py")]

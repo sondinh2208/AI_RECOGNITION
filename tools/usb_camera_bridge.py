@@ -100,7 +100,20 @@ def serial_worker(preferred_port: str | None) -> None:
             continue
         try:
             print(f"[USB-BRIDGE] Dang mo {port}...")
-            with serial.Serial(port, 2_000_000, timeout=5, write_timeout=5) as device:
+            # Tao cong o trang thai dong de dat control-line truoc khi open.
+            # USB-Serial/JTAG cua ESP32-S3 co the vao bootloader neu pyserial
+            # mo cong voi RTS va DTR cung duoc assert theo gia tri mac dinh.
+            device = serial.Serial()
+            device.port = port
+            device.baudrate = 2_000_000
+            device.timeout = 5
+            device.write_timeout = 5
+            device.rts = False
+            device.dtr = True
+            device.open()
+            with device:
+                device.rts = False
+                device.dtr = True
                 device.reset_input_buffer()
                 STORE.port = port
                 STORE.connected = True

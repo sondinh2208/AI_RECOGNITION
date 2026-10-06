@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
@@ -20,6 +21,7 @@ from web_runtime import WebFaceCheckRuntime
 ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = ROOT / "web_ui"
 runtime = WebFaceCheckRuntime(load_ai=os.getenv("FACECHECK_WEB_SKIP_AI") != "1")
+DISPLAY_TOKEN = os.getenv("FACECHECK_DISPLAY_TOKEN", "")
 
 
 def api_error(exc):
@@ -33,6 +35,39 @@ async def health(_request):
 
 async def state(_request):
     return JSONResponse(runtime.snapshot())
+
+
+async def display_state(_request):
+    if not _display_authorized(_request):
+        return JSONResponse({"ok": False, "error": "Forbidden"}, status_code=403)
+    return JSONResponse(runtime.display_snapshot())
+
+
+async def display_frame(_request):
+    if not _display_authorized(_request):
+        return JSONResponse({"ok": False, "error": "Forbidden"}, status_code=403)
+    frame_id, frame = runtime.display_jpeg_frame()
+    if not frame:
+        return Response(status_code=204)
+    return Response(
+        frame,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "X-Frame-Id": str(frame_id),
+        },
+    )
+
+
+async def display_health(request):
+    if not _display_authorized(request):
+        return JSONResponse({"ok": False, "error": "Forbidden"}, status_code=403)
+    return JSONResponse({"ok": True, "service": "FaceCheck TFT display"})
+
+
+def _display_authorized(request: Request):
+    supplied = request.headers.get("x-facecheck-token", "")
+    return bool(DISPLAY_TOKEN) and secrets.compare_digest(supplied, DISPLAY_TOKEN)
 
 
 async def switch_mode(request: Request):
@@ -225,3 +260,9 @@ routes = [
 ]
 
 app = Starlette(routes=routes, lifespan=lifespan)
+
+display_app = Starlette(routes=[
+    Route("/health", display_health),
+    Route("/state", display_state),
+    Route("/frame.jpg", display_frame),
+])

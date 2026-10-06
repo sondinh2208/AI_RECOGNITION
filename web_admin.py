@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import threading
 import time
@@ -16,6 +17,7 @@ import uvicorn
 
 HOST = "127.0.0.1"
 PORT = 8765
+DISPLAY_PORT = 8767
 URL = f"http://{HOST}:{PORT}"
 KIOSK_URL = f"{URL}/?view=kiosk#recognition"
 ADMIN_URL = f"{URL}/#dashboard"
@@ -63,12 +65,24 @@ def _parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def _make_server():
+def _make_server(app_name="web_backend.app:app", host=HOST, port=PORT):
     config = uvicorn.Config(
-        "web_backend.app:app", host=HOST, port=PORT,
+        app_name, host=host, port=port,
         log_level="warning", access_log=False,
     )
     return uvicorn.Server(config)
+
+
+def _display_host():
+    configured = os.getenv("FACECHECK_DISPLAY_HOST", "").strip()
+    if configured:
+        return configured
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.168.1.1", 9))
+        return probe.getsockname()[0]
+    finally:
+        probe.close()
 
 
 def _is_facecheck_server(timeout=0.4):
@@ -113,6 +127,9 @@ def main(simulate_pi=False):
     owns_server = listener is not None
     uvicorn_server = None
     server_thread = None
+    display_listener = None
+    display_server = None
+    display_thread = None
 
     if owns_server:
         uvicorn_server = _make_server()
@@ -128,6 +145,24 @@ def main(simulate_pi=False):
             server_thread.join(timeout=5)
             listener.close()
             raise RuntimeError("Backend FaceCheck không khởi động trong thời gian cho phép")
+        display_host = _display_host()
+        display_listener = _reserve_server_socket(display_host, DISPLAY_PORT)
+        if display_listener is None:
+            raise RuntimeError(
+                f"Khong the mo cong man hinh {display_host}:{DISPLAY_PORT}. "
+                "Hay kiem tra dia chi Wi-Fi hoac chuong trinh dang chiem cong."
+            )
+        display_server = _make_server(
+            "web_backend.app:display_app", display_host, DISPLAY_PORT
+        )
+        display_thread = threading.Thread(
+            target=display_server.run,
+            kwargs={"sockets": [display_listener]},
+            daemon=True,
+            name="facecheck-display-server",
+        )
+        display_thread.start()
+        print(f"[DISPLAY] Kenh TFT bao mat: http://{display_host}:{DISPLAY_PORT}")
     elif not _wait_for_facecheck_server(timeout=5):
         raise RuntimeError(
             f"Cổng {PORT} đang được một ứng dụng khác sử dụng. "
@@ -167,6 +202,12 @@ def main(simulate_pi=False):
         webview.start(debug=False)
     finally:
         if owns_server:
+            if display_server is not None:
+                display_server.should_exit = True
+            if display_thread is not None:
+                display_thread.join(timeout=5)
+            if display_listener is not None:
+                display_listener.close()
             uvicorn_server.should_exit = True
             server_thread.join(timeout=5)
             listener.close()
