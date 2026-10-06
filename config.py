@@ -159,6 +159,7 @@ ENROLLMENT_SAMPLE_INTERVAL_SECONDS = 0.20
 ENROLLMENT_AUTO_CAPTURE_SECONDS = 2.2 if IS_EMBEDDED_CAMERA else 3.0
 ENROLLMENT_VALID_STREAK = 3 if IS_EMBEDDED_CAMERA else 5
 ENROLLMENT_INVALID_STREAK = 4 if IS_EMBEDDED_CAMERA else 2
+ENROLLMENT_SESSION_IDLE_TIMEOUT_SECONDS = 15.0  # Không có thao tác quản trị thì tự về điểm danh
 KIOSK_FACE_STABLE_SECONDS = 0.7     # Khuôn mặt phải ổn định trước khi tự nhận diện
 KIOSK_CONFIRMATION_INTERVAL_SECONDS = 0.25  # Nhịp lấy frame xác minh sau lần đầu
 KIOSK_RESULT_HOLD_SECONDS = 1.5     # Thời gian hiển thị kết quả trước khi tự mở lượt mới

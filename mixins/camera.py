@@ -190,6 +190,17 @@ class CameraMixin:
                             )
                             if callable(on_face_left):
                                 on_face_left()
+                elif not getattr(self, "_enrollment_scan_armed", True):
+                    # Camera chỉ hiển thị preview. Không thu mẫu cho tới khi
+                    # quản trị viên nhập hồ sơ và chủ động bắt đầu lượt mới.
+                    display_locked = False
+                    display_color = (255, 180, 40)
+                    display_text = "CHO THONG TIN NGUOI TIEP THEO"
+                    self._enrollment_valid_since = None
+                    self.enrollment_face_samples.clear()
+                    self._last_enrollment_sample_at = 0.0
+                    green_streak = 0
+                    red_streak = 0
                 else:
                     current_color, status_text, is_locked = check_face_constraints(
                         faces, self.constraint_box, mp_results, fw, fh,

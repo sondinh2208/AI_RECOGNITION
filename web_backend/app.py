@@ -72,6 +72,24 @@ async def enrollment_reset(_request):
     return JSONResponse(runtime.reset_enrollment())
 
 
+async def enrollment_start(_request):
+    try:
+        return JSONResponse(runtime.start_enrollment_scan())
+    except Exception as exc:
+        return api_error(exc)
+
+
+async def enrollment_activity(_request):
+    return JSONResponse(runtime.note_enrollment_activity())
+
+
+async def enrollment_finish(_request):
+    try:
+        return JSONResponse(runtime.finish_enrollment_session())
+    except Exception as exc:
+        return api_error(exc)
+
+
 async def employees(request: Request):
     params = request.query_params
     try:
@@ -191,6 +209,9 @@ routes = [
     Route("/api/recognition/test-image", recognition_test, methods=["POST"]),
     Route("/api/enrollment/save", enrollment_save, methods=["POST"]),
     Route("/api/enrollment/reset", enrollment_reset, methods=["POST"]),
+    Route("/api/enrollment/start", enrollment_start, methods=["POST"]),
+    Route("/api/enrollment/activity", enrollment_activity, methods=["POST"]),
+    Route("/api/enrollment/finish", enrollment_finish, methods=["POST"]),
     Route("/api/employees", employees),
     Route("/api/employees/{employee_id:str}/image", employee_image),
     Route("/api/employees/{employee_id:str}", employee_update, methods=["PUT"]),

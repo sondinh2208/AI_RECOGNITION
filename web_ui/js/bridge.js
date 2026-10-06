@@ -29,6 +29,9 @@ export const api = {
   history: ({ query = "", status = "", page = 1, pageSize = 10 } = {}) => request(`/api/attendance?query=${encodeURIComponent(query)}&status=${encodeURIComponent(status)}&page=${page}&page_size=${pageSize}`),
   saveEnrollment: (payload) => request("/api/enrollment/save", { method: "POST", headers: jsonHeaders, body: JSON.stringify(payload) }),
   resetEnrollment: () => request("/api/enrollment/reset", { method: "POST" }),
+  startEnrollmentScan: () => request("/api/enrollment/start", { method: "POST" }),
+  noteEnrollmentActivity: () => request("/api/enrollment/activity", { method: "POST" }),
+  finishEnrollmentSession: () => request("/api/enrollment/finish", { method: "POST" }),
 };
 
 export function connectStateSocket(onState, onConnection) {

@@ -104,6 +104,10 @@
               <button class="step" type="button" data-step="3" aria-disabled="true"><span>3</span><b>3. Hoàn tất</b></button>
             </div>
             <div class="enrollment-form-body">
+              <div class="enrollment-session" id="enrollmentSession" hidden>
+                <span><i></i><strong>Phiên đăng ký đang mở</strong><small id="enrollmentSessionStatus">Tự động kết thúc sau <b id="enrollmentIdleCountdown">15</b> giây</small></span>
+                <button id="finishEnrollmentSession" type="button">Kết thúc phiên</button>
+              </div>
               <div class="form-intro"><h2>Thông tin nhân viên</h2><p>Nhập thông tin nhân viên để lưu cùng với khuôn mặt.</p></div>
               <form id="enrollmentForm">
                 <label>Họ và tên nhân viên<span class="field-control"><svg><use href="#i-users"/></svg><input name="name" placeholder="Nguyễn Văn A" autocomplete="name" required></span></label>

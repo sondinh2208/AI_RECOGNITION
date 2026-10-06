@@ -114,7 +114,8 @@ const enrollmentStatusLabels = [
   [/Dua mat vao khung hinh/i, "Đưa khuôn mặt vào giữa khung hình"],
 ];
 let enrollmentCancelPending = false;
-let enrollmentReturnTimer = null;
+let enrollmentFormClearedForSuccess = false;
+let enrollmentActivityTimer;
 
 function friendlyEnrollmentStatus(value) {
   const status = String(value || "");
@@ -168,9 +169,24 @@ function updateEnrollmentControls(state) {
   const active = state.mode === "add_employee";
   const formValid = enrollmentFormIsValid();
   const startButton = $("#startEnrollmentScan");
-  startButton.disabled = active || !formValid || enrollment.saving;
-  startButton.querySelector("span").textContent = active ? "Kiosk đang quét khuôn mặt" : "Bắt đầu quét tại kiosk";
+  const scanArmed = Boolean(enrollment.scan_armed);
+  startButton.disabled = !formValid || enrollment.saving || (active && scanArmed);
+  startButton.querySelector("span").textContent = active && scanArmed
+    ? "Kiosk đang quét khuôn mặt"
+    : enrollment.session_active
+      ? "Quét người tiếp theo"
+      : "Bắt đầu quét tại kiosk";
   $("#saveEnrollment").disabled = !active || !enrollment.capture_ready || enrollment.saving || !formValid;
+
+  const sessionBar = $("#enrollmentSession");
+  sessionBar.hidden = !enrollment.session_active;
+  const sessionStatus = $("#enrollmentSessionStatus");
+  if (enrollment.capture_ready) {
+    sessionStatus.textContent = "Đã đủ mẫu · chờ lưu hồ sơ";
+  } else {
+    sessionStatus.innerHTML = `Tự động kết thúc sau <b id="enrollmentIdleCountdown">${enrollment.idle_remaining_seconds ?? enrollment.idle_timeout_seconds ?? 15}</b> giây`;
+  }
+  $("#finishEnrollmentSession").disabled = Boolean(enrollment.saving);
 }
 
 function renderEnrollment(state) {
@@ -240,17 +256,18 @@ function renderStatus(state) {
   markDataStale(state.history_version);
   $("#sideCamera").textContent = state.camera.running ? "Hoạt động" : "Ngoại tuyến";
   $("#sideDevice").textContent = state.camera.device === "cpu" ? "CPU" : "GPU sẵn sàng";
+  if (!kioskView && state.enrollment?.state === "success") {
+    if (!enrollmentFormClearedForSuccess) {
+      $("#enrollmentForm").reset();
+      enrollmentFormClearedForSuccess = true;
+      store.employees.stale = true;
+      store.dashboard.stale = true;
+    }
+  } else if (state.enrollment?.state !== "success") {
+    enrollmentFormClearedForSuccess = false;
+  }
   renderEnrollment(state);
   updateEnrollmentControls(state);
-  if (!kioskView && state.mode === "add_employee" && state.enrollment?.state === "success" && !enrollmentReturnTimer) {
-    enrollmentReturnTimer = setTimeout(async () => {
-      enrollmentReturnTimer = null;
-      try { renderStatus(await api.setMode("attendance")); } catch (error) { toast(error.message, true); }
-    }, 3000);
-  } else if (state.enrollment?.state !== "success" && enrollmentReturnTimer) {
-    clearTimeout(enrollmentReturnTimer);
-    enrollmentReturnTimer = null;
-  }
   if (recognitionChanged) renderRecognition(state.recognition);
   renderRecognitionTest(state.recognition_test);
   if (store.route === "recognition" && store.history.stale) loadRecent();
@@ -340,26 +357,37 @@ async function loadDashboard(force = false) {
   } catch (error) { toast(error.message, true); }
 }
 
-function pagination(element, data, onPage) {
-  const buttons = [`<button ${data.page <= 1 ? "disabled" : ""} data-p="${data.page - 1}">‹</button>`];
-  for (let page = 1; page <= data.pages; page++) if (data.pages <= 7 || page === 1 || page === data.pages || Math.abs(page - data.page) <= 1) buttons.push(`<button class="${page === data.page ? "active" : ""}" data-p="${page}">${page}</button>`);
+function pagination(element, data, onPage, itemLabel = "bản ghi") {
+  const buttons = [`<span class="page-summary">${data.total} ${itemLabel} · ${data.page_size}/trang · trang ${data.page}/${data.pages}</span>`, `<button ${data.page <= 1 ? "disabled" : ""} data-p="${data.page - 1}">‹</button>`];
+  const visiblePages = new Set([1, data.pages]);
+  for (let page = Math.max(1, data.page - 1); page <= Math.min(data.pages, data.page + 1); page++) visiblePages.add(page);
+  let previousPage = 0;
+  [...visiblePages].sort((a, b) => a - b).forEach(page => {
+    if (page - previousPage > 1) buttons.push(`<span class="page-ellipsis">…</span>`);
+    buttons.push(`<button class="${page === data.page ? "active" : ""}" data-p="${page}">${page}</button>`);
+    previousPage = page;
+  });
   buttons.push(`<button ${data.page >= data.pages ? "disabled" : ""} data-p="${data.page + 1}">›</button>`);
   element.innerHTML = buttons.join(""); element.querySelectorAll("button:not([disabled])").forEach(button => button.addEventListener("click", () => onPage(Number(button.dataset.p))));
 }
 
+let employeeRequestVersion = 0;
 async function loadEmployees(force = false) {
   const state = store.employees; if (!force && !state.stale && state.data) return;
+  const requestVersion = ++employeeRequestVersion;
   try {
-    const data = await api.employees({ query: state.query, page: state.page, pageSize: state.pageSize }); state.data = data; state.page = data.page; state.stale = false;
+    const data = await api.employees({ query: state.query, page: state.page, pageSize: state.pageSize });
+    if (requestVersion !== employeeRequestVersion) return;
+    state.data = data; state.page = data.page; state.stale = false;
     $("#employeeStats").innerHTML = statCard("Tổng nhân viên", data.all_total, "users") + statCard("Đang nhận diện", data.enabled_total, "check") + statCard("Trang hiện tại", `${data.page}/${data.pages}`, "list");
     replaceHtml($("#employeeRows"), data.items.length ? data.items.map(item => `<tr><td><img class="row-avatar" loading="lazy" src="${item.image_url}" alt=""></td><td>${esc(item.id)}</td><td><strong>${esc(item.name)}</strong></td><td>${esc(item.role)}</td><td>${esc(item.department)}</td><td><span class="status-text ${item.recognition_enabled ? "success" : "failed"}">${item.recognition_enabled ? "Đang nhận diện" : "Chỉ kiểm thử"}</span></td><td><div class="actions"><button class="icon-button" data-action="view" data-id="${esc(item.id)}" aria-label="Xem ảnh">${icon("eye")}</button><button class="icon-button" data-action="edit" data-id="${esc(item.id)}" aria-label="Sửa">${icon("edit")}</button><button class="icon-button" data-action="toggle" data-id="${esc(item.id)}" aria-label="Bật tắt">${icon("target")}</button><button class="icon-button danger" data-action="delete" data-id="${esc(item.id)}" aria-label="Xóa">${icon("trash")}</button></div></td></tr>`).join("") : `<tr><td class="empty" colspan="7">Không tìm thấy nhân viên</td></tr>`);
-    pagination($("#employeePagination"), data, page => { state.page = page; state.stale = true; loadEmployees(); });
+    pagination($("#employeePagination"), data, page => { state.page = page; state.stale = true; loadEmployees(); }, "nhân viên");
   } catch (error) { toast(error.message, true); }
 }
 
 async function loadHistory(force = false) {
   const state = store.history; if (!force && !state.stale && state.data) return;
-  try { const data = await api.history({ query: state.query, status: state.status, page: state.page, pageSize: state.pageSize }); state.data = data; state.page = data.page; state.stale = false; replaceHtml($("#historyRows"), rowsHtml(data.items)); pagination($("#historyPagination"), data, page => { state.page = page; state.stale = true; loadHistory(); }); } catch (error) { toast(error.message, true); }
+  try { const data = await api.history({ query: state.query, status: state.status, page: state.page, pageSize: state.pageSize }); state.data = data; state.page = data.page; state.stale = false; replaceHtml($("#historyRows"), rowsHtml(data.items)); pagination($("#historyPagination"), data, page => { state.page = page; state.stale = true; loadHistory(); }, "bản ghi"); } catch (error) { toast(error.message, true); }
 }
 
 const modal = $("#modal");
@@ -402,7 +430,7 @@ $("#employeeRows").addEventListener("click", async event => {
 });
 
 let employeeTimer, historyTimer;
-$("#employeeSearch").addEventListener("input", event => { clearTimeout(employeeTimer); employeeTimer = setTimeout(() => { store.employees.query = event.target.value; store.employees.page = 1; store.employees.stale = true; loadEmployees(); }, 300); });
+$("#employeeSearch").addEventListener("input", event => { employeeRequestVersion++; clearTimeout(employeeTimer); employeeTimer = setTimeout(() => { store.employees.query = event.target.value; store.employees.page = 1; store.employees.stale = true; loadEmployees(); }, 300); });
 $("#historySearch").addEventListener("input", event => { clearTimeout(historyTimer); historyTimer = setTimeout(() => { store.history.query = event.target.value; store.history.page = 1; store.history.stale = true; loadHistory(); }, 300); });
 $("#historyStatus").addEventListener("change", event => { store.history.status = event.target.value; store.history.page = 1; store.history.stale = true; loadHistory(); });
 $("#retryRecognition").addEventListener("click", () => api.retry().catch(error => toast(error.message, true)));
@@ -416,6 +444,12 @@ $("#recognitionImageInput").addEventListener("change", async event => {
 $("#enrollmentForm").addEventListener("input", () => {
   updateEnrollmentSteps(store.runtime?.enrollment);
   if (store.runtime) updateEnrollmentControls(store.runtime);
+  clearTimeout(enrollmentActivityTimer);
+  if (store.runtime?.enrollment?.session_active) {
+    enrollmentActivityTimer = setTimeout(() => {
+      api.noteEnrollmentActivity().catch(error => toast(error.message, true));
+    }, 300);
+  }
 });
 $("#startEnrollmentScan").addEventListener("click", async () => {
   const form = $("#enrollmentForm");
@@ -425,10 +459,18 @@ $("#startEnrollmentScan").addEventListener("click", async () => {
     return;
   }
   try {
-    await api.resetEnrollment();
-    const state = await api.setMode("add_employee");
+    const state = await api.startEnrollmentScan();
     renderStatus(state);
-    toast("Kiosk đã chuyển sang chế độ đăng ký khuôn mặt.");
+    toast(store.runtime?.enrollment?.session_active ? "Đã bắt đầu quét người tiếp theo." : "Kiosk đã chuyển sang chế độ đăng ký khuôn mặt.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+$("#finishEnrollmentSession").addEventListener("click", async () => {
+  try {
+    const state = await api.finishEnrollmentSession();
+    renderStatus(state);
+    toast("Đã kết thúc phiên đăng ký. Kiosk đã trở về điểm danh.");
   } catch (error) {
     toast(error.message, true);
   }

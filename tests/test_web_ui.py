@@ -17,7 +17,12 @@ os.environ["FACECHECK_WEB_SKIP_AI"] = "1"
 
 from web_backend.app import app  # noqa: E402
 from web_runtime import WebFaceCheckRuntime  # noqa: E402
-from web_admin import _reserve_server_socket, _window_specs  # noqa: E402
+from web_admin import (  # noqa: E402
+    _parse_args as parse_web_admin_args,
+    _reserve_server_socket,
+    _window_specs,
+)
+from start_usb_facecheck import parse_args as parse_usb_start_args  # noqa: E402
 from ai_engine import (  # noqa: E402
     analyze_face_quality, check_face_constraints, measure_face_brightness,
 )
@@ -102,6 +107,7 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         source = response.text
         self.assertIn('["attendance", "add_employee"].includes(mode)', source)
         self.assertIn('const simulatedAdminView = viewRole === "admin"', source)
+        self.assertIn('$("#enrollmentForm").reset()', source)
         for forbidden in (
             "ARCFACE_THRESHOLD", "ARCFACE_TOP2_MARGIN",
             "ARCFACE_UNCERTAIN_THRESHOLD", "classify_recognition_score",
@@ -110,6 +116,91 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RuntimeLifecycleTests(unittest.TestCase):
+    def test_employee_list_prioritizes_enabled_then_sorts_name_a_to_z(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.embeddings_cache = {
+            "NV004": {"id": "NV004", "name": "Đặng An", "recognition_enabled": False},
+            "NV003": {"id": "NV003", "name": "Bình", "recognition_enabled": True},
+            "NV002": {"id": "NV002", "name": "An", "recognition_enabled": False},
+            "NV001": {"id": "NV001", "name": "Ánh", "recognition_enabled": True},
+        }
+
+        data = runtime.list_employees(page=1, page_size=10)
+
+        self.assertEqual(
+            [(item["name"], item["recognition_enabled"]) for item in data["items"]],
+            [("Ánh", True), ("Bình", True), ("An", False), ("Đặng An", False)],
+        )
+
+    def test_one_hundred_employees_use_ten_pages_at_ten_per_page(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.embeddings_cache = {
+            f"NV{index:03d}": {
+                "id": f"NV{index:03d}",
+                "name": f"Nhân viên {index:03d}",
+                "recognition_enabled": True,
+            }
+            for index in range(100)
+        }
+
+        data = runtime.list_employees(page=1, page_size=10)
+
+        self.assertEqual(data["total"], 100)
+        self.assertEqual(data["pages"], 10)
+
+    def test_face_presence_does_not_control_enrollment_timer(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "add_employee"
+        runtime._enrollment_continuous_session = True
+        runtime._enrollment_idle_timer = Mock()
+
+        runtime._note_enrollment_face_presence(False)
+        runtime._note_enrollment_face_presence(True)
+
+        runtime._enrollment_idle_timer.cancel.assert_not_called()
+
+    def test_admin_activity_restarts_continuous_enrollment_timer(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "add_employee"
+        runtime._enrollment_continuous_session = True
+        old_timer = Mock()
+        runtime._enrollment_idle_timer = old_timer
+        fake_timer = Mock()
+
+        with patch("web_runtime.threading.Timer", return_value=fake_timer) as timer_class:
+            runtime.note_enrollment_activity()
+
+        old_timer.cancel.assert_called_once()
+        timer_class.assert_called_once()
+        fake_timer.start.assert_called_once()
+        self.assertIs(runtime._enrollment_idle_timer, fake_timer)
+        self.assertIsNotNone(runtime._enrollment_idle_deadline)
+
+    def test_next_enrollment_requires_explicit_scan_start(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "add_employee"
+        runtime._enrollment_continuous_session = True
+        runtime._enrollment_scan_armed = False
+
+        with patch.object(runtime, "_restart_enrollment_idle_timer"), patch.object(
+            runtime, "_reset_enrollment_scan"
+        ) as reset_scan:
+            state = runtime.start_enrollment_scan()
+
+        self.assertTrue(runtime._enrollment_scan_armed)
+        self.assertTrue(state["enrollment"]["scan_armed"])
+        reset_scan.assert_called_once()
+
+    def test_continuous_enrollment_returns_to_attendance_after_timeout(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "add_employee"
+        runtime._enrollment_continuous_session = True
+        runtime.switch_mode = Mock()
+
+        runtime._auto_return_to_attendance()
+
+        runtime.switch_mode.assert_called_once_with("attendance")
+
     def test_camera_clients_share_one_jpeg_encode(self):
         runtime = WebFaceCheckRuntime(load_ai=False)
         runtime.current_page = "attendance"
@@ -217,6 +308,11 @@ class RuntimeLifecycleTests(unittest.TestCase):
 
 
 class WebAdminSingleInstanceTests(unittest.TestCase):
+    def test_display_simulation_cli_aliases(self):
+        self.assertTrue(parse_web_admin_args(["--simulate-display"]).simulate_display)
+        self.assertTrue(parse_web_admin_args(["--simulate-pi"]).simulate_display)
+        self.assertTrue(parse_usb_start_args(["--simulate-display"]).simulate_display)
+
     def test_pi_simulation_uses_one_kiosk_and_one_admin_window(self):
         specs = _window_specs(simulate_pi=True)
 

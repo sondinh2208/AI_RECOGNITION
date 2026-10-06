@@ -58,6 +58,16 @@ quản trị desktop.
 python web_admin.py --simulate-pi
 ```
 
+Với camera ESP32-S3 truyền qua USB-OTG, dùng lệnh dưới đây để khởi động đồng thời
+cầu nối camera, màn TFT 3.5 inch 480x320 mô phỏng và cửa sổ quản trị:
+
+```powershell
+.\venv\Scripts\python.exe start_usb_facecheck.py --simulate-display
+```
+
+`--simulate-pi` vẫn được giữ như bí danh tương thích; tên mới
+`--simulate-display` phản ánh đúng kiến trúc màn hình ESP32 độc lập.
+
 Cửa sổ Kiosk bị khóa ở trang nhận diện và không hiển thị thanh điều hướng, form
 quản trị hay bảng lịch sử. Các trang Dashboard, Người đăng ký và Lịch sử ở cửa
 sổ quản trị không làm dừng camera. Khi thoát khỏi trang đăng ký, camera tự quay

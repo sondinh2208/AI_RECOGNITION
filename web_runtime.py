@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import pickle
+import math
 import re
 import threading
 import time
 import tempfile
+import unicodedata
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -18,6 +20,7 @@ from config import (
     DATA_FACES_DIR,
     ENROLLMENT_EMBEDDING_SAMPLES,
     ENROLLMENT_MIN_SAMPLES,
+    ENROLLMENT_SESSION_IDLE_TIMEOUT_SECONDS,
     KIOSK_ATTENDANCE_COOLDOWN_SECONDS,
 )
 from mixins.attendance import AttendanceMixin
@@ -91,6 +94,10 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._enrollment_preview_shown = False
         self._enrollment_waiting_for_face_leave = False
         self._enrollment_saving = False
+        self._enrollment_continuous_session = False
+        self._enrollment_scan_armed = False
+        self._enrollment_idle_timer = None
+        self._enrollment_idle_deadline = None
         self.current_face_brightness = None
         self.is_face_bright = False
 
@@ -146,6 +153,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._publish()
 
     def shutdown(self):
+        self._stop_continuous_enrollment_session()
         self.kiosk_running = False
         self.enrollment_running = False
         self.camera_running = False
@@ -210,6 +218,13 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                     ),
                     "sample_target": ENROLLMENT_EMBEDDING_SAMPLES,
                     "status_text": self.ai_status_text,
+                    "session_active": bool(self._enrollment_continuous_session),
+                    "scan_armed": bool(self._enrollment_scan_armed),
+                    "idle_timeout_seconds": ENROLLMENT_SESSION_IDLE_TIMEOUT_SECONDS,
+                    "idle_remaining_seconds": (
+                        max(0, math.ceil(self._enrollment_idle_deadline - time.monotonic()))
+                        if self._enrollment_idle_deadline is not None else None
+                    ),
                 },
                 "history_version": self._attendance_history_version,
             }
@@ -217,6 +232,13 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
     def switch_mode(self, mode: str):
         if mode not in {"attendance", "add_employee", "idle"}:
             return self.snapshot()
+        completed_enrollment = bool(
+            mode == "attendance"
+            and self.current_page == "add_employee"
+            and self.enrollment_result.get("state") == "success"
+        )
+        if mode != "add_employee":
+            self._stop_continuous_enrollment_session()
         with self._lock:
             if self.current_page == mode and (
                 (mode == "attendance" and self.kiosk_running)
@@ -243,6 +265,12 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                     target=self._camera_loop, daemon=True
                 )
                 self.camera_thread.start()
+        if completed_enrollment:
+            self.enrollment_result = {
+                "state": "idle",
+                "title": "Chờ khuôn mặt hợp lệ",
+                "message": "Nhập thông tin nhân viên tiếp theo để bắt đầu lượt quét mới.",
+            }
         self._publish()
         return self.snapshot()
 
@@ -542,17 +570,117 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
     def _finish_enrollment(self, success, name="", emp_id="", error_msg=""):
         self._enrollment_saving = False
         if success:
+            self._enrollment_scan_armed = False
             self._reset_enrollment_scan(clear_preview=False, wait_for_face_leave=True)
             self.enrollment_result = {
                 "state": "success", "title": "Lưu khuôn mặt thành công",
                 "message": f"{name} ({emp_id}) đã được thêm vào hệ thống.",
             }
+            self._start_continuous_enrollment_session()
         else:
             self.enrollment_result = {
                 "state": "error", "title": "Không thể lưu khuôn mặt",
                 "message": error_msg or "Vui lòng thử lại.",
             }
         self._publish()
+
+    def _cancel_enrollment_idle_timer(self):
+        with self._lock:
+            timer = self._enrollment_idle_timer
+            self._enrollment_idle_timer = None
+            self._enrollment_idle_deadline = None
+        if timer is not None:
+            timer.cancel()
+
+    def _start_continuous_enrollment_session(self):
+        """Giữ kiosk trong phiên đăng ký và chờ thao tác quản trị tiếp theo."""
+        with self._lock:
+            self._enrollment_continuous_session = True
+        self._restart_enrollment_idle_timer()
+
+    def _stop_continuous_enrollment_session(self):
+        self._cancel_enrollment_idle_timer()
+        with self._lock:
+            self._enrollment_continuous_session = False
+            self._enrollment_scan_armed = False
+
+    def _note_enrollment_face_presence(self, has_face):
+        """API tương thích; khuôn mặt không còn điều khiển timeout phiên."""
+
+    def _restart_enrollment_idle_timer(self):
+        """Khởi động lại timeout khi có thao tác đăng ký có ý nghĩa."""
+        self._cancel_enrollment_idle_timer()
+        with self._lock:
+            should_start = bool(
+                self._enrollment_continuous_session
+                and self.current_page == "add_employee"
+                and not self._enrollment_saving
+                and not self.enrollment_capture_ready
+                and self._enrollment_idle_timer is None
+            )
+            if not should_start:
+                return
+            timer = threading.Timer(
+                ENROLLMENT_SESSION_IDLE_TIMEOUT_SECONDS,
+                self._auto_return_to_attendance,
+            )
+            timer.daemon = True
+            self._enrollment_idle_timer = timer
+            self._enrollment_idle_deadline = (
+                time.monotonic() + ENROLLMENT_SESSION_IDLE_TIMEOUT_SECONDS
+            )
+        timer.start()
+
+    def note_enrollment_activity(self):
+        """Ghi nhận lúc quản trị viên nhập hồ sơ tiếp theo."""
+        self._restart_enrollment_idle_timer()
+        self._publish()
+        return self.snapshot()
+
+    def start_enrollment_scan(self):
+        """Cho phép camera thu mẫu sau lệnh chủ động của quản trị viên."""
+        if self._enrollment_saving:
+            raise ValueError("Hệ thống đang lưu khuôn mặt")
+        if self.current_page != "add_employee":
+            self.switch_mode("add_employee")
+        self._restart_enrollment_idle_timer()
+        self._enrollment_scan_armed = True
+        wait_for_face_leave = bool(self._enrollment_waiting_for_face_leave)
+        self._reset_enrollment_scan(
+            clear_preview=False,
+            wait_for_face_leave=wait_for_face_leave,
+        )
+        self.enrollment_result = {
+            "state": "idle",
+            "title": "Chờ khuôn mặt hợp lệ",
+            "message": "Giữ yên khuôn mặt trong 3 giây để hệ thống tự động quét.",
+        }
+        self._publish()
+        return self.snapshot()
+
+    def finish_enrollment_session(self):
+        """Kết thúc phiên hàng loạt và đưa kiosk về điểm danh."""
+        if self._enrollment_saving:
+            raise ValueError("Hãy chờ lưu khuôn mặt xong trước khi kết thúc phiên")
+        return self.switch_mode("attendance")
+
+    def _auto_return_to_attendance(self):
+        with self._lock:
+            self._enrollment_idle_timer = None
+            self._enrollment_idle_deadline = None
+            should_return = bool(
+                self._enrollment_continuous_session
+                and self.current_page == "add_employee"
+                and not self._enrollment_saving
+                and not self.enrollment_capture_ready
+            )
+        if should_return:
+            print(
+                "[ENROLLMENT] Không có thao tác đăng ký trong "
+                f"{ENROLLMENT_SESSION_IDLE_TIMEOUT_SECONDS:.0f} giây; "
+                "tự động trở về điểm danh."
+            )
+            self.switch_mode("attendance")
 
     def _on_enrollment_face_left(self):
         """Mở lượt đăng ký mới sau khi người của lượt trước rời camera."""
@@ -581,6 +709,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 "Giữ yên khuôn mặt trong 3 giây để hệ thống tự động quét."
             ),
         }
+        if self._enrollment_continuous_session:
+            self._restart_enrollment_idle_timer()
         self._publish()
         return self.snapshot()
 
@@ -643,7 +773,19 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 "image_url": self._employee_image_url(emp_id, profile),
                 "timestamp": profile.get("timestamp"),
             })
-        records.sort(key=lambda item: item["id"].casefold())
+        def alphabetical_key(value):
+            normalized = unicodedata.normalize("NFKD", str(value).casefold())
+            normalized = normalized.replace("đ", "d")
+            return "".join(
+                char for char in normalized if not unicodedata.combining(char)
+            )
+
+        # Ưu tiên hồ sơ đang nhận diện; trong từng nhóm sắp tên A-Z.
+        records.sort(key=lambda item: (
+            not item["recognition_enabled"],
+            alphabetical_key(item["name"]),
+            alphabetical_key(item["id"]),
+        ))
         total = len(records)
         page_size = max(1, min(int(page_size), 100))
         pages = max(1, (total + page_size - 1) // page_size)

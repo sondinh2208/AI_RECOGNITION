@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -16,6 +17,18 @@ HEALTH_URL = "http://127.0.0.1:8766/health"
 STREAM_URL = "http://127.0.0.1:8766/stream"
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Khoi dong FaceCheck voi camera ESP32-S3 qua USB-OTG",
+    )
+    parser.add_argument(
+        "--simulate-display",
+        action="store_true",
+        help="Mo them cua so TFT 3.5 inch 480x320 ben canh giao dien quan tri",
+    )
+    return parser.parse_args(argv)
+
+
 def bridge_ready() -> bool:
     try:
         with urllib.request.urlopen(HEALTH_URL, timeout=1) as response:
@@ -25,7 +38,7 @@ def bridge_ready() -> bool:
         return False
 
 
-def main() -> int:
+def main(simulate_display=False) -> int:
     bridge = None
     if not bridge_ready():
         bridge = subprocess.Popen(
@@ -49,9 +62,12 @@ def main() -> int:
     environment = os.environ.copy()
     environment["FACECHECK_CAMERA_URL"] = STREAM_URL
     environment["FACECHECK_CAMERA_PROFILE"] = "embedded_ov3660"
+    command = [sys.executable, str(ROOT / "web_admin.py")]
+    if simulate_display:
+        command.append("--simulate-display")
     try:
         return subprocess.call(
-            [sys.executable, str(ROOT / "web_admin.py")],
+            command,
             cwd=ROOT,
             env=environment,
         )
@@ -65,4 +81,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    arguments = parse_args()
+    raise SystemExit(main(simulate_display=arguments.simulate_display))

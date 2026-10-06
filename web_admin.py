@@ -55,9 +55,10 @@ def _window_specs(simulate_pi=False):
 def _parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Khoi dong giao dien FaceCheck")
     parser.add_argument(
-        "--simulate-pi",
+        "--simulate-display", "--simulate-pi",
+        dest="simulate_display",
         action="store_true",
-        help="Mo dong thoi Kiosk 3.5 inch 480x320 va cua so quan tri tren laptop",
+        help="Mo dong thoi man TFT 3.5 inch 480x320 va cua so quan tri tren laptop",
     )
     return parser.parse_args(argv)
 
@@ -172,4 +173,4 @@ def main(simulate_pi=False):
 
 
 if __name__ == "__main__":
-    main(simulate_pi=_parse_args().simulate_pi)
+    main(simulate_pi=_parse_args().simulate_display)
