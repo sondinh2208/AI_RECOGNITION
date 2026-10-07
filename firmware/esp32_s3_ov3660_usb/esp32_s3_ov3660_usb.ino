@@ -24,7 +24,9 @@
 namespace {
 USBCDC CameraUSB;
 
-constexpr uint32_t kFrameIntervalMs = 100;  // 10 FPS on dinh qua USB.
+// 8 FPS la diem can bang cho OV3660: du muot de can chinh khuon mat, dong
+// thoi giam tai DMA/JPEG va khong tao hang doi khi AI + TFT cham hon camera.
+constexpr uint32_t kFrameIntervalMs = 125;
 constexpr size_t kUsbChunkSize = 2048;
 constexpr unsigned long kWriteTimeoutMs = 1500;
 uint32_t frame_id = 0;

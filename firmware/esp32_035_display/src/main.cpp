@@ -29,7 +29,9 @@ class FaceCheckDisplay : public lgfx::LGFX_Device {
     auto busConfig = bus_.config();
     busConfig.spi_host = HSPI_HOST;
     busConfig.spi_mode = 0;
-    busConfig.freq_write = 40000000;
+    // Day du 480x320 can bang thong SPI cao. Bo ST7796 nay dung duong noi
+    // ngan tren PCB nen thu muc 80 MHz de dua toc do hien thi ve 8-10 FPS.
+    busConfig.freq_write = 80000000;
     busConfig.freq_read = 16000000;
     busConfig.spi_3wire = true;
     busConfig.use_lock = true;
@@ -254,22 +256,49 @@ bool fetchState() {
 }
 
 bool fetchAndDrawFrame() {
-  if (!frameHttpReady) {
-    frameHttp.setConnectTimeout(500);
-    frameHttp.setTimeout(900);
-    frameHttp.setReuse(true);
-    frameClient.setNoDelay(true);
-    frameHttpReady = frameHttp.begin(frameClient, String(FACECHECK_SERVER) + "/frame.jpg");
-  }
-  if (!frameHttpReady) return false;
-  frameHttp.addHeader("X-FaceCheck-Token", FACECHECK_DISPLAY_TOKEN);
+  // Moi lan ve chi lay anh moi nhat. Khong dung MJPEG dai han vi TFT ve cham
+  // hon server se lam frame cu xep hang trong TCP va tao do tre nhieu giay.
   const uint32_t requestStarted = millis();
+  frameHttp.end();
+  frameHttp.setConnectTimeout(500);
+  frameHttp.setTimeout(1000);
+  // Giu TCP keep-alive de khong ton 30-50 ms bat tay lai moi frame. Khac voi
+  // MJPEG, moi GET van chi tra ve duy nhat anh moi nhat nen khong tao backlog.
+  frameHttp.setReuse(true);
+  frameClient.setNoDelay(true);
+  frameClient.setTimeout(1000);
+  if (!frameHttp.begin(frameClient, String(FACECHECK_SERVER) + "/frame.jpg")) {
+    return false;
+  }
+
+  static const char* headerKeys[] = {
+      "X-FaceCheck-Mode", "X-FaceCheck-State", "X-FaceCheck-Title",
+      "X-FaceCheck-Name", "X-FaceCheck-Employee", "X-FaceCheck-Fps",
+      "X-FaceCheck-Brightness", "X-FaceCheck-Sample-Count",
+      "X-FaceCheck-Sample-Target"};
+  frameHttp.collectHeaders(headerKeys, sizeof(headerKeys) / sizeof(headerKeys[0]));
+  frameHttp.addHeader("X-FaceCheck-Token", FACECHECK_DISPLAY_TOKEN);
   const int code = frameHttp.GET();
-  const uint32_t headersReceived = millis();
-  const int length = frameHttp.getSize();
-  if (code != HTTP_CODE_OK || length <= 0 || length > 110000) {
+  if (code != HTTP_CODE_OK) {
     frameHttp.end();
-    frameHttpReady = false;
+    return false;
+  }
+
+  const String modeBeforeFrame = kiosk.mode;
+  kiosk.mode = frameHttp.header("X-FaceCheck-Mode");
+  kiosk.state = frameHttp.header("X-FaceCheck-State");
+  kiosk.title = frameHttp.header("X-FaceCheck-Title");
+  kiosk.name = frameHttp.header("X-FaceCheck-Name");
+  kiosk.employeeId = frameHttp.header("X-FaceCheck-Employee");
+  kiosk.fps = frameHttp.header("X-FaceCheck-Fps").toFloat();
+  kiosk.brightness = frameHttp.header("X-FaceCheck-Brightness").toFloat();
+  kiosk.sampleCount = frameHttp.header("X-FaceCheck-Sample-Count").toInt();
+  kiosk.sampleTarget = frameHttp.header("X-FaceCheck-Sample-Target").toInt();
+  const int length = frameHttp.getSize();
+  WiFiClient* stream = frameHttp.getStreamPtr();
+  const uint32_t headersReceived = millis();
+  if (stream == nullptr || length <= 0 || length > 110000) {
+    frameHttp.end();
     return false;
   }
 
@@ -277,12 +306,17 @@ bool fetchAndDrawFrame() {
   if (jpeg == nullptr) {
     return false;
   }
-  WiFiClient* stream = frameHttp.getStreamPtr();
   const size_t received = stream->readBytes(jpeg, length);
   const uint32_t jpegReceived = millis();
   bool drawn = false;
   if (received == static_cast<size_t>(length)) {
     const bool enrollment = isEnrollmentMode();
+    if (modeBeforeFrame != kiosk.mode) {
+      display.fillScreen(TFT_BLACK);
+      frameAreaPrepared = false;
+      previousStatusKey = "";
+      previousMode = kiosk.mode;
+    }
     if (!frameAreaPrepared) {
       display.fillScreen(TFT_BLACK);
       frameAreaPrepared = true;
@@ -291,15 +325,23 @@ bool fetchAndDrawFrame() {
       }
     }
     if (enrollment) {
-      // Che do dang ky: Ve toan man hinh 480x320 (khong co thanh trang thai che)
       drawn = display.drawJpg(jpeg, length, 0, 0, 480, 320);
     } else {
       // Che do diem danh / nhan dien: Ve 480x250, danh 70px duoi cho thanh trang thai
       drawn = display.drawJpg(jpeg, length, 0, 0, 480, 250);
     }
+    if (drawn && !enrollment) {
+      String key = kiosk.mode + kiosk.state + kiosk.title + kiosk.name
+          + kiosk.employeeId + String(kiosk.sampleCount);
+      if (key != previousStatusKey) {
+        previousStatusKey = key;
+        drawStatusPanel();
+      }
+    }
   }
   const uint32_t frameDrawn = millis();
   free(jpeg);
+  frameHttp.end();
   if (drawn) {
     const uint32_t now = millis();
     lastSuccessfulRequest = now;
@@ -374,29 +416,8 @@ void loop() {
     return;
   }
 
-  // Cap nhat trang thai tu laptop
-  if (now - lastStateFetch >= 500) {
-    lastStateFetch = now;
-    if (fetchState()) {
-      if (!isEnrollmentMode()) {
-        // Che do diem danh / nhan dien: Luon giu khung panel trang thai o duoi!
-        String key = kiosk.mode + kiosk.state + kiosk.title + kiosk.name
-            + String(static_cast<int>(renderedFpsValue * 10));
-        if (key != previousStatusKey || previousMode == "add_employee") {
-          previousStatusKey = key;
-          drawStatusPanel();
-        }
-      } else if (previousMode != "add_employee") {
-        // Chuyen tu diem danh sang dang ky: Xoa panel cu de camera phu kin toan man hinh 480x320
-        display.fillScreen(TFT_BLACK);
-        previousStatusKey = "";
-      }
-      previousMode = kiosk.mode;
-    }
-  }
-
-  // Thu lay toi da ~14 FPS de man hinh co the bam sat nguon camera 8-10 FPS.
-  if (now - lastFrameFetch >= 70) {
+  // Nhip muc tieu 8 FPS. Moi lan chi lay frame moi nhat nen khong tich luy tre.
+  if (now - lastFrameFetch >= 125) {
     lastFrameFetch = now;
     fetchAndDrawFrame();
   }

@@ -57,7 +57,9 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._display_cached_frame_id = -1
         self._display_cached_jpeg = None
         self._display_jpeg_encoded_at = 0.0
-        self._display_jpeg_min_interval = 1.0 / 10.0
+        # Luong rieng cho TFT dong bo voi camera 8 FPS. Khong phat nhanh hon
+        # toc do man hinh ve duoc, tranh frame cu ton trong bo dem TCP.
+        self._display_jpeg_min_interval = 1.0 / 8.0
 
         self.kiosk_running = False
         self.is_recognizing = False
@@ -311,8 +313,17 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             # - Dang ky: 480x320 (toan man hinh, khong con vung den, mat va cam giong y het laptop)
             resized = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
 
+            # JPEG nhe hon giup ESP32 tai va giai ma nhanh hon. Chat luong AI
+            # khong bi anh huong vi AI van xu ly frame goc o tren.
             ok, encoded = cv2.imencode(
-                ".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 55]
+                ".jpg",
+                resized,
+                [
+                    cv2.IMWRITE_JPEG_QUALITY,
+                    26,
+                    cv2.IMWRITE_JPEG_OPTIMIZE,
+                    1,
+                ],
             )
             if not ok:
                 return frame_id, None

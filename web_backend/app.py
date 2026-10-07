@@ -49,13 +49,75 @@ async def display_frame(_request):
     frame_id, frame = runtime.display_jpeg_frame()
     if not frame:
         return Response(status_code=204)
+    state = runtime.display_snapshot()
+
+    def header_value(key, default=""):
+        return str(state.get(key, default)).replace("\r", " ").replace("\n", " ")
+
     return Response(
         frame,
         media_type="image/jpeg",
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate",
             "X-Frame-Id": str(frame_id),
+            "X-FaceCheck-Mode": header_value("mode", "idle"),
+            "X-FaceCheck-State": header_value("state", "idle"),
+            "X-FaceCheck-Title": header_value("title"),
+            "X-FaceCheck-Name": header_value("name"),
+            "X-FaceCheck-Employee": header_value("employee_id"),
+            "X-FaceCheck-Fps": header_value("fps", 0),
+            "X-FaceCheck-Brightness": header_value("brightness", 0),
+            "X-FaceCheck-Sample-Count": header_value("sample_count", 0),
+            "X-FaceCheck-Sample-Target": header_value("sample_target", 0),
         },
+    )
+
+
+async def display_stream(request):
+    """Luong MJPEG lien tuc cho TFT, tranh tao mot HTTP request moi moi frame."""
+    if not _display_authorized(request):
+        return JSONResponse({"ok": False, "error": "Forbidden"}, status_code=403)
+
+    async def frames():
+        last_frame_id = -1
+        try:
+            while True:
+                frame_id, frame = runtime.display_jpeg_frame()
+                if frame and frame_id != last_frame_id:
+                    last_frame_id = frame_id
+                    state = runtime.display_snapshot()
+                    # display_snapshot da chuyen chuoi ve ASCII. Loai CR/LF de
+                    # cac gia tri an toan khi dua vao multipart header.
+                    def header_value(key, default=""):
+                        return str(state.get(key, default)).replace("\r", " ").replace("\n", " ")
+
+                    metadata = (
+                        f"X-FaceCheck-Mode: {header_value('mode', 'idle')}\r\n"
+                        f"X-FaceCheck-State: {header_value('state', 'idle')}\r\n"
+                        f"X-FaceCheck-Title: {header_value('title')}\r\n"
+                        f"X-FaceCheck-Name: {header_value('name')}\r\n"
+                        f"X-FaceCheck-Employee: {header_value('employee_id')}\r\n"
+                        f"X-FaceCheck-Fps: {header_value('fps', 0)}\r\n"
+                        f"X-FaceCheck-Brightness: {header_value('brightness', 0)}\r\n"
+                        f"X-FaceCheck-Sample-Count: {header_value('sample_count', 0)}\r\n"
+                        f"X-FaceCheck-Sample-Target: {header_value('sample_target', 0)}\r\n"
+                    ).encode("ascii", "replace")
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        + metadata
+                        + f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii")
+                        + frame
+                        + b"\r\n"
+                    )
+                await asyncio.sleep(0.005)
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
+
+    return StreamingResponse(
+        frames(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
     )
 
 
@@ -265,4 +327,5 @@ display_app = Starlette(routes=[
     Route("/health", display_health),
     Route("/state", display_state),
     Route("/frame.jpg", display_frame),
+    Route("/stream.mjpg", display_stream),
 ])
