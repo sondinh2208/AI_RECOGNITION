@@ -35,6 +35,7 @@ from config import (
     KIOSK_PROCESSED_FACE_ABSENCE_SECONDS,
     KIOSK_ATTENDANCE_COOLDOWN_SECONDS, KIOSK_UNKNOWN_CONFIRMATIONS,
     KIOSK_DETECTION_INTERVAL_SECONDS, CAMERA_STREAM_URL, CAMERA_SOURCES,
+    CAMERA_HORIZONTAL_FLIP,
 )
 from ai_engine import (
     detect_faces, calculate_cosine_distance, draw_kiosk_face_box,
@@ -813,7 +814,8 @@ class AttendanceMixin:
                 print("[CAMERA] first frame")
                 first_frame_logged = True
                 
-            frame = cv2.flip(frame, 1)
+            if CAMERA_HORIZONTAL_FLIP:
+                frame = cv2.flip(frame, 1)
             clean_frame = frame.copy()
             fh, fw = frame.shape[:2]
             

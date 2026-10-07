@@ -35,6 +35,14 @@ CAMERA_PROFILE = os.environ.get(
 ).strip().lower()
 IS_EMBEDDED_CAMERA = CAMERA_PROFILE == "embedded_ov3660"
 
+# Cấu hình đảo gương (Horizontal Flip):
+# Đối với webcam laptop tích hợp sẵn thì lật gương (True),
+# đối với camera nhúng/ngoài (OV2640/OV3660) thì mặc định tắt lật gương (False).
+_default_flip = "0" if IS_EMBEDDED_CAMERA else "1"
+CAMERA_HORIZONTAL_FLIP = os.environ.get(
+    "FACECHECK_CAMERA_FLIP", _default_flip
+).strip().lower() in ("1", "true", "yes")
+
 
 # ============================================
 # CẤU HÌNH AI MODELS

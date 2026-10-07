@@ -21,6 +21,7 @@ from config import (
     ENROLLMENT_VALID_STREAK, ENROLLMENT_INVALID_STREAK,
     ENROLLMENT_MIN_SAMPLES, FACE_CROP_PADDING_RATIO,
     CTK_SUCCESS, CTK_DANGER, CTK_WARNING,
+    CAMERA_HORIZONTAL_FLIP,
 )
 from ai_engine import detect_faces, check_face_constraints, measure_face_brightness
 from ekyc_renderer import compute_ekyc_layout, create_rounded_rect_mask, render_full_hud
@@ -154,7 +155,8 @@ class CameraMixin:
                 continue
             consecutive_read_failures = 0
                 
-            frame = cv2.flip(frame, 1)
+            if CAMERA_HORIZONTAL_FLIP:
+                frame = cv2.flip(frame, 1)
             self.current_frame = frame.copy()  # Bản sạch để chụp
             
             fw, fh = self.frame_width, self.frame_height

@@ -20,7 +20,7 @@ GPU: NVIDIA CUDA (RTX 40-series)
 
 import cv2
 import mediapipe as mp
-from config import KIOSK_WINDOW_NAME, CAMERA_DEVICE_IDS, CAMERA_SOURCES
+from config import KIOSK_WINDOW_NAME, CAMERA_DEVICE_IDS, CAMERA_SOURCES, CAMERA_HORIZONTAL_FLIP
 from ai_engine import (
     check_gpu,
     load_face_model, load_person_model, load_mediapipe_detector,
@@ -118,7 +118,8 @@ def main():
             print("[ERROR] Mất kết nối camera!")
             break
         
-        frame = cv2.flip(frame, 1)
+        if CAMERA_HORIZONTAL_FLIP:
+            frame = cv2.flip(frame, 1)
         
         # --- AI Inference ---
         faces = detect_faces(face_model, frame, device)
