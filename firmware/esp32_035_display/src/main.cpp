@@ -110,16 +110,16 @@ String previousMode = "idle";
 bool isEnrollmentMode() {
   return kiosk.mode == "add_employee";
 }
-HTTPClient stateHttp;
 HTTPClient frameHttp;
-WiFiClient stateClient;
 WiFiClient frameClient;
-bool stateHttpReady = false;
 bool frameHttpReady = false;
 bool frameAreaPrepared = false;
 uint32_t totalHeaderMs = 0;
 uint32_t totalReadMs = 0;
 uint32_t totalDrawMs = 0;
+
+constexpr size_t kMaxJpegSize = 40960;
+static uint8_t s_jpegBuffer[kMaxJpegSize];
 
 void centerText(const String& text, int y, int size, uint32_t color) {
   display.setFont(&fonts::Font0);
@@ -219,68 +219,31 @@ void drawStatusPanel() {
   }
 }
 
-bool fetchState() {
-  if (!stateHttpReady) {
-    stateHttp.setConnectTimeout(500);
-    stateHttp.setTimeout(700);
-    stateHttp.setReuse(true);
-    stateClient.setNoDelay(true);
-    stateHttpReady = stateHttp.begin(stateClient, String(FACECHECK_SERVER) + "/state");
-  }
-  if (!stateHttpReady) return false;
-  stateHttp.addHeader("X-FaceCheck-Token", FACECHECK_DISPLAY_TOKEN);
-  const int code = stateHttp.GET();
-  if (code != HTTP_CODE_OK) {
-    stateHttp.end();
-    stateHttpReady = false;
-    return false;
-  }
-  JsonDocument document;
-  const DeserializationError error = deserializeJson(document, stateHttp.getStream());
-  if (error) return false;
-
-  kiosk.mode = document["mode"] | "idle";
-  kiosk.state = document["state"] | "idle";
-  kiosk.title = document["title"] | "FaceCheck";
-  kiosk.message = document["message"] | "";
-  kiosk.name = document["name"] | "";
-  kiosk.employeeId = document["employee_id"] | "";
-  kiosk.fps = document["fps"] | 0.0f;
-  kiosk.brightness = document["brightness"] | 0.0f;
-  kiosk.lightOk = document["light_ok"] | false;
-  kiosk.faces = document["faces"] | 0;
-  kiosk.sampleCount = document["sample_count"] | 0;
-  kiosk.sampleTarget = document["sample_target"] | 0;
-  lastSuccessfulRequest = millis();
-  return true;
-}
-
 bool fetchAndDrawFrame() {
-  // Moi lan ve chi lay anh moi nhat. Khong dung MJPEG dai han vi TFT ve cham
-  // hon server se lam frame cu xep hang trong TCP va tao do tre nhieu giay.
   const uint32_t requestStarted = millis();
-  frameHttp.end();
-  frameHttp.setConnectTimeout(500);
-  frameHttp.setTimeout(1000);
-  // Giu TCP keep-alive de khong ton 30-50 ms bat tay lai moi frame. Khac voi
-  // MJPEG, moi GET van chi tra ve duy nhat anh moi nhat nen khong tao backlog.
-  frameHttp.setReuse(true);
-  frameClient.setNoDelay(true);
-  frameClient.setTimeout(1000);
-  if (!frameHttp.begin(frameClient, String(FACECHECK_SERVER) + "/frame.jpg")) {
-    return false;
+  if (!frameHttpReady) {
+    frameHttp.setConnectTimeout(800);
+    frameHttp.setTimeout(1200);
+    frameHttp.setReuse(true);
+    frameClient.setNoDelay(true);
+    frameClient.setTimeout(1200);
+    static const char* headerKeys[] = {
+        "X-FaceCheck-Mode", "X-FaceCheck-State", "X-FaceCheck-Title",
+        "X-FaceCheck-Name", "X-FaceCheck-Employee", "X-FaceCheck-Fps",
+        "X-FaceCheck-Brightness", "X-FaceCheck-Sample-Count",
+        "X-FaceCheck-Sample-Target"};
+    frameHttp.collectHeaders(headerKeys, sizeof(headerKeys) / sizeof(headerKeys[0]));
+    if (!frameHttp.begin(frameClient, String(FACECHECK_SERVER) + "/frame.jpg")) {
+      return false;
+    }
+    frameHttpReady = true;
   }
 
-  static const char* headerKeys[] = {
-      "X-FaceCheck-Mode", "X-FaceCheck-State", "X-FaceCheck-Title",
-      "X-FaceCheck-Name", "X-FaceCheck-Employee", "X-FaceCheck-Fps",
-      "X-FaceCheck-Brightness", "X-FaceCheck-Sample-Count",
-      "X-FaceCheck-Sample-Target"};
-  frameHttp.collectHeaders(headerKeys, sizeof(headerKeys) / sizeof(headerKeys[0]));
   frameHttp.addHeader("X-FaceCheck-Token", FACECHECK_DISPLAY_TOKEN);
   const int code = frameHttp.GET();
   if (code != HTTP_CODE_OK) {
     frameHttp.end();
+    frameHttpReady = false;
     return false;
   }
 
@@ -297,16 +260,13 @@ bool fetchAndDrawFrame() {
   const int length = frameHttp.getSize();
   WiFiClient* stream = frameHttp.getStreamPtr();
   const uint32_t headersReceived = millis();
-  if (stream == nullptr || length <= 0 || length > 110000) {
+  if (stream == nullptr || length <= 0 || static_cast<size_t>(length) > sizeof(s_jpegBuffer)) {
     frameHttp.end();
+    frameHttpReady = false;
     return false;
   }
 
-  uint8_t* jpeg = static_cast<uint8_t*>(malloc(length));
-  if (jpeg == nullptr) {
-    return false;
-  }
-  const size_t received = stream->readBytes(jpeg, length);
+  const size_t received = stream->readBytes(s_jpegBuffer, length);
   const uint32_t jpegReceived = millis();
   bool drawn = false;
   if (received == static_cast<size_t>(length)) {
@@ -325,10 +285,9 @@ bool fetchAndDrawFrame() {
       }
     }
     if (enrollment) {
-      drawn = display.drawJpg(jpeg, length, 0, 0, 480, 320);
+      drawn = display.drawJpg(s_jpegBuffer, length, 0, 0, 480, 320);
     } else {
-      // Che do diem danh / nhan dien: Ve 480x250, danh 70px duoi cho thanh trang thai
-      drawn = display.drawJpg(jpeg, length, 0, 0, 480, 250);
+      drawn = display.drawJpg(s_jpegBuffer, length, 0, 0, 480, 250);
     }
     if (drawn && !enrollment) {
       String key = kiosk.mode + kiosk.state + kiosk.title + kiosk.name
@@ -338,10 +297,14 @@ bool fetchAndDrawFrame() {
         drawStatusPanel();
       }
     }
+  } else {
+    // Neu doc byte thieu thi frame TCP bi lech, phai reset socket
+    frameHttp.end();
+    frameHttpReady = false;
   }
   const uint32_t frameDrawn = millis();
-  free(jpeg);
-  frameHttp.end();
+  // Khong goi frameHttp.end() o day: Giu TCP Keep-Alive giup giam do tre 30-50ms va tranh tran TIME_WAIT
+
   if (drawn) {
     const uint32_t now = millis();
     lastSuccessfulRequest = now;
@@ -372,22 +335,21 @@ bool fetchAndDrawFrame() {
 
 void ensureWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
+  frameHttp.end();
+  frameHttpReady = false;
   WiFi.disconnect(false);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   drawConnectionScreen("Dang ket noi Wi-Fi 2.4 GHz");
   const uint32_t started = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - started < 12000) {
-    delay(250);
+  while (WiFi.status() != WL_CONNECTED && millis() - started < 8000) {
+    delay(200);
   }
   if (WiFi.status() == WL_CONNECTED) {
     WiFi.setSleep(false);
     Serial.printf("[WIFI] %s | RSSI=%d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
     drawConnectionScreen("Wi-Fi OK, dang cho FaceCheck");
+    lastSuccessfulRequest = millis();
   } else {
-    stateHttp.end();
-    frameHttp.end();
-    stateHttpReady = false;
-    frameHttpReady = false;
     Serial.printf("[WIFI] Khong ket noi duoc SSID: %s | status=%d\n", WIFI_SSID, WiFi.status());
     drawConnectionScreen("Khong ket noi duoc Wi-Fi");
   }
@@ -424,7 +386,9 @@ void loop() {
 
   const uint32_t connectionCheckNow = millis();
   if (lastSuccessfulRequest != 0 &&
-      connectionCheckNow - lastSuccessfulRequest > 3500) {
+      connectionCheckNow - lastSuccessfulRequest > 6000) {
+    frameHttp.end();
+    frameHttpReady = false;
     drawConnectionScreen("Mat ket noi FaceCheck");
     lastSuccessfulRequest = 0;
   }

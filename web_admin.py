@@ -77,12 +77,18 @@ def _display_host():
     configured = os.getenv("FACECHECK_DISPLAY_HOST", "").strip()
     if configured:
         return configured
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        probe.connect(("192.168.1.1", 9))
-        return probe.getsockname()[0]
-    finally:
-        probe.close()
+    for target in [("8.8.8.8", 80), ("1.1.1.1", 80), ("192.168.1.1", 9)]:
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.connect(target)
+            ip = probe.getsockname()[0]
+            probe.close()
+            if ip and not ip.startswith("127."):
+                return ip
+        except OSError:
+            pass
+    return "127.0.0.1"
+
 
 
 def _is_facecheck_server(timeout=0.4):
@@ -145,15 +151,20 @@ def main(simulate_pi=False):
             server_thread.join(timeout=5)
             listener.close()
             raise RuntimeError("Backend FaceCheck không khởi động trong thời gian cho phép")
+        display_bind = "0.0.0.0"
         display_host = _display_host()
-        display_listener = _reserve_server_socket(display_host, DISPLAY_PORT)
+        display_listener = _reserve_server_socket(display_bind, DISPLAY_PORT)
+        if display_listener is None:
+            # Fallback to display_host if 0.0.0.0 fails
+            display_bind = display_host
+            display_listener = _reserve_server_socket(display_bind, DISPLAY_PORT)
         if display_listener is None:
             raise RuntimeError(
                 f"Khong the mo cong man hinh {display_host}:{DISPLAY_PORT}. "
                 "Hay kiem tra dia chi Wi-Fi hoac chuong trinh dang chiem cong."
             )
         display_server = _make_server(
-            "web_backend.app:display_app", display_host, DISPLAY_PORT
+            "web_backend.app:display_app", display_bind, DISPLAY_PORT
         )
         display_thread = threading.Thread(
             target=display_server.run,

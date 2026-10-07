@@ -34,7 +34,7 @@ from config import (
     KIOSK_RESULT_HOLD_SECONDS, KIOSK_PROCESSED_FACE_TTL_SECONDS,
     KIOSK_PROCESSED_FACE_ABSENCE_SECONDS,
     KIOSK_ATTENDANCE_COOLDOWN_SECONDS, KIOSK_UNKNOWN_CONFIRMATIONS,
-    KIOSK_DETECTION_INTERVAL_SECONDS,
+    KIOSK_DETECTION_INTERVAL_SECONDS, CAMERA_STREAM_URL, CAMERA_SOURCES,
 )
 from ai_engine import (
     detect_faces, calculate_cosine_distance, draw_kiosk_face_box,
@@ -772,6 +772,8 @@ class AttendanceMixin:
         prev_time = time.time()
         smoothed_fps = 0.0
         first_frame_logged = False
+        consecutive_read_failures = 0
+        last_reconnect_attempt = 0.0
         last_detection_at = 0.0
         cached_faces = []
 
@@ -785,8 +787,27 @@ class AttendanceMixin:
                 
             ret, frame = self.camera_cap.read()
             if not ret or frame is None:
-                time.sleep(0.02)
+                consecutive_read_failures += 1
+                now_fail = time.time()
+                if consecutive_read_failures > 20 and (now_fail - last_reconnect_attempt > 2.0):
+                    last_reconnect_attempt = now_fail
+                    try:
+                        self.camera_cap.release()
+                    except Exception:
+                        pass
+                    cam_source = CAMERA_STREAM_URL if CAMERA_STREAM_URL else (CAMERA_SOURCES[0] if CAMERA_SOURCES else 0)
+                    backend = cv2.CAP_FFMPEG if isinstance(cam_source, str) else cv2.CAP_ANY
+                    new_cap = cv2.VideoCapture(cam_source, backend)
+                    if not new_cap.isOpened():
+                        new_cap = cv2.VideoCapture(cam_source)
+                    if new_cap.isOpened():
+                        new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        self.camera_cap = new_cap
+                        consecutive_read_failures = 0
+                        print(f"[CAMERA] Da tu dong ket noi lai camera: {cam_source}")
+                time.sleep(0.05)
                 continue
+            consecutive_read_failures = 0
                 
             if not first_frame_logged:
                 print("[CAMERA] first frame")

@@ -123,14 +123,36 @@ class CameraMixin:
         mp_results = None
         last_detection_at = 0.0
         
+        consecutive_read_failures = 0
+        last_reconnect_attempt = 0.0
+        
         while self.enrollment_running and self.camera_running:
             if self.camera_cap is None:
                 break
                 
             ret, frame = self.camera_cap.read()
-            if not ret:
-                time.sleep(0.1)
+            if not ret or frame is None:
+                consecutive_read_failures += 1
+                now_fail = time.time()
+                if consecutive_read_failures > 20 and (now_fail - last_reconnect_attempt > 2.0):
+                    last_reconnect_attempt = now_fail
+                    try:
+                        self.camera_cap.release()
+                    except Exception:
+                        pass
+                    cam_source = CAMERA_SOURCES[0] if CAMERA_SOURCES else 0
+                    backend = cv2.CAP_FFMPEG if isinstance(cam_source, str) else cv2.CAP_ANY
+                    new_cap = cv2.VideoCapture(cam_source, backend)
+                    if not new_cap.isOpened():
+                        new_cap = cv2.VideoCapture(cam_source)
+                    if new_cap.isOpened():
+                        new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        self.camera_cap = new_cap
+                        consecutive_read_failures = 0
+                        print(f"[CAMERA] Da tu dong ket noi lai camera: {cam_source}")
+                time.sleep(0.05)
                 continue
+            consecutive_read_failures = 0
                 
             frame = cv2.flip(frame, 1)
             self.current_frame = frame.copy()  # Bản sạch để chụp

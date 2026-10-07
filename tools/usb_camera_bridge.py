@@ -42,42 +42,69 @@ class FrameStore:
         self.connected = False
         self.protocol = ""
         self.filtered_frames = 0
-        self._last_luma: float | None = None
-        self._pending_luma: float | None = None
+        self._last_y: float | None = None
+        self._last_cr: float | None = None
+        self._last_cb: float | None = None
+        self._pending_y: float | None = None
+        self._pending_cr: float | None = None
+        self._pending_cb: float | None = None
 
     def accept_visual_frame(self, jpeg: bytes) -> bool:
-        """Bo mot frame chop sang don le, khong tao them hang doi/tre hinh.
+        """Bo frame chop sang hoac chop mau don le, khong tao them hang doi/tre hinh.
 
-        Neu anh sang thay doi that, frame ke tiep se co muc sang gan frame dang
-        cho va duoc chap nhan. Do do chi mat toi da mot frame (125 ms o 8 FPS).
+        Neu anh sang/mau sac thay doi that, frame ke tiep se co muc tuong tu
+        va duoc chap nhan ngay (do tre toi da 1 frame = 125 ms o 8 FPS).
         """
         if cv2 is None or np is None:
             return True
         encoded = np.frombuffer(jpeg, dtype=np.uint8)
-        image = cv2.imdecode(encoded, cv2.IMREAD_GRAYSCALE)
+        image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if image is None:
             return False
         preview = cv2.resize(image, (32, 24), interpolation=cv2.INTER_AREA)
-        luma = float(np.median(preview))
+        ycrcb = cv2.cvtColor(preview, cv2.COLOR_BGR2YCrCb)
+        y = float(np.median(ycrcb[:, :, 0]))
+        cr = float(np.median(ycrcb[:, :, 1]))
+        cb = float(np.median(ycrcb[:, :, 2]))
 
-        if self._last_luma is None:
-            self._last_luma = luma
+        if self._last_y is None:
+            self._last_y = y
+            self._last_cr = cr
+            self._last_cb = cb
             return True
 
-        # Nguong 42/255 chi bat cac cu nhay sang rat ro, khong can thiep vao
-        # chuyen dong/doi tuong vao khung hinh thong thuong.
-        if abs(luma - self._last_luma) <= 42.0:
-            self._last_luma = luma
-            self._pending_luma = None
+        # Nguong phoi sang 42/255 va lech mau Cr/Cb 14/255 chi bat cac cu nhay
+        # bat thuong, khong anh huong den nguoi chuyen dong binh thuong.
+        y_diff = abs(y - self._last_y)
+        color_diff = max(abs(cr - self._last_cr), abs(cb - self._last_cb))
+
+        if y_diff <= 42.0 and color_diff <= 14.0:
+            self._last_y = y
+            self._last_cr = cr
+            self._last_cb = cb
+            self._pending_y = None
+            self._pending_cr = None
+            self._pending_cb = None
             return True
 
-        # Hai frame lien tiep cung sang/toi: day la thay doi moi truong that.
-        if self._pending_luma is not None and abs(luma - self._pending_luma) <= 18.0:
-            self._last_luma = luma
-            self._pending_luma = None
+        # Hai frame lien tiep cung sang/toi hoac doi mau: day la thay doi moi truong that.
+        if (
+            self._pending_y is not None
+            and abs(y - self._pending_y) <= 18.0
+            and abs(cr - self._pending_cr) <= 8.0
+            and abs(cb - self._pending_cb) <= 8.0
+        ):
+            self._last_y = y
+            self._last_cr = cr
+            self._last_cb = cb
+            self._pending_y = None
+            self._pending_cr = None
+            self._pending_cb = None
             return True
 
-        self._pending_luma = luma
+        self._pending_y = y
+        self._pending_cr = cr
+        self._pending_cb = cb
         self.filtered_frames += 1
         return False
 
@@ -85,7 +112,7 @@ class FrameStore:
     def update(self, frame_id: int, jpeg: bytes) -> None:
         with self.condition:
             self.jpeg = jpeg
-            self.frame_id = frame_id
+            self.frame_id += 1
             self.received_at = time.monotonic()
             self.frames += 1
             self.condition.notify_all()
@@ -172,8 +199,12 @@ def serial_worker(preferred_port: str | None) -> None:
                 STORE.frames = 0
                 STORE.corrupt_frames = 0
                 STORE.filtered_frames = 0
-                STORE._last_luma = None
-                STORE._pending_luma = None
+                STORE._last_y = None
+                STORE._last_cr = None
+                STORE._last_cb = None
+                STORE._pending_y = None
+                STORE._pending_cr = None
+                STORE._pending_cb = None
                 print(f"[USB-BRIDGE] Da ket noi {port}")
                 while True:
                     try:

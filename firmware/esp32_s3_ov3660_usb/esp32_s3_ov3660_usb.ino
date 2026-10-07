@@ -105,12 +105,23 @@ bool start_camera() {
   }
 
   sensor_t *sensor = esp_camera_sensor_get();
-  if (sensor && sensor->id.PID == OV3660_PID) {
-    sensor->set_vflip(sensor, 1);
-    sensor->set_brightness(sensor, 1);
-    sensor->set_contrast(sensor, 1);
-    sensor->set_saturation(sensor, 0);
-    sensor->set_sharpness(sensor, 2);
+  if (sensor) {
+    if (sensor->id.PID == OV2640_PID) {
+      sensor->set_vflip(sensor, 1);
+      sensor->set_brightness(sensor, 1);
+      sensor->set_contrast(sensor, 0);
+      sensor->set_saturation(sensor, 0);
+      Serial.println("[CAMERA] Phat hien cam bien OV2640 san sang");
+      CameraUSB.println("[CAMERA] Phat hien cam bien OV2640 san sang");
+    } else if (sensor->id.PID == OV3660_PID) {
+      sensor->set_vflip(sensor, 1);
+      sensor->set_brightness(sensor, 1);
+      sensor->set_contrast(sensor, 1);
+      sensor->set_saturation(sensor, 0);
+      sensor->set_sharpness(sensor, 2);
+      Serial.println("[CAMERA] Phat hien cam bien OV3660 san sang");
+      CameraUSB.println("[CAMERA] Phat hien cam bien OV3660 san sang");
+    }
   }
   return true;
 }
@@ -130,8 +141,10 @@ void setup() {
     CameraUSB.println("[PSRAM] Khong tim thay PSRAM.");
     while (true) delay(1000);
   }
-  if (!start_camera()) {
-    while (true) delay(1000);
+  while (!start_camera()) {
+    Serial.println("[CAMERA] Dang thu lai khoi tao camera sau 2 giay...");
+    CameraUSB.println("[CAMERA] Dang thu lai khoi tao camera sau 2 giay...");
+    delay(2000);
   }
 
   Serial.println("[USB] Cam cong USB-OTG vao laptop; du lieu camera se o COM rieng.");
