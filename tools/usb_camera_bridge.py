@@ -13,6 +13,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import serial
 from serial.tools import list_ports
 
+try:
+    import cv2
+    import numpy as np
+except ImportError:  # Cau noi van chay neu dung rieng ngoai moi truong FaceCheck.
+    cv2 = None
+    np = None
+
+
 
 MAGIC_V1 = b"FCAM"
 MAGIC_V2 = b"FCM2"
@@ -33,6 +41,46 @@ class FrameStore:
         self.port = ""
         self.connected = False
         self.protocol = ""
+        self.filtered_frames = 0
+        self._last_luma: float | None = None
+        self._pending_luma: float | None = None
+
+    def accept_visual_frame(self, jpeg: bytes) -> bool:
+        """Bo mot frame chop sang don le, khong tao them hang doi/tre hinh.
+
+        Neu anh sang thay doi that, frame ke tiep se co muc sang gan frame dang
+        cho va duoc chap nhan. Do do chi mat toi da mot frame (125 ms o 8 FPS).
+        """
+        if cv2 is None or np is None:
+            return True
+        encoded = np.frombuffer(jpeg, dtype=np.uint8)
+        image = cv2.imdecode(encoded, cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            return False
+        preview = cv2.resize(image, (32, 24), interpolation=cv2.INTER_AREA)
+        luma = float(np.median(preview))
+
+        if self._last_luma is None:
+            self._last_luma = luma
+            return True
+
+        # Nguong 42/255 chi bat cac cu nhay sang rat ro, khong can thiep vao
+        # chuyen dong/doi tuong vao khung hinh thong thuong.
+        if abs(luma - self._last_luma) <= 42.0:
+            self._last_luma = luma
+            self._pending_luma = None
+            return True
+
+        # Hai frame lien tiep cung sang/toi: day la thay doi moi truong that.
+        if self._pending_luma is not None and abs(luma - self._pending_luma) <= 18.0:
+            self._last_luma = luma
+            self._pending_luma = None
+            return True
+
+        self._pending_luma = luma
+        self.filtered_frames += 1
+        return False
+
 
     def update(self, frame_id: int, jpeg: bytes) -> None:
         with self.condition:
@@ -60,6 +108,9 @@ def find_usb_port(preferred: str | None) -> str | None:
         return preferred
     ports = list(list_ports.comports())
     for port in ports:
+        if port.device.upper() == "COM12":
+            # COM12 la cong bootloader USB-Serial/JTAG de nap firmware, khong phai cong camera runtime.
+            continue
         text = f"{port.description} {port.manufacturer or ''}".lower()
         if port.vid == 0x303A or "usb serial device" in text or "espressif" in text:
             return port.device
@@ -120,6 +171,9 @@ def serial_worker(preferred_port: str | None) -> None:
                 STORE.started_at = time.monotonic()
                 STORE.frames = 0
                 STORE.corrupt_frames = 0
+                STORE.filtered_frames = 0
+                STORE._last_luma = None
+                STORE._pending_luma = None
                 print(f"[USB-BRIDGE] Da ket noi {port}")
                 while True:
                     try:
@@ -145,6 +199,8 @@ def serial_worker(preferred_port: str | None) -> None:
                                 f"id={frame_id}: CRC {actual_crc:08x} != "
                                 f"{expected_crc:08x} (tong={discarded})"
                             )
+                            continue
+                        if not STORE.accept_visual_frame(jpeg):
                             continue
                         STORE.update(frame_id, jpeg)
                     except TimeoutError:
@@ -199,6 +255,7 @@ class CameraHandler(BaseHTTPRequestHandler):
                 "port": STORE.port,
                 "frames": STORE.frames,
                 "corrupt_frames": STORE.corrupt_frames,
+                "filtered_frames": STORE.filtered_frames,
                 "fps": round(STORE.fps(), 1),
                 "frame_age_ms": age_ms,
             }).encode("utf-8")
