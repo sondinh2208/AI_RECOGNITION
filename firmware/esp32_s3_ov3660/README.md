@@ -41,3 +41,17 @@ Không commit `secrets.h`; tệp này đã được `.gitignore` bỏ qua.
 
 Laptop và ESP32 phải ở cùng mạng Wi-Fi. Địa chỉ IP thật do router cấp và được
 in qua Serial; không sao chép IP ví dụ vào ứng dụng.
+
+## Chạy FaceCheck và kiểm tra FPS
+
+Từ thư mục gốc dự án:
+
+```powershell
+.\venv\Scripts\python.exe start_wifi_facecheck.py --simulate-display
+```
+
+Chương trình tự tìm camera, đo FPS MJPEG thực nhận và cảnh báo khi dưới 5 FPS.
+Firmware dùng CIF 400x296, JPEG quality 24 và 3 frame buffer để phát mục tiêu
+18 FPS qua Wi-Fi 802.11n; màn hình riêng lấy tối đa 8 FPS. Cấu hình này được chọn
+sau benchmark QVGA/CIF/HVGA/VGA trên phần cứng thật.
+USB-UART chỉ dùng để nạp và xem log 115200 baud, không còn mang dữ liệu ảnh.

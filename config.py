@@ -58,7 +58,7 @@ ARCFACE_HIGH_CONFIDENCE_MARGIN = 0.100     # Và phải tách biệt rõ với n
 ARCFACE_STRICT_CONFIRMATIONS = 3  # Cần 3 frame strict cùng ID trong cửa sổ xác minh
 ARCFACE_STRICT_MAX_ATTEMPTS = 8   # Chịu được vài frame mờ/nhiễu từ camera truyền USB/Wi-Fi
 ARCFACE_STRICT_WINDOW_SECONDS = 3.0
-KIOSK_MIN_FACE_WIDTH = 100        # Kích thước mặt tối thiểu (px) để kích hoạt nhận diện
+KIOSK_MIN_FACE_WIDTH = 55         # QVGA: đủ quét/nhận diện và cho phép đứng xa vừa
 FACE_CROP_PADDING_RATIO = 0.10    # Dùng thống nhất khi đăng ký, điểm danh và kiểm thử
 KIOSK_PRIMARY_FACE_MIN_AREA_RATIO = 1.25  # Mặt gần phải lớn hơn mặt thứ hai 25%
 KIOSK_MAX_ROLL_ANGLE = 30         # Cho phép nghiêng đầu; ArcFace sẽ nhận ảnh đã căn thẳng
@@ -68,6 +68,7 @@ KIOSK_MIN_PITCH_RATIO = 0.45      # Cho phép ngẩng/cúi vừa phải khi đi�
 KIOSK_MAX_PITCH_RATIO = 2.20
 
 FACE_CONFIDENCE = 0.45
+FACE_DETECTION_IMAGE_SIZE = 320   # Ưu tiên tốc độ; YOLO mặc định 640 chậm và dư cho QVGA
 PERSON_CONFIDENCE = 0.5
 PERSON_CLASS_ID = 0
 

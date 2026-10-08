@@ -32,7 +32,9 @@ constexpr char kStreamContentType[] =
 constexpr char kStreamPart[] =
     "\r\n--facecheck-boundary\r\nContent-Type: image/jpeg\r\n"
     "Content-Length: %u\r\n\r\n";
-constexpr uint32_t kStreamFrameIntervalMs = 125;  // 8 FPS, du cho AI va giao dien.
+// Cau hinh QVGA nhe, uu tien frame moi va do tre thap cho nhan dien.
+constexpr uint32_t kStreamTargetFps = 20;
+constexpr uint32_t kStreamFrameIntervalMs = 1000 / kStreamTargetFps;
 
 httpd_handle_t web_server = nullptr;
 httpd_handle_t stream_server = nullptr;
@@ -72,10 +74,11 @@ esp_err_t health_handler(httpd_req_t *request) {
            "{\"ok\":true,\"camera\":\"OV3660\",\"rssi\":%d,"
            "\"free_heap\":%u,\"stream_active\":%s,\"stream_clients\":%u,"
            "\"stream_frames\":%u,"
-           "\"stream_fps\":%.1f}",
+           "\"stream_fps\":%.1f,\"target_fps\":%u,\"ip\":\"%s\"}",
            WiFi.RSSI(), ESP.getFreeHeap(),
            stream_client_active ? "true" : "false", stream_client_count,
-           stream_frame_count, stream_fps);
+           stream_frame_count, stream_fps, kStreamTargetFps,
+           WiFi.localIP().toString().c_str());
   httpd_resp_set_type(request, "application/json");
   httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(request, response, HTTPD_RESP_USE_STRLEN);
@@ -115,7 +118,7 @@ esp_err_t stream_handler(httpd_req_t *request) {
   httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "*");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store, no-cache, must-revalidate");
   httpd_resp_set_hdr(request, "Pragma", "no-cache");
-  httpd_resp_set_hdr(request, "X-Framerate", "8");
+  httpd_resp_set_hdr(request, "X-Framerate", "20");
 
   // MJPEG gui mot header nho roi moi den JPEG. Tat Nagle de tranh cac goi
   // nho bi doi ACK, gay SEND nhay len hang tram mili giay du Wi-Fi tot.
@@ -273,10 +276,10 @@ bool start_camera() {
   config.pin_reset = CAM_PIN_RESET;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_VGA;
+  config.frame_size = FRAMESIZE_QVGA;
   // Số lớn hơn tạo JPEG nhẹ hơn. 15 giữ đủ chi tiết khuôn mặt và giảm tải Wi-Fi.
-  config.jpeg_quality = 20;
-  config.fb_count = 2;
+  config.jpeg_quality = 18;
+  config.fb_count = 3;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.grab_mode = CAMERA_GRAB_LATEST;
 
@@ -287,10 +290,17 @@ bool start_camera() {
   }
 
   sensor_t *sensor = esp_camera_sensor_get();
-  if (sensor && sensor->id.PID == OV3660_PID) {
+  if (sensor) {
+    // Bo camera vat ly dang lap xoay 180 do. Ap dung cho moi PID vi mot so
+    // lo phan cung duoc ban voi OV2640 du ten board/firmware la OV3660.
     sensor->set_vflip(sensor, 1);
-    sensor->set_brightness(sensor, 1);
-    sensor->set_saturation(sensor, -1);
+    sensor->set_hmirror(sensor, 1);
+    sensor->set_sharpness(sensor, 0);
+    sensor->set_contrast(sensor, 0);
+    if (sensor->id.PID == OV3660_PID) {
+      sensor->set_brightness(sensor, 1);
+      sensor->set_saturation(sensor, -1);
+    }
   }
   return true;
 }
@@ -311,7 +321,7 @@ void setup() {
   if (!start_camera()) {
     while (true) delay(1000);
   }
-  Serial.println("[CAMERA] OV3660 san sang (VGA JPEG, 2 frame buffers)");
+  Serial.println("[CAMERA] San sang (QVGA/q18, 3 buffers, low latency)");
 #else
   Serial.println("[TEST] Bo qua camera va web server, chi kiem tra SoftAP.");
 #endif
@@ -338,11 +348,18 @@ void setup() {
   const esp_err_t bandwidth_result =
       esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
   const esp_err_t protocol_result = esp_wifi_set_protocol(
-      WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G);
+      WIFI_IF_STA,
+      WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
-  Serial.printf("[WIFI] Compatibility b/g HT20: ps=%d bw=%d proto=%d\n",
+  Serial.printf("[WIFI] Performance b/g/n HT20: ps=%d bw=%d proto=%d\n",
                 power_save_result, bandwidth_result, protocol_result);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+  if (strlen(WIFI_PASSWORD) == 0) {
+    WiFi.begin(WIFI_SSID);
+  } else {
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  }
   Serial.printf("[WIFI] Dang ket noi %s", WIFI_SSID);
   const unsigned long started_at = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - started_at < 30000) {
@@ -381,6 +398,15 @@ void setup() {
 
 void loop() {
   static unsigned long last_report = 0;
+#if !CAMERA_USE_SOFT_AP
+  static unsigned long last_reconnect_attempt = 0;
+  if (WiFi.status() != WL_CONNECTED &&
+      millis() - last_reconnect_attempt >= 5000) {
+    last_reconnect_attempt = millis();
+    Serial.println("[WIFI] Mat ket noi; dang thu ket noi lai...");
+    WiFi.reconnect();
+  }
+#endif
   if (millis() - last_report >= 10000) {
     last_report = millis();
 #if CAMERA_USE_SOFT_AP

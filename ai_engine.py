@@ -22,7 +22,8 @@ from ultralytics import YOLO
 
 from config import (
     FACE_MODEL_PATH, MP_FACE_MODEL_PATH,
-    FACE_CONFIDENCE, PERSON_CONFIDENCE, PERSON_CLASS_ID,
+    FACE_CONFIDENCE, FACE_DETECTION_IMAGE_SIZE,
+    PERSON_CONFIDENCE, PERSON_CLASS_ID,
     FACE_MIN_SIZE_RATIO, FACE_MAX_SIZE_RATIO, FACE_MAX_TILT_ANGLE,
     FACE_MIN_BRIGHTNESS, FACE_MIN_SHADOW_LEVEL, FACE_MAX_BRIGHTNESS,
     ENROLLMENT_MIN_YOLO_CONFIDENCE, ENROLLMENT_MIN_MEDIAPIPE_CONFIDENCE,
@@ -175,7 +176,14 @@ def detect_faces(face_model, frame, device='0'):
     if face_model is None:
         return []
     
-    results = face_model(frame, verbose=False, conf=FACE_CONFIDENCE, device=device)
+    results = face_model(
+        frame,
+        verbose=False,
+        conf=FACE_CONFIDENCE,
+        device=device,
+        imgsz=FACE_DETECTION_IMAGE_SIZE,
+        half=(device != "cpu" and torch.cuda.is_available()),
+    )
     
     faces = []
     for result in results:

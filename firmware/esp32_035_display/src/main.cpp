@@ -210,7 +210,10 @@ void drawStatusPanel() {
   display.drawFastVLine(kMetricsX, 260, 50, 0x344054);
 
   display.setTextDatum(lgfx::textdatum_t::top_right);
-  display.setTextColor(kMuted, kPanel);
+  // Bao mau do neu toc do ve thuc te tut duoi nguong yeu cau 5 FPS.
+  const uint32_t fpsColor =
+      renderedFpsValue > 0.0f && renderedFpsValue < 5.0f ? kRed : kMuted;
+  display.setTextColor(fpsColor, kPanel);
   display.drawString(String(renderedFpsValue, 1) + " FPS", kMetricsRight, 264);
   if (kiosk.mode == "add_employee" && kiosk.sampleTarget > 0) {
     display.drawString(String(kiosk.sampleCount) + "/" + String(kiosk.sampleTarget), kMetricsRight, 292);
@@ -303,7 +306,7 @@ bool fetchAndDrawFrame() {
     frameHttpReady = false;
   }
   const uint32_t frameDrawn = millis();
-  // Khong goi frameHttp.end() o day: Giu TCP Keep-Alive giup giam do tre 30-50ms va tranh tran TIME_WAIT
+  // Giu TCP Keep-Alive, nhung moi GET luon lay JPEG moi nhat de khong tich frame cu.
 
   if (drawn) {
     const uint32_t now = millis();
@@ -328,6 +331,9 @@ bool fetchAndDrawFrame() {
       totalReadMs = 0;
       totalDrawMs = 0;
       renderedWindowStarted = now;
+      // Cap nhat chi so FPS tren TFT moi cua so do, khong cho doi thay doi
+      // trang thai nhan dien moi ve lai bang thong so.
+      if (!isEnrollmentMode()) drawStatusPanel();
     }
   }
   return drawn;
@@ -337,12 +343,18 @@ void ensureWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
   frameHttp.end();
   frameHttpReady = false;
-  WiFi.disconnect(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.disconnect(true);
+  delay(100);
+  WiFi.mode(WIFI_STA);
+  if (strlen(WIFI_PASSWORD) == 0) {
+    WiFi.begin(WIFI_SSID);
+  } else {
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  }
   drawConnectionScreen("Dang ket noi Wi-Fi 2.4 GHz");
   const uint32_t started = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - started < 8000) {
-    delay(200);
+  while (WiFi.status() != WL_CONNECTED && millis() - started < 15000) {
+    delay(250);
   }
   if (WiFi.status() == WL_CONNECTED) {
     WiFi.setSleep(false);
@@ -352,6 +364,11 @@ void ensureWiFi() {
   } else {
     Serial.printf("[WIFI] Khong ket noi duoc SSID: %s | status=%d\n", WIFI_SSID, WiFi.status());
     drawConnectionScreen("Khong ket noi duoc Wi-Fi");
+    int n = WiFi.scanNetworks();
+    Serial.printf("[WIFI SCAN] Tim thay %d mang:\n", n);
+    for (int i = 0; i < n; ++i) {
+      Serial.printf("  %d: %s (%d dBm, ch %d)\n", i, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i));
+    }
   }
 }
 

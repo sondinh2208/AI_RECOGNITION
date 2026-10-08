@@ -2,7 +2,7 @@
 
 // 1: ESP32 tu phat Wi-Fi rieng cho laptop ket noi truc tiep.
 // 0: ESP32 ket noi vao Wi-Fi nha bang WIFI_SSID/WIFI_PASSWORD.
-#define CAMERA_USE_SOFT_AP 1
+#define CAMERA_USE_SOFT_AP 0
 #define CAMERA_AP_SSID "FaceCheck-Camera"
 #define CAMERA_AP_PASSWORD "FaceCheck2026"
 

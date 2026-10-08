@@ -65,6 +65,30 @@ cầu nối camera, màn TFT 3.5 inch 480x320 mô phỏng và cửa sổ quản 
 .\venv\Scripts\python.exe start_usb_facecheck.py --simulate-display
 ```
 
+### Camera ESP32-S3 qua Wi-Fi (khuyến nghị)
+
+Firmware `firmware/esp32_s3_ov3660` nhận nguồn qua adapter/pin 5V và truyền ảnh
+MJPEG qua Wi-Fi; cáp USB-UART chỉ cần khi nạp firmware hoặc xem log. Camera, laptop
+và màn hình ESP32-035 phải cùng kết nối mạng Wi-Fi 2.4 GHz.
+
+Nạp firmware camera qua USB-UART:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -d firmware\esp32_s3_ov3660 -t upload
+```
+
+Sau đó có thể tháo USB-UART, cấp nguồn 5V riêng cho camera và chạy:
+
+```powershell
+.\venv\Scripts\python.exe start_wifi_facecheck.py --simulate-display
+```
+
+Launcher tự tìm `facecheck-cam.local`, nếu cần sẽ quét mạng LAN, đo FPS nguồn rồi
+mới mở FaceCheck. Có thể chỉ định IP camera bằng `--camera-host 192.168.8.x`.
+Firmware đặt mục tiêu nguồn 18 FPS ở CIF; kênh màn hình được giới hạn 8 FPS để tránh tồn
+frame. Nếu phép đo báo dưới 5 FPS, xem RSSI trong log USB-UART và đặt thiết bị gần
+router hơn (khuyến nghị RSSI từ -67 dBm trở lên).
+
 `--simulate-pi` vẫn được giữ như bí danh tương thích; tên mới
 `--simulate-display` phản ánh đúng kiến trúc màn hình ESP32 độc lập.
 
