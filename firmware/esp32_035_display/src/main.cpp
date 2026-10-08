@@ -395,8 +395,8 @@ void loop() {
     return;
   }
 
-  // Nhip muc tieu 8 FPS. Moi lan chi lay frame moi nhat nen khong tich luy tre.
-  if (now - lastFrameFetch >= 125) {
+  // Nhip muc tieu 7 FPS, danh them bang thong cho JPEG net hon ma van >5 FPS.
+  if (now - lastFrameFetch >= 143) {
     lastFrameFetch = now;
     fetchAndDrawFrame();
   }

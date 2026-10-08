@@ -32,8 +32,8 @@ constexpr char kStreamContentType[] =
 constexpr char kStreamPart[] =
     "\r\n--facecheck-boundary\r\nContent-Type: image/jpeg\r\n"
     "Content-Length: %u\r\n\r\n";
-// Cau hinh QVGA nhe, uu tien frame moi va do tre thap cho nhan dien.
-constexpr uint32_t kStreamTargetFps = 20;
+// QVGA/q15: tang chi tiet nhe, ha nhịp de van giu do tre on dinh.
+constexpr uint32_t kStreamTargetFps = 18;
 constexpr uint32_t kStreamFrameIntervalMs = 1000 / kStreamTargetFps;
 
 httpd_handle_t web_server = nullptr;
@@ -118,7 +118,7 @@ esp_err_t stream_handler(httpd_req_t *request) {
   httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "*");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store, no-cache, must-revalidate");
   httpd_resp_set_hdr(request, "Pragma", "no-cache");
-  httpd_resp_set_hdr(request, "X-Framerate", "20");
+  httpd_resp_set_hdr(request, "X-Framerate", "18");
 
   // MJPEG gui mot header nho roi moi den JPEG. Tat Nagle de tranh cac goi
   // nho bi doi ACK, gay SEND nhay len hang tram mili giay du Wi-Fi tot.
@@ -278,7 +278,7 @@ bool start_camera() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size = FRAMESIZE_QVGA;
   // Số lớn hơn tạo JPEG nhẹ hơn. 15 giữ đủ chi tiết khuôn mặt và giảm tải Wi-Fi.
-  config.jpeg_quality = 18;
+  config.jpeg_quality = 15;
   config.fb_count = 3;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.grab_mode = CAMERA_GRAB_LATEST;
@@ -321,7 +321,7 @@ void setup() {
   if (!start_camera()) {
     while (true) delay(1000);
   }
-  Serial.println("[CAMERA] San sang (QVGA/q18, 3 buffers, low latency)");
+  Serial.println("[CAMERA] San sang (QVGA/q15, 3 buffers, balanced quality)");
 #else
   Serial.println("[TEST] Bo qua camera va web server, chi kiem tra SoftAP.");
 #endif

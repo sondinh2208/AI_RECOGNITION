@@ -51,7 +51,7 @@ Từ thư mục gốc dự án:
 ```
 
 Chương trình tự tìm camera, đo FPS MJPEG thực nhận và cảnh báo khi dưới 5 FPS.
-Firmware dùng CIF 400x296, JPEG quality 24 và 3 frame buffer để phát mục tiêu
-18 FPS qua Wi-Fi 802.11n; màn hình riêng lấy tối đa 8 FPS. Cấu hình này được chọn
-sau benchmark QVGA/CIF/HVGA/VGA trên phần cứng thật.
+Firmware dùng QVGA 320x240, JPEG quality 15 và 3 frame buffer để phát mục tiêu
+18 FPS qua Wi-Fi 802.11n; màn hình riêng lấy tối đa 7 FPS. TFT lấy từng JPEG mới
+nhất qua `/frame.jpg` để tránh tồn khung hình và lệch thời gian.
 USB-UART chỉ dùng để nạp và xem log 115200 baud, không còn mang dữ liệu ảnh.

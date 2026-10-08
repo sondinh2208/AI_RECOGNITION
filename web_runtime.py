@@ -320,7 +320,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 resized,
                 [
                     cv2.IMWRITE_JPEG_QUALITY,
-                    26,
+                    35,
                     cv2.IMWRITE_JPEG_OPTIMIZE,
                     1,
                 ],

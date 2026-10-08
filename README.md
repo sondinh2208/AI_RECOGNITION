@@ -85,8 +85,8 @@ Sau đó có thể tháo USB-UART, cấp nguồn 5V riêng cho camera và chạy
 
 Launcher tự tìm `facecheck-cam.local`, nếu cần sẽ quét mạng LAN, đo FPS nguồn rồi
 mới mở FaceCheck. Có thể chỉ định IP camera bằng `--camera-host 192.168.8.x`.
-Firmware đặt mục tiêu nguồn 18 FPS ở CIF; kênh màn hình được giới hạn 8 FPS để tránh tồn
-frame. Nếu phép đo báo dưới 5 FPS, xem RSSI trong log USB-UART và đặt thiết bị gần
+Firmware đặt mục tiêu nguồn 18 FPS ở QVGA 320x240/q15; kênh màn hình lấy JPEG mới
+nhất qua `/frame.jpg` và được giới hạn 7 FPS để tăng chất lượng mà tránh tồn frame. Nếu phép đo báo dưới 5 FPS, xem RSSI trong log USB-UART và đặt thiết bị gần
 router hơn (khuyến nghị RSSI từ -67 dBm trở lên).
 
 `--simulate-pi` vẫn được giữ như bí danh tương thích; tên mới

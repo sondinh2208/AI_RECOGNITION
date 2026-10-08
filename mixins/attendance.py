@@ -13,6 +13,7 @@ Toàn bộ giao diện và logic nhận diện điểm danh tự động:
 import cv2
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -777,6 +778,11 @@ class AttendanceMixin:
         last_reconnect_attempt = 0.0
         last_detection_at = 0.0
         cached_faces = []
+        # Tach YOLO khoi luong doc camera de video khong bi khoa theo FPS AI.
+        detector_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="face-detector"
+        )
+        detection_future = None
 
         while self.kiosk_running and self.camera_running:
             if token is not None and getattr(self, '_kiosk_thread_token', None) != token:
@@ -821,9 +827,22 @@ class AttendanceMixin:
             
             # 1. Giới hạn tần suất YOLO; camera vẫn cập nhật mượt bằng kết quả gần nhất.
             detection_now = time.perf_counter()
-            if detection_now - last_detection_at >= KIOSK_DETECTION_INTERVAL_SECONDS:
-                cached_faces = detect_faces(self.face_model, frame, self.device)
+            if detection_future is not None and detection_future.done():
+                try:
+                    cached_faces = detection_future.result()
+                except Exception as exc:
+                    print(f"[AI] Loi detector nen: {exc}")
+                    cached_faces = []
+                detection_future = None
                 last_detection_at = detection_now
+            if (
+                detection_future is None
+                and detection_now - last_detection_at
+                >= KIOSK_DETECTION_INTERVAL_SECONDS
+            ):
+                detection_future = detector_executor.submit(
+                    detect_faces, self.face_model, clean_frame.copy(), self.device
+                )
             faces = cached_faces
             self.kiosk_face_count = len(faces)
             
@@ -994,6 +1013,8 @@ class AttendanceMixin:
                     self._first_processed_logged = True
             except Exception:
                 pass
+
+        detector_executor.shutdown(wait=True, cancel_futures=True)
 
     def _update_kiosk_frame(self):
         """Main UI Thread: Lấy ảnh PIL đã định dạng từ background thread và hiển thị (siêu nhẹ, <1ms)."""
