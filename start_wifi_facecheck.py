@@ -14,6 +14,11 @@ import time
 import urllib.request
 from pathlib import Path
 
+try:
+    import psutil
+except ImportError:  # pragma: no cover - fallback cho moi truong toi gian
+    psutil = None
+
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CAMERA_HOST = "facecheck-cam.local"
@@ -45,39 +50,105 @@ def camera_health(host: str, timeout: float = 0.7) -> dict | None:
     return None
 
 
-def local_ipv4_network() -> ipaddress.IPv4Network | None:
-    """Lay mang /24 dang dung ma khong can gui du lieu ra Internet."""
+def local_ipv4_networks() -> list[ipaddress.IPv4Network]:
+    """Lay tat ca mang IPv4 cuc bo dang hoat dong.
+
+    May Windows co the dong thoi co Wi-Fi, Ethernet ao, VPN hoac chia se mang.
+    Chi suy ra mang tu tuyen Internet se bo sot camera tren adapter khac.
+    """
+    networks: list[ipaddress.IPv4Network] = []
+    if psutil is not None:
+        stats = psutil.net_if_stats()
+        for interface, addresses in psutil.net_if_addrs().items():
+            if not stats.get(interface) or not stats[interface].isup:
+                continue
+            for address in addresses:
+                if address.family != socket.AF_INET or not address.netmask:
+                    continue
+                ip = ipaddress.ip_address(address.address)
+                if ip.is_loopback or ip.is_link_local or ip.is_unspecified:
+                    continue
+                network = ipaddress.ip_network(
+                    f"{address.address}/{address.netmask}", strict=False
+                )
+                # Khong quet hang chuc nghin dia chi cua VPN/mang doanh nghiep.
+                # Camera gia dung nam trong cung /24 voi may chay FaceCheck.
+                if network.num_addresses > 1024:
+                    network = ipaddress.ip_network(f"{ip}/24", strict=False)
+                if network not in networks:
+                    networks.append(network)
+
+    # Fallback khong can psutil, dong thoi bo sung adapter ma he dieu hanh
+    # chua tra ve day du thong tin netmask.
+    try:
+        local_addresses = socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        local_addresses = []
+    for raw_ip in local_addresses:
+        ip = ipaddress.ip_address(raw_ip)
+        if ip.is_loopback or ip.is_link_local or ip.is_unspecified:
+            continue
+        network = ipaddress.ip_network(f"{ip}/24", strict=False)
+        if not any(ip in existing for existing in networks):
+            networks.append(network)
+
+    if networks:
+        return networks
+
+    # Phuong an cuoi cung: lay dia chi cua tuyen mac dinh. UDP connect khong
+    # gui goi tin va van hoat dong neu dich khong phan hoi.
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         probe.connect(("8.8.8.8", 80))
         local_ip = ipaddress.ip_address(probe.getsockname()[0])
-        return ipaddress.ip_network(f"{local_ip}/24", strict=False)
+        if not local_ip.is_loopback and not local_ip.is_link_local:
+            return [ipaddress.ip_network(f"{local_ip}/24", strict=False)]
     except OSError:
-        return None
+        pass
     finally:
         probe.close()
+    return []
 
 
-def discover_camera(preferred_host: str | None, scan_lan: bool = True) -> tuple[str, dict] | None:
+def local_ipv4_network() -> ipaddress.IPv4Network | None:
+    """Tuong thich voi ma cu: tra ve mang cuc bo dau tien neu co."""
+    networks = local_ipv4_networks()
+    return networks[0] if networks else None
+
+
+def discover_camera(
+    preferred_host: str | None,
+    scan_lan: bool = True,
+    environment: dict[str, str] | None = None,
+) -> tuple[str, dict] | None:
+    if environment is None:
+        environment = os.environ
     candidates = []
-    for candidate in (preferred_host, os.getenv("FACECHECK_CAMERA_HOST"), DEFAULT_CAMERA_HOST):
+    configured_host = environment.get("FACECHECK_CAMERA_HOST")
+    for candidate in (preferred_host, configured_host, DEFAULT_CAMERA_HOST):
         candidate = (candidate or "").strip()
         if candidate and candidate not in candidates:
             candidates.append(candidate)
     for host in candidates:
         # IP do nguoi dung chi dinh co the nam tren Wi-Fi truong hoc jitter cao;
         # cho du 5 giay thay vi ket luan camera offline qua som.
-        timeout = 5.0 if preferred_host and host == preferred_host.strip() else 1.2
+        is_configured = host in {
+            (preferred_host or "").strip(),
+            (configured_host or "").strip(),
+        }
+        timeout = 5.0 if is_configured else 1.5
         health = camera_health(host, timeout=timeout)
         if health:
             return host, health
 
-    network = local_ipv4_network() if scan_lan else None
-    if network is None:
+    networks = local_ipv4_networks() if scan_lan else []
+    if not networks:
         return None
-    hosts = [str(host) for host in network.hosts()]
+    hosts = list(dict.fromkeys(
+        str(host) for network in networks for host in network.hosts()
+    ))
     with concurrent.futures.ThreadPoolExecutor(max_workers=48) as executor:
-        futures = {executor.submit(camera_health, host, 0.35): host for host in hosts}
+        futures = {executor.submit(camera_health, host, 0.8): host for host in hosts}
         for future in concurrent.futures.as_completed(futures):
             health = future.result()
             if health:
@@ -132,8 +203,11 @@ def main(
     scan_lan: bool = True,
     check_fps: bool = True,
 ) -> int:
+    environment = load_local_environment(os.environ.copy())
     print("[WIFI-CAMERA] Dang tim ESP32-S3 OV3660...")
-    discovered = discover_camera(camera_host, scan_lan=scan_lan)
+    discovered = discover_camera(
+        camera_host, scan_lan=scan_lan, environment=environment
+    )
     if not discovered:
         print("[WIFI-CAMERA] Khong tim thay camera. Kiem tra Wi-Fi da cau hinh va log USB-UART 115200.")
         return 1
@@ -157,7 +231,6 @@ def main(
                 "Dat camera/router gan hon va dam bao dung Wi-Fi 2.4 GHz."
             )
 
-    environment = load_local_environment(os.environ.copy())
     environment["FACECHECK_CAMERA_URL"] = stream_url
     environment["FACECHECK_CAMERA_HOST"] = resolved_host
     environment["FACECHECK_CAMERA_PROFILE"] = "embedded_ov3660"

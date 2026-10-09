@@ -51,10 +51,38 @@ class WifiLauncherTests(unittest.TestCase):
 
     def test_discovery_uses_preferred_host_before_lan_scan(self):
         host = f"127.0.0.1:{self.server.server_port}"
-        with patch.object(launcher, "local_ipv4_network") as network:
+        with patch.object(launcher, "local_ipv4_networks") as network:
             discovered = launcher.discover_camera(host, scan_lan=True)
         self.assertEqual(discovered[0], host)
         network.assert_not_called()
+
+    def test_discovery_uses_host_loaded_from_dotenv(self):
+        host = f"127.0.0.1:{self.server.server_port}"
+        with patch.object(launcher, "local_ipv4_networks") as networks:
+            discovered = launcher.discover_camera(
+                None,
+                scan_lan=True,
+                environment={"FACECHECK_CAMERA_HOST": host},
+            )
+        self.assertEqual(discovered[0], host)
+        networks.assert_not_called()
+
+    def test_discovery_scans_every_active_network(self):
+        networks = [
+            launcher.ipaddress.ip_network("192.168.175.0/30"),
+            launcher.ipaddress.ip_network("127.0.0.0/30"),
+        ]
+        health = {"ok": True, "camera": "OV3660"}
+        with (
+            patch.object(launcher, "local_ipv4_networks", return_value=networks),
+            patch.object(
+                launcher,
+                "camera_health",
+                side_effect=lambda host, timeout=0.7: health if host == "127.0.0.1" else None,
+            ),
+        ):
+            discovered = launcher.discover_camera(None, scan_lan=True, environment={})
+        self.assertEqual(discovered, ("127.0.0.1", health))
 
     def test_invalid_health_payload_is_rejected(self):
         with patch.object(launcher, "camera_health", return_value=None):

@@ -45,6 +45,24 @@ volatile uint32_t stream_client_count = 0;
 volatile uint32_t stream_frame_count = 0;
 volatile float stream_fps = 0.0f;
 
+void begin_station_connection() {
+  if (strlen(WIFI_PASSWORD) == 0) {
+    WiFi.begin(WIFI_SSID);
+  } else {
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  }
+}
+
+void start_mdns() {
+  MDNS.end();
+  if (MDNS.begin("facecheck-cam")) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.println("[MDNS] http://facecheck-cam.local/ san sang");
+  } else {
+    Serial.println("[MDNS] Khoi tao that bai; van co the dung dia chi IP.");
+  }
+}
+
 esp_err_t root_handler(httpd_req_t *request) {
   static const char page[] PROGMEM = R"HTML(
 <!doctype html><html lang="vi"><head><meta charset="utf-8">
@@ -355,11 +373,7 @@ void setup() {
                 power_save_result, bandwidth_result, protocol_result);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
-  if (strlen(WIFI_PASSWORD) == 0) {
-    WiFi.begin(WIFI_SSID);
-  } else {
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  }
+  begin_station_connection();
   Serial.printf("[WIFI] Dang ket noi %s", WIFI_SSID);
   const unsigned long started_at = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - started_at < 30000) {
@@ -368,13 +382,16 @@ void setup() {
   }
   Serial.println();
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[WIFI] Ket noi that bai. Kiem tra secrets.h roi khoi dong lai.");
-    while (true) delay(1000);
+    Serial.println(
+        "[WIFI] Chua ket noi duoc; firmware se tu thu lai moi 5 giay.");
   }
 #endif
 
-  MDNS.begin("facecheck-cam");
-  MDNS.addService("http", "tcp", 80);
+#if CAMERA_USE_SOFT_AP
+  start_mdns();
+#else
+  if (WiFi.status() == WL_CONNECTED) start_mdns();
+#endif
 #if !FACECHECK_AP_ONLY_TEST
   start_web_servers();
 #endif
@@ -400,11 +417,23 @@ void loop() {
   static unsigned long last_report = 0;
 #if !CAMERA_USE_SOFT_AP
   static unsigned long last_reconnect_attempt = 0;
-  if (WiFi.status() != WL_CONNECTED &&
+  static bool was_connected = WiFi.status() == WL_CONNECTED;
+  const bool is_connected = WiFi.status() == WL_CONNECTED;
+  if (is_connected && !was_connected) {
+    const String ip = WiFi.localIP().toString();
+    Serial.printf("[WIFI] Da ket noi lai: %s | RSSI=%d dBm\n",
+                  ip.c_str(), WiFi.RSSI());
+    start_mdns();
+  } else if (!is_connected && was_connected) {
+    Serial.println("[WIFI] Mat ket noi.");
+  }
+  was_connected = is_connected;
+  if (!is_connected &&
       millis() - last_reconnect_attempt >= 5000) {
     last_reconnect_attempt = millis();
     Serial.println("[WIFI] Mat ket noi; dang thu ket noi lai...");
-    WiFi.reconnect();
+    WiFi.disconnect(false);
+    begin_station_connection();
   }
 #endif
   if (millis() - last_report >= 10000) {
