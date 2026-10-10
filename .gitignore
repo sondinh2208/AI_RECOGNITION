@@ -14,6 +14,10 @@ __pycache__/
 logs/
 *.log
 
+# Local browser/build artifacts
+/.codex-build/
+/.codex-output/
+
 # Data and Models
 data/
 models/

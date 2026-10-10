@@ -1,9 +1,9 @@
 import { store } from "./state.js";
 
 const meta = {
-  dashboard: ["Bảng điều khiển", "Tổng quan hoạt động điểm danh và quản lý nhân sự", "#i-home"],
-  enrollment: ["Đăng ký khuôn mặt", "Thêm thông tin nhân viên và ghi nhận khuôn mặt để sử dụng điểm danh", "#i-user-scan"],
-  recognition: ["Nhận diện điểm danh", "Quét khuôn mặt để ghi nhận thời gian vào/ra", "#i-target"],
+  dashboard: ["Bảng điều khiển", "Tổng quan hoạt động nhận diện và kiểm soát cửa", "#i-home"],
+  enrollment: ["Đăng ký khuôn mặt", "Thêm thông tin nhân viên và khuôn mặt để cấp quyền mở cửa", "#i-user-scan"],
+  recognition: ["Nhận diện mở cửa", "Xác thực khuôn mặt để ghi nhận ra vào và điều khiển cửa", "#i-target"],
   employees: ["Người đăng ký", "Quản lý danh sách nhân viên đã đăng ký nhận diện khuôn mặt", "#i-users"],
   history: ["Lịch sử ra vào", "Xem toàn bộ dữ liệu ra vào của nhân sự", "#i-list"],
 };

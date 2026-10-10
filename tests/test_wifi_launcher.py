@@ -4,9 +4,10 @@ import json
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 from unittest.mock import patch
 
-import start_wifi_facecheck as launcher
+import facecheck as launcher
 
 
 class _CameraHandler(BaseHTTPRequestHandler):
@@ -87,6 +88,36 @@ class WifiLauncherTests(unittest.TestCase):
     def test_invalid_health_payload_is_rejected(self):
         with patch.object(launcher, "camera_health", return_value=None):
             self.assertIsNone(launcher.discover_camera("bad-host", scan_lan=False))
+
+    def test_single_cli_selects_all_camera_modes(self):
+        for mode in ("webcam", "usb", "wifi"):
+            self.assertEqual(launcher.parse_args([mode]).camera, mode)
+
+    def test_webcam_config_is_passed_to_web_admin(self):
+        arguments = launcher.parse_args(["webcam", "--camera-index", "2"])
+        with (
+            patch.object(launcher, "facecheck_running", return_value=False),
+            patch.object(launcher, "load_local_environment", return_value={}),
+            patch.object(launcher.subprocess, "call", return_value=0) as call,
+        ):
+            result = launcher.run(arguments)
+
+        self.assertEqual(result, 0)
+        environment = call.call_args.kwargs["env"]
+        self.assertEqual(environment["FACECHECK_CAMERA_PROFILE"], "webcam")
+        self.assertEqual(environment["FACECHECK_CAMERA_INDEX"], "2")
+        self.assertNotIn("FACECHECK_CAMERA_URL", environment)
+
+    def test_running_backend_blocks_camera_switch(self):
+        arguments = SimpleNamespace(camera="wifi")
+        with (
+            patch.object(launcher, "facecheck_running", return_value=True),
+            patch.object(launcher.subprocess, "call") as call,
+        ):
+            result = launcher.run(arguments)
+
+        self.assertEqual(result, 2)
+        call.assert_not_called()
 
 
 if __name__ == "__main__":

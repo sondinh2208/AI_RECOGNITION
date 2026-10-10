@@ -34,11 +34,19 @@ def compute_ekyc_layout(frame_width, frame_height):
         corner_radius: bán kính bo góc
     """
     shape_w = int(frame_width * SHAPE_W_RATIO)
-    shape_h = int(frame_height * SHAPE_H_RATIO)
+    # Dành riêng phần chân ảnh cho thông báo. Khung khuôn mặt chỉ nằm trong
+    # vùng camera phía trên để bracket và chữ không bao giờ chồng lên nhau.
+    status_top = frame_height - STATUS_BAR_HEIGHT
+    safe_gap = max(10, int(frame_height * 0.025))
+    content_height = status_top - safe_gap
+    shape_h = min(
+        int(frame_height * SHAPE_H_RATIO),
+        max(1, content_height - 2 * safe_gap),
+    )
     corner_r = int(shape_w * CORNER_RADIUS_RATIO)
     
     cx = frame_width // 2
-    cy = frame_height // 2
+    cy = content_height // 2
     
     x1 = cx - shape_w // 2
     y1 = cy - shape_h // 2
@@ -128,29 +136,43 @@ def draw_hud_corners(frame, shape_rect, color,
 def draw_bottom_status_bar(frame, text, status_color, frame_width, frame_height):
     """
     Vẽ thanh trạng thái (Bottom Status Bar) dưới cùng khung camera.
-    Nền: Xám đậm bán trong suốt.
-    Chữ & accent line: Đồng bộ theo trạng thái (status_color).
+    Nền đặc tách khỏi camera; chữ tự co để luôn nằm gọn trong màn hình.
     """
     bar_h = STATUS_BAR_HEIGHT
     bar_y = frame_height - bar_h
     
-    # 1. Nền xám đậm bán trong suốt
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, bar_y), (frame_width, frame_height), (30, 30, 30), -1)
-    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+    # 1. Nền riêng biệt, không để ảnh camera hoặc bracket xuyên qua chữ.
+    cv2.rectangle(frame, (0, bar_y), (frame_width, frame_height), (18, 24, 33), -1)
     
-    # 2. Accent line cạnh trên
-    cv2.line(frame, (0, bar_y), (frame_width, bar_y), status_color, 2, cv2.LINE_AA)
+    # 2. Đường phân cách trung tính, mảnh và gọn.
+    cv2.line(frame, (0, bar_y), (frame_width, bar_y), (55, 65, 81), 1, cv2.LINE_AA)
     
     # 3. Chữ in hoa căn giữa
-    text = text.upper()
+    text = text.upper().strip()
     font = cv2.FONT_HERSHEY_SIMPLEX
-    text_size = cv2.getTextSize(text, font, STATUS_FONT_SCALE, STATUS_FONT_THICKNESS)[0]
+    font_scale = STATUS_FONT_SCALE
+    horizontal_padding = max(20, int(frame_width * 0.055))
+    max_text_width = frame_width - 2 * horizontal_padding
+    text_size = cv2.getTextSize(
+        text, font, font_scale, STATUS_FONT_THICKNESS
+    )[0]
+    if text_size[0] > max_text_width and text_size[0] > 0:
+        font_scale = max(0.42, font_scale * max_text_width / text_size[0])
+        text_size = cv2.getTextSize(
+            text, font, font_scale, STATUS_FONT_THICKNESS
+        )[0]
     
     text_x = (frame_width - text_size[0]) // 2
     text_y = bar_y + (bar_h + text_size[1]) // 2 - 2
     
-    cv2.putText(frame, text, (text_x, text_y), font, STATUS_FONT_SCALE,
+    # Chấm màu nhỏ thay cho đường nhấn dài để trạng thái bớt nặng nề.
+    dot_radius = max(3, int(bar_h * 0.09))
+    dot_x = max(horizontal_padding // 2, text_x - dot_radius * 3)
+    cv2.circle(
+        frame, (dot_x, bar_y + bar_h // 2), dot_radius,
+        status_color, -1, cv2.LINE_AA,
+    )
+    cv2.putText(frame, text, (text_x, text_y), font, font_scale,
                 status_color, STATUS_FONT_THICKNESS, cv2.LINE_AA)
 
 

@@ -1,134 +1,18 @@
-"""
-==============================================================
-CORE MIXIN
-Quản lý trạng thái khởi tạo, tải AI models, cache embeddings,
-warm-up ngầm và giải phóng tài nguyên hệ thống.
-==============================================================
-"""
+"""Load AI models, embeddings, and attendance history for the web runtime."""
 
 import json
 import pickle
 import threading
 import re
-from collections import deque
 from pathlib import Path
 import numpy as np
 
-from config import (
-    ADMIN_WINDOW_WIDTH, ADMIN_WINDOW_HEIGHT, CTK_BG_MAIN,
-    DATA_FACES_DIR, DEEPFACE_MODEL_NAME, ENROLLMENT_EMBEDDING_SAMPLES,
-)
-from ai_engine import (
-    check_gpu_quick,
-    load_face_model, load_mediapipe_detector,
-)
+from config import DATA_FACES_DIR, DEEPFACE_MODEL_NAME
+from ai_engine import check_gpu_quick, load_face_model, load_mediapipe_detector
 
 
 class CoreMixin:
-    """Mixin quản lý vòng đời ứng dụng và nạp tài nguyên AI."""
-
-    def __init__(self):
-        super().__init__()
-        
-        # --- Cấu hình cửa sổ ---
-        self.title("FaceCheck - HỆ THỐNG ĐIỂM DANH & QUẢN TRỊ AI")
-        self.geometry(f"{ADMIN_WINDOW_WIDTH}x{ADMIN_WINDOW_HEIGHT}")
-        self.minsize(1150, 720)
-        self.configure(fg_color=CTK_BG_MAIN)
-        
-        # --- Biến trạng thái Camera chung ---
-        self.camera_cap = None
-        self.camera_running = False
-        self.current_frame = None       # Frame gốc (sạch, không HUD)
-        self.latest_processed_frame = None
-        self.camera_thread = None
-        self.photo_image = None
-        self.current_fps = 0
-        self.current_conf = 0.0
-        
-        # --- Biến luồng Kiosk Mode (Nhận diện điểm danh) ---
-        self.current_page = "dashboard"  # Mặc định mở tab Bảng điều khiển (Dashboard)
-        self.kiosk_running = False
-        self.enrollment_running = False
-        self.is_recognizing = False       # Cờ khóa inference chống spam/giật lag
-        self.kiosk_latest_frame = None
-        self.kiosk_fps = 0.0
-        self.kiosk_face_count = 0
-        self.kiosk_thread = None
-        self._kiosk_waiting_for_departure = False
-        self._kiosk_idle_reset_pending = False
-        self._kiosk_face_stable_since = None
-        self._kiosk_face_absent_since = None
-        self._kiosk_active_face_area = None
-        self._kiosk_active_face_box = None
-        self._kiosk_suppressed_face_tracks = []
-        self._kiosk_result_hold_until = 0.0
-        self._kiosk_unknown_attempts = 0
-        self._kiosk_strict_candidate_id = None
-        self._kiosk_strict_confirmations = 0
-        self._kiosk_strict_attempts = 0
-        self._kiosk_strict_started_at = None
-        self._kiosk_strict_distances = []
-        self._kiosk_strict_margins = []
-        self._attendance_cooldowns = {}
-        
-        # --- Dữ liệu lịch sử điểm danh thực tế (lưu bền vững trên đĩa) ---
-        self.attendance_history = []
-        self._attendance_history_version = 0
-        self._load_attendance_history()
-        
-        # --- Biến trạng thái AI Enrollment ---
-        self.is_face_valid = False
-        self.ai_status_text = "Dua mat vao khung hinh"
-        self.prev_status = None
-        self.enrollment_face_samples = deque(maxlen=ENROLLMENT_EMBEDDING_SAMPLES)
-        self._last_enrollment_sample_at = 0.0
-        self._enrollment_valid_since = None
-        self.enrollment_capture_ready = False
-        self.enrollment_captured_samples = []
-        self.enrollment_captured_frame = None
-        self.enrollment_captured_face = None
-        self._enrollment_preview_shown = False
-        self._enrollment_waiting_for_face_leave = False
-        self.current_face_brightness = None
-        self.is_face_bright = False
-        
-        # --- AI Models ---
-        self.face_model = None
-        self.face_detector = None
-        self.device = 'cpu'
-        
-        # --- Layout eKYC ---
-        self.shape_rect = None
-        self.constraint_box = None
-        self.ekyc_mask = None
-        self.frame_width = 640
-        self.frame_height = 480
-        
-        # --- Tạo thư mục data ---
-        Path(DATA_FACES_DIR).mkdir(parents=True, exist_ok=True)
-        Path("images").mkdir(parents=True, exist_ok=True)
-        Path("data").mkdir(parents=True, exist_ok=True)
-        
-        # --- Cache Vector nhận diện vào RAM ---
-        self.embeddings_cache = None
-        
-        # --- Load AI Models ---
-        self._load_ai_models()
-        
-        # --- Xây dựng UI ---
-        self._build_sidebar()
-        self._build_main_area()
-        
-        # --- Bắt đầu đồng hồ thời gian thực ---
-        self._update_live_clock()
-        
-        # --- Khởi động camera nếu chưa được mở ---
-        if self.camera_cap is None:
-            self._start_camera()
-        
-        # --- Xử lý khi đóng cửa sổ ---
-        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+    """Manage AI resources and persistent data."""
 
     def _reload_embeddings_cache(self):
         """
@@ -260,19 +144,3 @@ class CoreMixin:
         # Khởi động sẵn DeepFace ArcFace trong nền
         threading.Thread(target=self._warmup_deepface_async, daemon=True).start()
         print("[AI] Load models hoàn tất.")
-
-    def _on_closing(self):
-        """Giải phóng tài nguyên khi đóng."""
-        self.kiosk_running = False
-        self.enrollment_running = False
-        self.camera_running = False
-        if self.kiosk_thread is not None and self.kiosk_thread.is_alive():
-            self.kiosk_thread.join(timeout=0.5)
-        if self.camera_thread is not None and self.camera_thread.is_alive():
-            self.camera_thread.join(timeout=0.5)
-            
-        if self.camera_cap is not None:
-            self.camera_cap.release()
-            print("[CAMERA] Đã giải phóng camera.")
-        self.destroy()
-        print("[OK] Admin Panel đã đóng.")

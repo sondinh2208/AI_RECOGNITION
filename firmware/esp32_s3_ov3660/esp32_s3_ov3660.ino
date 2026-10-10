@@ -309,10 +309,10 @@ bool start_camera() {
 
   sensor_t *sensor = esp_camera_sensor_get();
   if (sensor) {
-    // Bo camera vat ly dang lap xoay 180 do. Ap dung cho moi PID vi mot so
-    // lo phan cung duoc ban voi OV2640 du ten board/firmware la OV3660.
+    // Bo camera vat ly dang lap nguoc nen giu lat doc. Khong lat ngang de
+    // chuyen dong trai/phai hien dung, tranh hinh anh nhu trong guong.
     sensor->set_vflip(sensor, 1);
-    sensor->set_hmirror(sensor, 1);
+    sensor->set_hmirror(sensor, 0);
     sensor->set_sharpness(sensor, 0);
     sensor->set_contrast(sensor, 0);
     if (sensor->id.PID == OV3660_PID) {

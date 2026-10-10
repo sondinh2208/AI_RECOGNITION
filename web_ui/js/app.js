@@ -9,7 +9,7 @@ const kioskView = viewRole === "kiosk";
 const simulatedAdminView = viewRole === "admin";
 document.body.classList.toggle("kiosk-view", kioskView);
 document.body.classList.toggle("simulated-admin-view", simulatedAdminView);
-if (kioskView) document.title = "FaceCheck - Kiosk điểm danh";
+if (kioskView) document.title = "FaceCheck - Kiosk kiểm soát cửa";
 if (simulatedAdminView) $("#enrollmentCameraHeading").textContent = "Theo dõi quét tại kiosk";
 const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 const success = value => String(value || "").includes("Thành công");
@@ -40,7 +40,6 @@ cameraImage.addEventListener("load", () => cameraSurface.classList.add("loaded")
 
 function setCameraStreamActive(active, inactiveMessage = "Đang kết nối camera...") {
   cameraLoadingText.textContent = active ? "Đang kết nối camera..." : inactiveMessage;
-  cameraSurface.classList.toggle("remote-status", simulatedAdminView && !active);
   if (active === cameraStreamActive) return;
   cameraStreamActive = active;
   if (active) {
@@ -54,20 +53,13 @@ function setCameraStreamActive(active, inactiveMessage = "Đang kết nối came
 function syncCameraStream() {
   const mode = store.runtime?.mode;
   const visible = !document.hidden || kioskView;
-  let active = false;
+  const active = kioskView && visible && ["attendance", "add_employee"].includes(mode);
   let message = "Camera trực tiếp được hiển thị tại kiosk";
 
   if (kioskView) {
-    active = visible && ["attendance", "add_employee"].includes(mode);
     message = mode === "add_employee"
       ? "Đang kết nối camera đăng ký khuôn mặt..."
-      : "Đang kết nối camera điểm danh...";
-  } else if (!simulatedAdminView && store.route === "enrollment") {
-    active = visible && mode === "add_employee";
-  } else if (!simulatedAdminView && store.route === "recognition") {
-    active = visible && mode === "attendance";
-  } else if (store.route === "enrollment" && mode !== "add_employee") {
-    message = "Nhập đủ thông tin rồi bấm “Bắt đầu quét tại kiosk”";
+      : "Đang kết nối camera kiểm soát cửa...";
   }
 
   setCameraStreamActive(active, message);
@@ -282,7 +274,7 @@ function renderRecognitionTest(test) {
   store.recognitionTestVersion = test.version;
   if (test.error) { toast(test.error, true); return; }
   const result = test.result;
-  openModal(`<h2>Kết quả kiểm thử ảnh</h2><p class="subtitle">${esc(result.file)} · Không ghi vào lịch sử điểm danh</p><div class="test-result"><strong>${esc(result.conclusion)}</strong><p>Top 1: ${esc(result.best.name || "Không rõ")} (${esc(result.best.id || "---")}) · Distance ${esc(result.best_distance)}</p><p>Top 2: ${esc(result.second.name || "Không có")} (${esc(result.second.id || "---")}) · Distance ${esc(result.second_distance ?? "---")}</p><p>Margin: ${esc(result.margin)}</p></div><div class="modal-actions"><button class="primary" id="closeTestResult">Đóng</button></div>`);
+  openModal(`<h2>Kết quả kiểm thử ảnh</h2><p class="subtitle">${esc(result.file)} · Không ghi vào lịch sử ra vào</p><div class="test-result"><strong>${esc(result.conclusion)}</strong><p>Top 1: ${esc(result.best.name || "Không rõ")} (${esc(result.best.id || "---")}) · Distance ${esc(result.best_distance)}</p><p>Top 2: ${esc(result.second.name || "Không có")} (${esc(result.second.id || "---")}) · Distance ${esc(result.second_distance ?? "---")}</p><p>Margin: ${esc(result.margin)}</p></div><div class="modal-actions"><button class="primary" id="closeTestResult">Đóng</button></div>`);
   $("#closeTestResult").addEventListener("click", closeModal);
 }
 
@@ -293,18 +285,21 @@ function renderRecognition(result) {
   panel.querySelector(".result-header h2").textContent = result.title;
   panel.querySelector(".result-header p").textContent = result.message;
   const employee = result.employee;
-  panel.querySelector(".employee-summary").innerHTML = employee ? `<img class="avatar" src="${esc(employee.image_url)}" alt="${esc(employee.name)}"><div><h3>${esc(employee.name)}</h3><p>Mã NV: <b>${esc(employee.id)}</b></p><p>Chức vụ: ${esc(employee.role)}</p><p>Phòng ban: ${esc(employee.department)}</p></div>` : `<div class="avatar placeholder">${icon("users")}</div><div><h3>${result.state === "unknown" ? "Người lạ / Khách" : result.state === "ambiguous" ? "Chưa xác định" : "Chưa có lượt quét"}</h3><p>Mã NV: <b>---</b></p><p>Chức vụ: ---</p><p>Phòng ban: ---</p></div>`;
+  panel.querySelector(".employee-summary").innerHTML = employee ? `<img class="avatar" src="${esc(employee.image_url)}" alt="${esc(employee.name)}"><div><h3>${esc(employee.name)}</h3><p>Mã NV: <b>${esc(employee.id)}</b></p><p>Chức vụ: ${esc(employee.role)}</p><p>Phòng ban: ${esc(employee.department)}</p></div>` : `<div class="avatar placeholder">${icon("users")}</div><div><h3>${result.state === "unknown" ? "Người lạ / Khách" : result.state === "ambiguous" ? "Chưa xác định" : "Chưa có lượt xác thực"}</h3><p>Mã NV: <b>---</b></p><p>Chức vụ: ---</p><p>Phòng ban: ---</p></div>`;
   const notice = panel.querySelector(".result-notice");
-  notice.querySelector("strong").textContent = result.state === "ambiguous" ? "Khuôn mặt không khớp đủ tin cậy với hồ sơ đã đăng ký." : result.state === "unknown" ? "Khuôn mặt chưa có trong hệ thống dữ liệu." : employee ? `Chào mừng ${employee.name}.` : "Đưa đầy đủ khuôn mặt vào khung để điểm danh.";
-  notice.querySelector("span").textContent = ["ambiguous", "unknown"].includes(result.state) ? "Không ghi nhận điểm danh thành công." : "Chúc bạn một ngày làm việc hiệu quả!";
-  panel.querySelector(".result-time b").textContent = result.timestamp || "Chờ quét...";
+  notice.querySelector("strong").textContent = result.state === "ambiguous" ? "Từ chối mở cửa: độ tin cậy chưa đạt yêu cầu." : result.state === "unknown" ? "Từ chối mở cửa: khuôn mặt chưa được đăng ký." : employee ? `Cửa đang mở cho ${employee.name}.` : "Đưa đầy đủ khuôn mặt vào khung để xác thực mở cửa.";
+  notice.querySelector("span").textContent = ["ambiguous", "unknown"].includes(result.state) ? "Cửa vẫn đóng. Vui lòng thử lại hoặc liên hệ quản trị viên." : employee ? "Quyền truy cập đã được xác nhận." : "Cửa đang đóng và sẵn sàng xác thực.";
+  panel.querySelector(".result-time b").textContent = result.timestamp || "Chờ xác thực...";
   const retry = $("#retryRecognition"); retry.hidden = !["ambiguous", "unknown", "error"].includes(result.state);
   panel.querySelector(".status-action").hidden = !retry.hidden;
 }
 
 function rowsHtml(rows) {
   if (!rows.length) return `<tr><td class="empty" colspan="6">Chưa có dữ liệu</td></tr>`;
-  return rows.map(row => `<tr><td>${esc(row.time)}</td><td><strong>${esc(row.name)}</strong></td><td>${esc(row.id)}</td><td>${esc(row.role)}</td><td>${esc(row.dept)}</td><td><span class="status-text ${success(row.status) ? "success" : "failed"}">${esc(row.status)}</span></td></tr>`).join("");
+  return rows.map(row => {
+    const allowed = success(row.status);
+    return `<tr><td>${esc(row.time)}</td><td><strong>${esc(row.name)}</strong></td><td>${esc(row.id)}</td><td>${esc(row.role)}</td><td>${esc(row.dept)}</td><td><span class="status-text ${allowed ? "success" : "failed"}">${allowed ? "Đã mở cửa" : "Từ chối"}</span></td></tr>`;
+  }).join("");
 }
 
 async function loadRecent() {
@@ -340,9 +335,9 @@ async function loadDashboard(force = false) {
     const data = await api.dashboard(); store.dashboard.data = data; store.dashboard.stale = false;
     const online = store.runtime?.camera?.running;
     replaceHtml($("#dashboardStats"), [
-      dashboardMetric({ tone: "green", iconName: "monitor", label: "Kiosk Điểm danh", value: online ? "Hoạt động" : "Sẵn sàng", note: online ? "Camera đang kết nối" : "Sẵn sàng phục vụ", decoration: "pulse" }),
+      dashboardMetric({ tone: "green", iconName: "monitor", label: "Kiosk kiểm soát cửa", value: online ? "Hoạt động" : "Sẵn sàng", note: online ? "Camera đang kết nối" : "Cửa đang đóng", decoration: "pulse" }),
       dashboardMetric({ tone: "blue", iconName: "users", label: "Người đăng ký", value: `${data.employees} hồ sơ`, note: "Đã đăng ký trong hệ thống" }),
-      dashboardMetric({ tone: "orange", iconName: "clock", label: "Lượt điểm danh", value: `${data.today_total} lượt`, note: "Trong ngày hôm nay" }),
+      dashboardMetric({ tone: "orange", iconName: "clock", label: "Lượt xác thực", value: `${data.today_total} lượt`, note: "Trong ngày hôm nay" }),
       dashboardMetric({ tone: "violet", iconName: "target", label: "Tỷ lệ thành công", value: `${data.success_rate}%`, note: "Trong ngày hôm nay", decoration: "wave" }),
     ].join(""));
     const max = Math.max(1, ...data.week.map(day => day.value));
@@ -350,10 +345,10 @@ async function loadDashboard(force = false) {
     replaceHtml($("#weekChart"), `<div class="chart-grid"><span>50</span><span>40</span><span>30</span><span>20</span><span>10</span><span>0</span></div><div class="chart-bars">${data.week.map((day, index) => `<div class="chart-column"><div class="chart-value">${day.value}</div><div class="chart-bar-track"><i class="chart-bar-fill${index === currentWeekday ? " current" : ""}" style="height:${Math.max(3, day.value / max * 100)}%"></i></div><strong>${esc(day.label)}</strong><span>${esc(day.date)}</span></div>`).join("")}</div>`);
     replaceHtml($("#dashboardRecent"), data.recent.length ? data.recent.map(row => {
       const ok = success(row.status);
-      return `<div class="timeline-item ${ok ? "ok" : "fail"}"><span class="timeline-dot"></span><span class="timeline-avatar">${icon(ok ? "check" : "x")}</span><div class="timeline-copy"><strong>${esc(row.name)}</strong><span>${ok ? "Điểm danh thành công" : esc(row.reason || "Nhận diện không thành công")}</span></div><time>${esc(relativeTime(row.time))}</time><span class="timeline-status">${esc(row.status)}</span></div>`;
+      return `<div class="timeline-item ${ok ? "ok" : "fail"}"><span class="timeline-dot"></span><span class="timeline-avatar">${icon(ok ? "check" : "x")}</span><div class="timeline-copy"><strong>${esc(row.name)}</strong><span>${ok ? "Xác thực thành công · Đã mở cửa" : esc(row.reason || "Từ chối mở cửa")}</span></div><time>${esc(relativeTime(row.time))}</time><span class="timeline-status">${ok ? "Đã mở cửa" : "Từ chối"}</span></div>`;
     }).join("") : `<div class="empty">Chưa có hoạt động</div>`);
     const failureRate = Math.max(0, 100 - data.success_rate);
-    replaceHtml($("#successOverview"), `<div class="success-donut" style="--rate:${data.success_rate}"><div><strong>${data.success_rate}%</strong><span>Thành công</span></div></div><div class="success-legend"><div><i class="legend-blue"></i><span>Điểm danh thành công</span><strong>${data.success_rate}%<small>${data.today_success} lượt</small></strong></div><div><i class="legend-red"></i><span>Chưa thành công</span><strong>${failureRate}%<small>${data.today_failed} lượt</small></strong></div></div>`);
+    replaceHtml($("#successOverview"), `<div class="success-donut" style="--rate:${data.success_rate}"><div><strong>${data.success_rate}%</strong><span>Thành công</span></div></div><div class="success-legend"><div><i class="legend-blue"></i><span>Được phép mở cửa</span><strong>${data.success_rate}%<small>${data.today_success} lượt</small></strong></div><div><i class="legend-red"></i><span>Bị từ chối</span><strong>${failureRate}%<small>${data.today_failed} lượt</small></strong></div></div>`);
   } catch (error) { toast(error.message, true); }
 }
 
@@ -470,7 +465,7 @@ $("#finishEnrollmentSession").addEventListener("click", async () => {
   try {
     const state = await api.finishEnrollmentSession();
     renderStatus(state);
-    toast("Đã kết thúc phiên đăng ký. Kiosk đã trở về điểm danh.");
+    toast("Đã kết thúc phiên đăng ký. Kiosk đã trở về chế độ kiểm soát cửa.");
   } catch (error) {
     toast(error.message, true);
   }

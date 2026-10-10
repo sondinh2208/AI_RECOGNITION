@@ -47,7 +47,7 @@ in qua Serial; không sao chép IP ví dụ vào ứng dụng.
 Từ thư mục gốc dự án:
 
 ```powershell
-.\venv\Scripts\python.exe start_wifi_facecheck.py --simulate-display
+.\venv\Scripts\python.exe facecheck.py wifi --simulate-display
 ```
 
 Chương trình tự tìm camera, đo FPS MJPEG thực nhận và cảnh báo khi dưới 5 FPS.

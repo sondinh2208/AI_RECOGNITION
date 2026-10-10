@@ -20,7 +20,7 @@ PORT = 8765
 DISPLAY_PORT = 8767
 URL = f"http://{HOST}:{PORT}"
 KIOSK_URL = f"{URL}/?view=kiosk#recognition"
-ADMIN_URL = f"{URL}/#dashboard"
+ADMIN_URL = f"{URL}/?view=admin#dashboard"
 SIMULATED_ADMIN_URL = f"{URL}/?view=admin#dashboard"
 
 
@@ -46,7 +46,7 @@ def _window_specs(simulate_pi=False):
     return [
         {
             "title": "FaceCheck - HỆ THỐNG ĐIỂM DANH & QUẢN TRỊ AI",
-            "url": URL,
+            "url": ADMIN_URL,
             "width": 1440,
             "height": 900,
             "min_size": (1150, 720),

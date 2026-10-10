@@ -23,7 +23,7 @@ from web_admin import (  # noqa: E402
     _reserve_server_socket,
     _window_specs,
 )
-from start_usb_facecheck import parse_args as parse_usb_start_args  # noqa: E402
+from facecheck import parse_args as parse_launcher_args  # noqa: E402
 from ai_engine import (  # noqa: E402
     analyze_face_quality, check_face_constraints, measure_face_brightness,
 )
@@ -91,14 +91,12 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("brightness", state["camera"])
         self.assertIn("light_ok", state["camera"])
 
-        forbidden = await self.display_client.get("/state")
+        forbidden = await self.display_client.get("/frame.jpg")
         self.assertEqual(forbidden.status_code, 403)
-        display_state = (await self.display_client.get(
-            "/state", headers={"x-facecheck-token": "test-display-token"}
-        )).json()
-        self.assertIn(display_state["mode"], {"attendance", "add_employee", "idle"})
-        self.assertIn("title", display_state)
-        self.assertIn("fps", display_state)
+        display_health = await self.display_client.get(
+            "/health", headers={"x-facecheck-token": "test-display-token"}
+        )
+        self.assertEqual(display_health.status_code, 200)
 
         employees = (await self.client.get(
             "/api/employees", params={"page": 1, "page_size": 2}
@@ -121,6 +119,11 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         source = response.text
         self.assertIn('["attendance", "add_employee"].includes(mode)', source)
         self.assertIn('const simulatedAdminView = viewRole === "admin"', source)
+        self.assertIn(
+            'const active = kioskView && visible && ["attendance", "add_employee"].includes(mode)',
+            source,
+        )
+        self.assertNotIn('else if (!simulatedAdminView', source)
         self.assertIn('$("#enrollmentForm").reset()', source)
         for forbidden in (
             "ARCFACE_THRESHOLD", "ARCFACE_TOP2_MARGIN",
@@ -161,17 +164,6 @@ class RuntimeLifecycleTests(unittest.TestCase):
 
         self.assertEqual(data["total"], 100)
         self.assertEqual(data["pages"], 10)
-
-    def test_face_presence_does_not_control_enrollment_timer(self):
-        runtime = WebFaceCheckRuntime(load_ai=False)
-        runtime.current_page = "add_employee"
-        runtime._enrollment_continuous_session = True
-        runtime._enrollment_idle_timer = Mock()
-
-        runtime._note_enrollment_face_presence(False)
-        runtime._note_enrollment_face_presence(True)
-
-        runtime._enrollment_idle_timer.cancel.assert_not_called()
 
     def test_admin_activity_restarts_continuous_enrollment_timer(self):
         runtime = WebFaceCheckRuntime(load_ai=False)
@@ -322,10 +314,19 @@ class RuntimeLifecycleTests(unittest.TestCase):
 
 
 class WebAdminSingleInstanceTests(unittest.TestCase):
+    def test_normal_admin_window_never_uses_kiosk_view(self):
+        specs = _window_specs(simulate_pi=False)
+
+        self.assertEqual(len(specs), 1)
+        self.assertIn("view=admin", specs[0]["url"])
+        self.assertNotIn("view=kiosk", specs[0]["url"])
+
     def test_display_simulation_cli_aliases(self):
         self.assertTrue(parse_web_admin_args(["--simulate-display"]).simulate_display)
         self.assertTrue(parse_web_admin_args(["--simulate-pi"]).simulate_display)
-        self.assertTrue(parse_usb_start_args(["--simulate-display"]).simulate_display)
+        args = parse_launcher_args(["usb", "--simulate-display"])
+        self.assertEqual(args.camera, "usb")
+        self.assertTrue(args.simulate_display)
 
     def test_pi_simulation_uses_one_kiosk_and_one_admin_window(self):
         specs = _window_specs(simulate_pi=True)

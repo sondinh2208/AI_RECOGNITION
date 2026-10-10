@@ -112,7 +112,7 @@ def main() -> None:
     from deepface import DeepFace
     detector = load_face_detector()
 
-    destinations = (Path("data/faces"), Path("images"), Path("database/images"))
+    destinations = (Path("data/faces"),)
     for destination in destinations:
         destination.mkdir(parents=True, exist_ok=True)
 

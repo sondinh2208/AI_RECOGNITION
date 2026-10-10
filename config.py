@@ -69,8 +69,6 @@ KIOSK_MAX_PITCH_RATIO = 2.20
 
 FACE_CONFIDENCE = 0.45
 FACE_DETECTION_IMAGE_SIZE = 320   # Ưu tiên tốc độ; YOLO mặc định 640 chậm và dư cho QVGA
-PERSON_CONFIDENCE = 0.5
-PERSON_CLASS_ID = 0
 
 # Ràng buộc khuôn mặt
 FACE_MIN_SIZE_RATIO = 0.55    # face_w >= 50% box_w
@@ -109,9 +107,9 @@ HUD_CORNER_LENGTH = 45            # Chiều dài 1 cạnh của góc
 HUD_CORNER_THICKNESS = 5          # Độ dày nét vẽ
 
 # Bottom Status Bar
-STATUS_BAR_HEIGHT = 45
-STATUS_FONT_SCALE = 0.65
-STATUS_FONT_THICKNESS = 2
+STATUS_BAR_HEIGHT = 34
+STATUS_FONT_SCALE = 0.48
+STATUS_FONT_THICKNESS = 1
 
 
 # ============================================
@@ -120,46 +118,11 @@ STATUS_FONT_THICKNESS = 2
 CV_COLOR_DEFAULT = (75, 195, 140)   # Xanh olive/lime (chưa khóa)
 CV_COLOR_RED = (50, 50, 255)        # Lỗi / chưa hợp lệ (Đỏ Cam)
 CV_COLOR_GREEN = (100, 255, 100)    # Hợp lệ (Xanh lá dịu)
-CV_COLOR_WHITE = (255, 255, 255)    # Trắng
-CV_COLOR_CYAN = (255, 255, 0)      # Bounding box (nếu cần)
 
 
 # ============================================
-# CẤU HÌNH GIAO DIỆN ADMIN PANEL (Enterprise HR / Attendance Palette)
+# PIPELINE TIMING
 # ============================================
-CTK_BG_MAIN = ("#F6F7F9", "#0F172A")        # Main background: Clean light gray / Dark slate
-CTK_BG_DARK = ("#FFFFFF", "#1E293B")        # Sidebar background: Clean white / Dark slate surface
-CTK_CARD = ("#FFFFFF", "#1E293B")           # Card/Surface: Clean white / Dark slate surface
-CTK_ACCENT = ("#E5E7EB", "#334155")         # Borders & dividers: Soft gray #E5E7EB / Slate border #334155
-CTK_PRIMARY = ("#2563EB", "#3B82F6")        # Primary Blue
-CTK_PRIMARY_HOVER = ("#1D4ED8", "#2563EB")  # Primary Blue Hover
-CTK_SUCCESS = ("#16A34A", "#22C55E")        # Success Green
-CTK_DANGER = ("#DC2626", "#EF4444")         # Danger Red
-CTK_WARNING = ("#D97706", "#F59E0B")        # Warning Amber
-CTK_TEXT = ("#1F2937", "#F8FAFC")           # Text primary: Dark slate #1F2937 / Off-white #F8FAFC
-CTK_TEXT_DIM = ("#6B7280", "#94A3B8")       # Text secondary: Slate-500 #6B7280 / Slate-400 #94A3B8
-CTK_SIDEBAR_HOVER = ("#F3F4F6", "#334155")  # Sidebar item hover
-CTK_BTN_ACTIVE = ("#0284C7", "#00A3E0")     # Active nav item background: Sky blue / Bright cyan
-CTK_BTN_ACTIVE_TEXT = ("#FFFFFF", "#FFFFFF")# Active nav item text: Pure white
-
-
-
-
-# ============================================
-# CẤU HÌNH KIOSK CAMERA WINDOW
-# ============================================
-KIOSK_WINDOW_NAME = "KIOSK - Nhan dien khuon mat"
-
-
-# ============================================
-# CẤU HÌNH ADMIN PANEL WINDOW
-# ============================================
-ADMIN_WINDOW_WIDTH = 1320
-ADMIN_WINDOW_HEIGHT = 780
-ADMIN_SIDEBAR_WIDTH = 250
-ADMIN_CAMERA_WIDTH = 520
-ADMIN_CAMERA_HEIGHT = 350
-ADMIN_CAMERA_FPS_DELAY = 25    # UI camera ~30-40 FPS: hiển thị mượt mà thời gian thực
 KIOSK_DETECTION_INTERVAL_SECONDS = 0.08  # YOLO tối đa ~12.5 lần/giây
 ENROLLMENT_DETECTION_INTERVAL_SECONDS = 0.10  # AI đăng ký tối đa 10 lần/giây
 ENROLLMENT_EMBEDDING_SAMPLES = 5      # Số vector lưu cho mỗi hồ sơ (chỉ lưu 1 ảnh)

@@ -4,8 +4,8 @@ AI ENGINE - Nhận diện khuôn mặt
 ============================================
 Module chứa toàn bộ logic AI:
   - Kiểm tra GPU / CUDA
-  - Load models (YOLOv8-Face, YOLOv8n Person, MediaPipe)
-  - Detect faces / persons
+  - Load YOLOv8-Face and MediaPipe models
+  - Detect faces
   - Kiểm tra ràng buộc (vị trí, kích thước, góc nghiêng)
 ============================================
 """
@@ -23,7 +23,6 @@ from ultralytics import YOLO
 from config import (
     FACE_MODEL_PATH, MP_FACE_MODEL_PATH,
     FACE_CONFIDENCE, FACE_DETECTION_IMAGE_SIZE,
-    PERSON_CONFIDENCE, PERSON_CLASS_ID,
     FACE_MIN_SIZE_RATIO, FACE_MAX_SIZE_RATIO, FACE_MAX_TILT_ANGLE,
     FACE_MIN_BRIGHTNESS, FACE_MIN_SHADOW_LEVEL, FACE_MAX_BRIGHTNESS,
     ENROLLMENT_MIN_YOLO_CONFIDENCE, ENROLLMENT_MIN_MEDIAPIPE_CONFIDENCE,
@@ -40,48 +39,6 @@ from config import (
 # ============================================
 # GPU / CUDA
 # ============================================
-def check_gpu():
-    """
-    Kiểm tra và hiển thị thông tin GPU/CUDA.
-    Returns:
-        device_str: '0' nếu có GPU, 'cpu' nếu không
-    """
-    print("\n" + "=" * 50)
-    print("  KIỂM TRA GPU / CUDA")
-    print("=" * 50)
-    
-    if torch.cuda.is_available():
-        gpu_name = torch.cuda.get_device_name(0)
-        gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        print(f"✅ PyTorch CUDA: SẴN SÀNG")
-        print(f"🔌 GPU: {gpu_name}")
-        print(f"💾 VRAM: {gpu_memory:.1f} GB")
-        print(f"🔧 CUDA Version: {torch.version.cuda}")
-        print(f"📦 PyTorch Version: {torch.__version__}")
-        device = '0'
-    else:
-        print("⚠️  PyTorch CUDA: KHÔNG KHẢ DỤNG")
-        print("    -> Sẽ fallback về CPU (chậm hơn đáng kể)")
-        device = 'cpu'
-    
-    # TensorFlow GPU check (cho DeepFace)
-    try:
-        import tensorflow as tf
-        gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
-            print(f"✅ TensorFlow GPU: SẴN SÀNG ({len(gpus)} GPU)")
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            print("   -> Đã bật memory growth (tối ưu VRAM)")
-        else:
-            print("⚠️  TensorFlow GPU: KHÔNG KHẢ DỤNG")
-    except ImportError:
-        print("ℹ️  TensorFlow: Chưa cài đặt (sẽ cần cho DeepFace)")
-    except Exception as e:
-        print(f"⚠️  TensorFlow GPU check lỗi: {e}")
-    
-    print("=" * 50 + "\n")
-    return device
 
 
 def check_gpu_quick():
@@ -123,20 +80,6 @@ def load_face_model(device='0'):
     return face_model, device
 
 
-def load_person_model(device='0'):
-    """
-    Load YOLOv8n (COCO) cho detect person.
-    Returns:
-        (person_model, device) hoặc (None, device) nếu lỗi
-    """
-    try:
-        person_model = YOLO("yolov8n.pt")
-        target = 'GPU' if device == '0' and torch.cuda.is_available() else 'CPU'
-        print(f"[AI] YOLOv8n Person loaded → {target}")
-        return person_model, device
-    except Exception as e:
-        print(f"[AI] WARN: Không load được person model: {e}")
-        return None, device
 
 
 def load_mediapipe_detector():
@@ -197,29 +140,6 @@ def detect_faces(face_model, frame, device='0'):
     return faces
 
 
-def detect_persons(person_model, frame, device='0'):
-    """
-    Detect "person" bằng YOLOv8n (COCO).
-    Returns:
-        persons: [(x1, y1, x2, y2, confidence), ...]
-    """
-    if person_model is None:
-        return []
-    
-    results = person_model(frame, verbose=False, conf=PERSON_CONFIDENCE, device=device)
-    
-    persons = []
-    for result in results:
-        if result.boxes is None:
-            continue
-        for box in result.boxes:
-            if int(box.cls[0]) != PERSON_CLASS_ID:
-                continue
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-            confidence = float(box.conf[0])
-            persons.append((x1, y1, x2, y2, confidence))
-    
-    return persons
 
 
 # ============================================

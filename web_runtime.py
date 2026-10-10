@@ -37,7 +37,6 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._event_version = 0
         self._started = False
         self._load_ai_requested = load_ai
-        self._web_stream_only = True
 
         self.camera_cap = None
         self.camera_running = False
@@ -64,7 +63,6 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self.kiosk_running = False
         self.is_recognizing = False
         self.kiosk_latest_frame = None
-        self.kiosk_latest_pil = None
         self.kiosk_fps = 0.0
         self.kiosk_face_count = 0
         self.kiosk_thread = None
@@ -98,7 +96,6 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self.enrollment_captured_samples = []
         self.enrollment_captured_frame = None
         self.enrollment_captured_face = None
-        self._enrollment_preview_shown = False
         self._enrollment_waiting_for_face_leave = False
         self._enrollment_saving = False
         self._enrollment_continuous_session = False
@@ -131,8 +128,6 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         }
 
         Path(DATA_FACES_DIR).mkdir(parents=True, exist_ok=True)
-        Path("images").mkdir(parents=True, exist_ok=True)
-        Path("database/images").mkdir(parents=True, exist_ok=True)
         Path("data").mkdir(parents=True, exist_ok=True)
         self._load_attendance_history()
 
@@ -140,8 +135,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
     def _idle_payload():
         return {
             "state": "idle",
-            "title": "Chờ nhận diện",
-            "message": "Hệ thống tự động ghi nhận khi có nhân viên",
+            "title": "Cửa đang đóng",
+            "message": "Đưa khuôn mặt vào khung để xác thực mở cửa",
             "employee": None,
             "timestamp": None,
             "metrics": None,
@@ -186,11 +181,6 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
     def _publish(self):
         with self._lock:
             self._event_version += 1
-
-    @property
-    def event_version(self):
-        with self._lock:
-            return self._event_version
 
     def snapshot(self):
         with self._lock:
@@ -288,8 +278,6 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 target_width, target_height = 480, 250
                 if self.kiosk_latest_frame is not None:
                     frame = self.kiosk_latest_frame
-                elif self.kiosk_latest_pil is not None:
-                    frame = cv2.cvtColor(np.asarray(self.kiosk_latest_pil), cv2.COLOR_RGB2BGR)
             else:
                 # Che do dang ky eKYC: lay truc tiep frame laptop, dung toan man hinh 480x320
                 target_width, target_height = 480, 320
@@ -384,10 +372,6 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             if self.current_page == "attendance":
                 if self.kiosk_latest_frame is not None:
                     frame = self.kiosk_latest_frame
-                elif self.kiosk_latest_pil is not None:
-                    frame = cv2.cvtColor(
-                        np.asarray(self.kiosk_latest_pil), cv2.COLOR_RGB2BGR
-                    )
             elif self.latest_processed_frame is not None:
                 frame = self.latest_processed_frame
             if frame is None:
@@ -415,22 +399,14 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 return frame_id, cached_bytes
             return frame_id, None
 
-    def camera_jpeg(self):
-        _, bytes_data = self.camera_jpeg_frame()
-        return bytes_data
 
-    def _update_kiosk_frame(self):
-        """The browser consumes frames from ``camera_jpeg``; no Tk repaint loop."""
-
-    def _update_frame(self):
-        """The browser consumes frames from ``camera_jpeg``; no Tk repaint loop."""
 
     # ---------- Callback nhận diện: chỉ chuyển state sang JSON ----------
     def _on_kiosk_recognizing_started(self):
         self.recognition_state = {
             **self._idle_payload(), "state": "recognizing",
-            "title": "Đang nhận diện khuôn mặt",
-            "message": "Đang đối chiếu dữ liệu nhân sự...",
+            "title": "Đang xác thực quyền truy cập",
+            "message": "Đang đối chiếu khuôn mặt với hồ sơ đã đăng ký...",
         }
         self._publish()
 
@@ -440,7 +416,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self.recognition_state = {
             **self._idle_payload(), "state": "validating",
             "title": "Chưa xác định người gần nhất",
-            "message": "Người cần điểm danh vui lòng tiến gần camera hơn",
+            "message": "Người cần mở cửa vui lòng tiến gần camera hơn",
         }
         self._publish()
 
@@ -458,14 +434,14 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self.recognition_state = {
             **self._idle_payload(), "state": "recognizing",
             "title": "Đang xác minh lại",
-            "message": f"Lần kiểm tra {attempt}/2 · Vui lòng giữ nguyên khuôn mặt",
+            "message": f"Lần kiểm tra {attempt}/2 · Cửa vẫn đóng, vui lòng giữ nguyên khuôn mặt",
         }
         self._publish()
 
     def _on_kiosk_strict_confirmation_pending(self, votes, attempts, distance, margin):
         self.recognition_state = {
             **self._idle_payload(), "state": "strict_confirmation",
-            "title": "Đang xác minh danh tính",
+            "title": "Đang kiểm tra quyền mở cửa",
             "message": f"Đạt ngưỡng an toàn · {votes}/3 frame, lượt {attempts}/5",
             "metrics": {"distance": distance, "margin": margin},
         }
@@ -707,8 +683,6 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             self._enrollment_continuous_session = False
             self._enrollment_scan_armed = False
 
-    def _note_enrollment_face_presence(self, has_face):
-        """API tương thích; khuôn mặt không còn điều khiển timeout phiên."""
 
     def _restart_enrollment_idle_timer(self):
         """Khởi động lại timeout khi có thao tác đăng ký có ý nghĩa."""
@@ -837,7 +811,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         candidates = []
         if profile and profile.get("image_path"):
             candidates.append(Path(profile["image_path"]))
-        for folder in (Path("database/images"), Path("images"), Path(DATA_FACES_DIR)):
+        for folder in (Path(DATA_FACES_DIR),):
             candidates.extend(folder.glob(f"{emp_id}@*"))
             candidates.extend(folder.glob(f"{emp_id}_*"))
         return next((path for path in candidates if path.exists()), None)
@@ -935,7 +909,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             filename = f"{new_id}@{role.replace(' ', '_')}@{department.replace(' ', '_')}@{name.replace(' ', '_')}_{timestamp}.jpg"
             renames = []
             if new_id != emp_id or any(profile.get(k) != v for k, v in (("name", name), ("role", role), ("department", department))):
-                for folder in (Path(DATA_FACES_DIR), Path("images"), Path("database/images")):
+                for folder in (Path(DATA_FACES_DIR),):
                     source = next(iter(folder.glob(f"{emp_id}@*")), None)
                     if source and source.exists():
                         target = folder / filename
@@ -978,7 +952,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             if key is None:
                 raise KeyError("Không tìm thấy nhân viên")
             profiles.pop(key)
-            for folder in (Path(DATA_FACES_DIR), Path("images"), Path("database/images")):
+            for folder in (Path(DATA_FACES_DIR),):
                 for image in list(folder.glob(f"{emp_id}@*")) + list(folder.glob(f"{emp_id}_*")):
                     image.unlink(missing_ok=True)
             self._write_profiles(profiles)

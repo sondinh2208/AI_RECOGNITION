@@ -1,26 +1,15 @@
-"""
-==============================================================
-CAMERA MIXIN
-Quản lý kết nối camera OpenCV, luồng chạy AI background cho tab
-quét khuôn mặt nhân viên mới (Enrollment) và cập nhật frame lên UI.
-==============================================================
-"""
+"""Pipeline camera cho ??ng k? khu?n m?t tr?n web runtime."""
 
 import cv2
 import time
 import threading
 import mediapipe as mp
-from PIL import Image
-import customtkinter as ctk
 
 from config import (
-    ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT, ADMIN_CAMERA_FPS_DELAY,
-    CAMERA_DEVICE_IDS, CAMERA_SOURCES,
-    ENROLLMENT_DETECTION_INTERVAL_SECONDS,
+    CAMERA_SOURCES, ENROLLMENT_DETECTION_INTERVAL_SECONDS,
     ENROLLMENT_SAMPLE_INTERVAL_SECONDS, ENROLLMENT_AUTO_CAPTURE_SECONDS,
     ENROLLMENT_VALID_STREAK, ENROLLMENT_INVALID_STREAK,
     ENROLLMENT_MIN_SAMPLES, FACE_CROP_PADDING_RATIO,
-    CTK_SUCCESS, CTK_DANGER, CTK_WARNING,
     CAMERA_HORIZONTAL_FLIP,
 )
 from ai_engine import detect_faces, check_face_constraints, measure_face_brightness
@@ -28,7 +17,7 @@ from ekyc_renderer import compute_ekyc_layout, create_rounded_rect_mask, render_
 
 
 class CameraMixin:
-    """Mixin quản lý camera chung và luồng camera Enrollment."""
+    """Qu?n l? camera v? lu?ng thu m?u ??ng k?."""
 
     def _start_camera(self):
         """Khởi tạo camera + tính layout eKYC với cấu hình phần cứng tối ưu (MJPG, 30 FPS, buffer 1)."""
@@ -66,12 +55,6 @@ class CameraMixin:
                         self.frame_width, self.frame_height,
                         self.shape_rect, corner_radius)
                     
-                    if hasattr(self, 'cam_status_dot'):
-                        self.cam_status_dot.configure(text="● LIVE", text_color=CTK_SUCCESS)
-                    if hasattr(self, 'lbl_stat_status'):
-                        self.lbl_stat_status.configure(text="● Hoạt động tốt", text_color=CTK_SUCCESS)
-                    if hasattr(self, 'cam_live_status'):
-                        self.cam_live_status.configure(text="● ĐANG CHỜ KHUÔN MẶT", text_color=CTK_SUCCESS)
                     print(f"[CAMERA] Đã kết nối camera ID={cam_id} ({self.frame_width}x{self.frame_height} @ 30 FPS MJPG)")
                     
                     if self.current_page == "attendance":
@@ -81,24 +64,14 @@ class CameraMixin:
                             self.kiosk_running = True
                             self.kiosk_thread = threading.Thread(target=self._kiosk_camera_loop, daemon=True)
                             self.kiosk_thread.start()
-                        self._update_kiosk_frame()
                     else:
                         self.enrollment_running = True
                         self.camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
                         self.camera_thread.start()
-                        self._update_frame()
                     return
                 else:
                     cap.release()
         
-        if hasattr(self, 'cam_status_dot'):
-            self.cam_status_dot.configure(text="● OFFLINE", text_color=CTK_DANGER)
-        if hasattr(self, 'lbl_stat_status'):
-            self.lbl_stat_status.configure(text="● Mất kết nối", text_color=CTK_DANGER)
-        if hasattr(self, 'cam_live_status'):
-            self.cam_live_status.configure(text="● KHÔNG CÓ TÍN HIỆU CAMERA", text_color=CTK_DANGER)
-        if hasattr(self, 'camera_label'):
-            self.camera_label.configure(text="Không thể kết nối camera.\nKiểm tra thiết bị.")
         print("[CAMERA] KHÔNG TÌM THẤY CAMERA!")
 
     def _camera_loop(self):
@@ -296,7 +269,6 @@ class CameraMixin:
                                 self.enrollment_captured_frame = frame.copy()
                                 self.enrollment_captured_face = frame[cy1:cy2, cx1:cx2].copy()
                                 self.enrollment_capture_ready = True
-                                self._enrollment_preview_shown = False
                                 display_text = "DA QUET KHUON MAT - SAN SANG LUU"
                                 print("[ENROLLMENT] Tự động quét khuôn mặt hoàn tất sau 3 giây.")
             
@@ -337,132 +309,5 @@ class CameraMixin:
             else:
                 smoothed_fps = 0.9 * smoothed_fps + 0.1 * instant_fps
                 
-            # Trình duyệt dùng trực tiếp ``latest_processed_frame``. Chỉ tạo
-            # PIL preview khi chạy giao diện Tk cũ để tránh resize/chuyển màu
-            # lần thứ hai trên mỗi frame.
-            if not getattr(self, '_web_stream_only', False):
-                try:
-                    output_resized = cv2.resize(output, (ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT), interpolation=cv2.INTER_LINEAR)
-                    frame_rgb = cv2.cvtColor(output_resized, cv2.COLOR_BGR2RGB)
-                    self.latest_pil_image = Image.fromarray(frame_rgb)
-                except Exception:
-                    pass
-                
             self.latest_processed_frame = output
             self._current_frame_id = getattr(self, '_current_frame_id', 0) + 1
-
-    def _update_frame(self):
-        """
-        Main UI Thread: Lấy ảnh PIL đã định dạng từ background thread và hiển thị (siêu nhẹ, <1ms).
-        """
-        if not self.camera_running or self.current_page != "add_employee":
-            return
-            
-        pil_image = getattr(self, 'latest_pil_image', None)
-        if pil_image is not None and hasattr(self, 'camera_label'):
-            ctk_image = ctk.CTkImage(
-                light_image=pil_image, dark_image=pil_image,
-                size=(ADMIN_CAMERA_WIDTH, ADMIN_CAMERA_HEIGHT),
-            )
-            self.camera_label.configure(image=ctk_image, text="")
-            self.photo_image = ctk_image
-        
-        # --- Cập nhật Telemetry Metrics ---
-        if hasattr(self, 'lbl_stat_fps'):
-            self.lbl_stat_fps.configure(text=f"{int(getattr(self, 'current_fps', 0))}")
-            
-        if hasattr(self, 'lbl_stat_conf'):
-            c_val = getattr(self, 'current_conf', 0.0)
-            self.lbl_stat_conf.configure(text=f"{c_val:.2f}" if c_val > 0 else "0.00")
-
-        # Snapshot hoàn tất được hiển thị một lần ở form và mở nút Lưu.
-        if (
-            getattr(self, "enrollment_capture_ready", False)
-            and not getattr(self, "_enrollment_preview_shown", False)
-        ):
-            captured_face = getattr(self, "enrollment_captured_face", None)
-            if captured_face is not None and captured_face.size > 0:
-                preview_rgb = cv2.cvtColor(captured_face, cv2.COLOR_BGR2RGB)
-                preview_pil = Image.fromarray(preview_rgb).resize(
-                    (160, 120), Image.Resampling.LANCZOS
-                )
-                preview_ctk = ctk.CTkImage(
-                    light_image=preview_pil,
-                    dark_image=preview_pil,
-                    size=(160, 120),
-                )
-                self.preview_label.configure(image=preview_ctk, text="")
-                self.preview_label.image = preview_ctk
-                self.preview_label.pack(pady=(5, 0))
-            if hasattr(self, "btn_capture"):
-                self.btn_capture.configure(state="normal", text="LƯU KHUÔN MẶT")
-            if hasattr(self, "status_label"):
-                self._set_status(
-                    "✓ Đã quét khuôn mặt. Nhập thông tin và bấm Lưu khuôn mặt.",
-                    CTK_SUCCESS,
-                )
-            self._enrollment_preview_shown = True
-            
-        if hasattr(self, 'cam_live_status'):
-            if getattr(self, "enrollment_capture_ready", False):
-                self.cam_live_status.configure(
-                    text="● ĐÃ QUÉT KHUÔN MẶT · SẴN SÀNG LƯU",
-                    text_color=CTK_SUCCESS
-                )
-            elif self.is_face_valid:
-                self.cam_live_status.configure(
-                    text=f"● {self.ai_status_text.upper()}",
-                    text_color=CTK_WARNING,
-                )
-            elif getattr(self, 'current_conf', 0.0) > 0:
-                self.cam_live_status.configure(
-                    text=f"● {self.ai_status_text.upper()}",
-                    text_color=CTK_WARNING
-                )
-            else:
-                self.cam_live_status.configure(
-                    text="● CHƯA PHÁT HIỆN KHUÔN MẶT",
-                    text_color=CTK_DANGER
-                )
-        
-        self.after(ADMIN_CAMERA_FPS_DELAY, self._update_frame)
-
-    def _toggle_camera(self):
-        """Tạm dừng / tiếp tục camera."""
-        if self.camera_running:
-            self.camera_running = False
-            if not getattr(self, "enrollment_capture_ready", False):
-                self._reset_enrollment_scan(clear_preview=True)
-            self.btn_toggle_cam.configure(text="▶  Tiếp tục")
-            self.cam_status_dot.configure(text="● PAUSED", text_color=CTK_WARNING)
-            if hasattr(self, 'lbl_stat_status'):
-                self.lbl_stat_status.configure(text="● Tạm dừng", text_color=CTK_WARNING)
-            if hasattr(self, 'cam_live_status'):
-                self.cam_live_status.configure(text="● TẠM DỪNG CAMERA", text_color=CTK_WARNING)
-        else:
-            self.camera_running = True
-            self.btn_toggle_cam.configure(text="⏸  Tạm dừng")
-            self.cam_status_dot.configure(text="● LIVE", text_color=CTK_SUCCESS)
-            if hasattr(self, 'lbl_stat_status'):
-                self.lbl_stat_status.configure(text="● Hoạt động tốt", text_color=CTK_SUCCESS)
-            
-            if self.camera_thread is None or not self.camera_thread.is_alive():
-                self.camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
-                self.camera_thread.start()
-                
-            self._update_frame()
-
-    def _restart_camera(self):
-        """Khởi động lại camera."""
-        self.camera_running = False
-        self._reset_enrollment_scan(clear_preview=True)
-        if self.camera_cap is not None:
-            self.camera_cap.release()
-            self.camera_cap = None
-        self.camera_label.configure(image=None, text="Đang khởi động lại camera...")
-        self.cam_status_dot.configure(text="● RESTARTING", text_color=CTK_WARNING)
-        if hasattr(self, 'lbl_stat_status'):
-            self.lbl_stat_status.configure(text="● Đang khởi động...", text_color=CTK_WARNING)
-        if hasattr(self, 'cam_live_status'):
-            self.cam_live_status.configure(text="● ĐANG KẾT NỐI LẠI...", text_color=CTK_WARNING)
-        self.after(500, self._start_camera)
