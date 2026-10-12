@@ -1,9 +1,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <WebSocketsClient.h>
 #include "esp_camera.h"
 #include "esp_http_server.h"
 #include "esp_wifi.h"
+#include "esp_task_wdt.h"
 #include "img_converters.h"
 #include "lwip/sockets.h"
 #include "secrets.h"
@@ -33,7 +35,7 @@ constexpr char kStreamPart[] =
     "\r\n--facecheck-boundary\r\nContent-Type: image/jpeg\r\n"
     "Content-Length: %u\r\n\r\n";
 // QVGA/q15: tang chi tiet nhe, ha nhịp de van giu do tre on dinh.
-constexpr uint32_t kStreamTargetFps = 18;
+constexpr uint32_t kStreamTargetFps = 6;
 constexpr uint32_t kStreamFrameIntervalMs = 1000 / kStreamTargetFps;
 
 httpd_handle_t web_server = nullptr;
@@ -44,6 +46,90 @@ volatile bool stream_client_active = false;
 volatile uint32_t stream_client_count = 0;
 volatile uint32_t stream_frame_count = 0;
 volatile float stream_fps = 0.0f;
+WebSocketsClient camera_socket;
+volatile bool ws_connected = false;
+volatile uint32_t ws_frame_count = 0;
+volatile float ws_fps = 0.0f;
+
+void websocket_event(WStype_t type, uint8_t *payload, size_t length) {
+  (void)payload;
+  (void)length;
+  if (type == WStype_CONNECTED) {
+    ws_connected = true;
+    Serial.printf("[WS] Da ket noi ws://%s:%u/camera\n",
+                  FACECHECK_SERVER_HOST, FACECHECK_WS_PORT);
+  } else if (type == WStype_DISCONNECTED) {
+    ws_connected = false;
+    ws_fps = 0.0f;
+    Serial.println("[WS] Mat ket noi; se tu ket noi lai.");
+  }
+}
+
+void start_camera_socket() {
+  const String path = String("/camera?token=") + FACECHECK_CAMERA_TOKEN;
+  camera_socket.begin(FACECHECK_SERVER_HOST, FACECHECK_WS_PORT, path.c_str());
+  camera_socket.onEvent(websocket_event);
+  camera_socket.setReconnectInterval(2000);
+  // Phat hien socket nua-mo nhanh de video khong dung hang chuc giay.
+  camera_socket.enableHeartbeat(5000, 2000, 1);
+}
+
+void push_websocket_frame() {
+  static unsigned long last_frame_at = 0;
+  static unsigned long window_started = millis();
+  static uint32_t window_frames = 0;
+  static uint32_t window_bytes = 0;
+  static uint32_t window_capture_ms = 0;
+  static uint32_t window_send_ms = 0;
+  if (!ws_connected || stream_client_count > 0) return;
+
+  const unsigned long now = millis();
+  if (now - last_frame_at < kStreamFrameIntervalMs) return;
+  last_frame_at = now;
+
+  const unsigned long capture_started = millis();
+  camera_fb_t *frame = esp_camera_fb_get();
+  const uint32_t capture_ms = millis() - capture_started;
+  if (!frame) return;
+
+  bool sent = false;
+  uint32_t send_ms = 0;
+  if (frame->format == PIXFORMAT_JPEG && frame->len > 0) {
+    const unsigned long send_started = millis();
+    sent = camera_socket.sendBIN(frame->buf, frame->len);
+    send_ms = millis() - send_started;
+  }
+  const size_t frame_length = frame->len;
+  esp_camera_fb_return(frame);
+  if (!sent) {
+    // Khong giu socket nua-mo sau mot frame gui that bai.
+    camera_socket.disconnect();
+    return;
+  }
+
+  ++ws_frame_count;
+  ++window_frames;
+  window_bytes += frame_length;
+  window_capture_ms += capture_ms;
+  window_send_ms += send_ms;
+  const uint32_t elapsed = millis() - window_started;
+  if (elapsed >= 2000) {
+    ws_fps = window_frames * 1000.0f / elapsed;
+    Serial.printf(
+        "[WS] FPS=%.1f | CAP=%u ms | SEND=%u ms | JPEG=%u B | "
+        "RSSI=%d dBm | heap=%u\n",
+        ws_fps,
+        window_frames ? window_capture_ms / window_frames : 0,
+        window_frames ? window_send_ms / window_frames : 0,
+        window_frames ? window_bytes / window_frames : 0,
+        WiFi.RSSI(), ESP.getFreeHeap());
+    window_frames = 0;
+    window_bytes = 0;
+    window_capture_ms = 0;
+    window_send_ms = 0;
+    window_started = millis();
+  }
+}
 
 void begin_station_connection() {
   if (strlen(WIFI_PASSWORD) == 0) {
@@ -87,15 +173,18 @@ connectCamera();
 }
 
 esp_err_t health_handler(httpd_req_t *request) {
-  char response[256];
+  char response[384];
   snprintf(response, sizeof(response),
            "{\"ok\":true,\"camera\":\"OV3660\",\"rssi\":%d,"
            "\"free_heap\":%u,\"stream_active\":%s,\"stream_clients\":%u,"
            "\"stream_frames\":%u,"
-           "\"stream_fps\":%.1f,\"target_fps\":%u,\"ip\":\"%s\"}",
+           "\"stream_fps\":%.1f,\"target_fps\":%u,"
+           "\"ws_connected\":%s,\"ws_frames\":%u,\"ws_fps\":%.1f,"
+           "\"ip\":\"%s\"}",
            WiFi.RSSI(), ESP.getFreeHeap(),
            stream_client_active ? "true" : "false", stream_client_count,
            stream_frame_count, stream_fps, kStreamTargetFps,
+           ws_connected ? "true" : "false", ws_frame_count, ws_fps,
            WiFi.localIP().toString().c_str());
   httpd_resp_set_type(request, "application/json");
   httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "*");
@@ -292,14 +381,16 @@ bool start_camera() {
   config.pin_sccb_scl = CAM_PIN_SIOC;
   config.pin_pwdn = CAM_PIN_PWDN;
   config.pin_reset = CAM_PIN_RESET;
-  config.xclk_freq_hz = 20000000;
+  config.xclk_freq_hz = 10000000;
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size = FRAMESIZE_QVGA;
   // Số lớn hơn tạo JPEG nhẹ hơn. 15 giữ đủ chi tiết khuôn mặt và giảm tải Wi-Fi.
-  config.jpeg_quality = 15;
-  config.fb_count = 3;
+  // QVGA/q45 giu frame quanh 4 KB de giam TCP packet va retransmit Wi-Fi.
+  config.jpeg_quality = 45;
+  // Mot framebuffer ngan camera ghi frame moi khi TCP dang gui frame hien tai.
+  config.fb_count = 1;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.grab_mode = CAMERA_GRAB_LATEST;
+  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
 
   const esp_err_t error = esp_camera_init(&config);
   if (error != ESP_OK) {
@@ -339,7 +430,7 @@ void setup() {
   if (!start_camera()) {
     while (true) delay(1000);
   }
-  Serial.println("[CAMERA] San sang (QVGA/q15, 3 buffers, balanced quality)");
+  Serial.println("[CAMERA] San sang (QVGA/q15, XCLK 10 MHz, 1 buffer)");
 #else
   Serial.println("[TEST] Bo qua camera va web server, chi kiem tra SoftAP.");
 #endif
@@ -394,6 +485,7 @@ void setup() {
 #endif
 #if !FACECHECK_AP_ONLY_TEST
   start_web_servers();
+  start_camera_socket();
 #endif
 
 #if CAMERA_USE_SOFT_AP
@@ -411,9 +503,15 @@ void setup() {
   if (stream_server_ready) {
     Serial.printf("[WEB] MJPEG stream:  http://%s:81/stream\n", ip.c_str());
   }
+
+  // Tu khoi dong lai neu camera/TCP driver giu loop qua lau. Bat watchdog sau
+  // giai doan ket noi Wi-Fi de setup duoc phep cho DHCP toi 30 giay.
+  esp_task_wdt_init(8, true);
+  esp_task_wdt_add(nullptr);
 }
 
 void loop() {
+  esp_task_wdt_reset();
   static unsigned long last_report = 0;
 #if !CAMERA_USE_SOFT_AP
   static unsigned long last_reconnect_attempt = 0;
@@ -436,6 +534,10 @@ void loop() {
     begin_station_connection();
   }
 #endif
+#if !FACECHECK_AP_ONLY_TEST
+  camera_socket.loop();
+  push_websocket_frame();
+#endif
   if (millis() - last_report >= 10000) {
     last_report = millis();
 #if CAMERA_USE_SOFT_AP
@@ -449,5 +551,5 @@ void loop() {
                   temperatureRead());
 #endif
   }
-  delay(100);
+  delay(1);
 }

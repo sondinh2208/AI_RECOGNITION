@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import numpy as np
 
+from camera_capture import open_camera_capture
+
 from config import (
     DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, ARCFACE_TOP2_MARGIN,
     ARCFACE_UNCERTAIN_THRESHOLD, ARCFACE_STRICT_CONFIRMATIONS,
@@ -183,14 +185,14 @@ class AttendanceMixin:
                         pass
                     cam_source = CAMERA_STREAM_URL if CAMERA_STREAM_URL else (CAMERA_SOURCES[0] if CAMERA_SOURCES else 0)
                     backend = cv2.CAP_FFMPEG if isinstance(cam_source, str) else cv2.CAP_ANY
-                    new_cap = cv2.VideoCapture(cam_source, backend)
-                    if not new_cap.isOpened():
-                        new_cap = cv2.VideoCapture(cam_source)
+                    new_cap = open_camera_capture(cam_source, backend)
                     if new_cap.isOpened():
                         new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                         self.camera_cap = new_cap
                         consecutive_read_failures = 0
                         print(f"[CAMERA] Da tu dong ket noi lai camera: {cam_source}")
+                    else:
+                        new_cap.release()
                 time.sleep(0.05)
                 continue
             consecutive_read_failures = 0

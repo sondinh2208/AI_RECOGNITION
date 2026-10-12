@@ -10,3 +10,8 @@
 // secrets.h đã được .gitignore bỏ qua để tránh đưa mật khẩu lên Git.
 #define WIFI_SSID "TEN_WIFI"
 #define WIFI_PASSWORD "MAT_KHAU_WIFI"
+
+// IPv4 cua may tinh chay facecheck.py tren cung mang LAN.
+#define FACECHECK_SERVER_HOST "192.168.1.11"
+#define FACECHECK_WS_PORT 8768
+#define FACECHECK_CAMERA_TOKEN "TAO_TOKEN_NGAU_NHIEN_O_DAY"
