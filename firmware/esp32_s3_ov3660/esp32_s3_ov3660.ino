@@ -34,8 +34,8 @@ constexpr char kStreamContentType[] =
 constexpr char kStreamPart[] =
     "\r\n--facecheck-boundary\r\nContent-Type: image/jpeg\r\n"
     "Content-Length: %u\r\n\r\n";
-// QVGA/q15: tang chi tiet nhe, ha nhịp de van giu do tre on dinh.
-constexpr uint32_t kStreamTargetFps = 6;
+// QVGA/q30: can bang do net va nhip truyen on dinh.
+constexpr uint32_t kStreamTargetFps = 3;
 constexpr uint32_t kStreamFrameIntervalMs = 1000 / kStreamTargetFps;
 
 httpd_handle_t web_server = nullptr;
@@ -385,8 +385,9 @@ bool start_camera() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size = FRAMESIZE_QVGA;
   // Số lớn hơn tạo JPEG nhẹ hơn. 15 giữ đủ chi tiết khuôn mặt và giảm tải Wi-Fi.
-  // QVGA/q45 giu frame quanh 4 KB de giam TCP packet va retransmit Wi-Fi.
-  config.jpeg_quality = 45;
+  // QVGA/q30 nhe hon q20 de giu 2 FPS on dinh, nhung van ro hon cau hinh
+  // q45 truoc day. Mot framebuffer ngan hang doi frame khi mang cham.
+  config.jpeg_quality = 30;
   // Mot framebuffer ngan camera ghi frame moi khi TCP dang gui frame hien tai.
   config.fb_count = 1;
   config.fb_location = CAMERA_FB_IN_PSRAM;
@@ -430,7 +431,7 @@ void setup() {
   if (!start_camera()) {
     while (true) delay(1000);
   }
-  Serial.println("[CAMERA] San sang (QVGA/q15, XCLK 10 MHz, 1 buffer)");
+  Serial.println("[CAMERA] San sang (QVGA/q30, XCLK 10 MHz, 1 buffer)");
 #else
   Serial.println("[TEST] Bo qua camera va web server, chi kiem tra SoftAP.");
 #endif

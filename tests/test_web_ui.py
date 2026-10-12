@@ -28,7 +28,8 @@ from ai_engine import (  # noqa: E402
     analyze_face_quality, check_face_constraints, measure_face_brightness,
 )
 from mixins.attendance import (  # noqa: E402
-    AttendanceMixin, is_high_confidence_recognition,
+    AttendanceMixin, aggregate_query_embeddings, calculate_profile_distance,
+    profile_is_live_recognition_enabled,
 )
 
 
@@ -37,22 +38,74 @@ class RecognitionPolicyTests(unittest.TestCase):
         self.policy = AttendanceMixin.__new__(AttendanceMixin)
         self.policy._clear_strict_confirmation()
 
-    def test_very_strong_match_can_use_fast_confirmation(self):
-        self.assertTrue(is_high_confidence_recognition(0.38, 0.1695))
-        self.assertFalse(is_high_confidence_recognition(0.41, 0.1695))
-        self.assertFalse(is_high_confidence_recognition(0.38, 0.09))
+    def test_benchmark_profile_is_never_used_for_live_recognition(self):
+        self.assertFalse(profile_is_live_recognition_enabled({
+            "recognition_enabled": True,
+            "source": "LFW benchmark",
+        }))
+        self.assertTrue(profile_is_live_recognition_enabled({
+            "recognition_enabled": True,
+            "source": None,
+        }))
 
-    def test_noisy_frame_does_not_erase_valid_strict_vote(self):
+    def test_profile_distance_uses_centroid_instead_of_nearest_outlier(self):
+        query = [1.0, 0.0]
+        profile = {"embeddings": [[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]]}
+        distance = calculate_profile_distance(query, profile)
+        self.assertGreater(distance, 0.5)
+
+    def test_two_frame_embedding_average_suppresses_opposite_noise(self):
+        combined = aggregate_query_embeddings([[1.0, 0.2], [1.0, -0.2]])
+        self.assertGreater(float(combined[0]), 0.999)
+        self.assertAlmostEqual(float(combined[1]), 0.0, places=5)
+
+    def test_query_aggregation_requires_two_fresh_frames(self):
+        self.policy._kiosk_active_face_box = (10, 10, 100, 100)
+        first = self.policy._aggregate_current_query([1.0, 0.1], now=1.0)
+        second = self.policy._aggregate_current_query([1.0, -0.1], now=1.4)
+        self.assertIsNone(first)
+        self.assertIsNotNone(second)
+
+    def test_strict_votes_require_real_temporal_span(self):
+        for offset in (0.0, 0.1, 0.2):
+            state = self.policy._record_strict_vote(
+                "NV001", 0.45, 0.13, now=100.0 + offset
+            )
+        self.assertFalse(self.policy._strict_state_is_acceptable(state))
+
+        self.policy._clear_strict_confirmation()
+        for offset in (0.0, 0.3, 0.6):
+            state = self.policy._record_strict_vote(
+                "NV001", 0.45, 0.13, now=200.0 + offset
+            )
+        self.assertTrue(self.policy._strict_state_is_acceptable(state))
+
+    def test_noisy_frame_breaks_strict_streak(self):
         now = time.time()
         first = self.policy._record_strict_vote("NV001", 0.45, 0.10, now=now)
         noisy = self.policy._record_strict_noise(now=now + 0.1)
         second = self.policy._record_strict_vote("NV001", 0.44, 0.11, now=now + 0.2)
 
         self.assertEqual(first["votes"], 1)
-        self.assertEqual(noisy["votes"], 1)
+        self.assertEqual(noisy["votes"], 0)
         self.assertEqual(noisy["attempts"], 2)
-        self.assertEqual(second["votes"], 2)
+        self.assertEqual(second["votes"], 1)
         self.assertEqual(second["attempts"], 3)
+
+    def test_two_very_strong_frames_use_safe_fast_path(self):
+        first = self.policy._record_strict_vote("NV001", 0.36, 0.15, now=10.0)
+        second = self.policy._record_strict_vote("NV001", 0.38, 0.14, now=10.3)
+        self.assertFalse(self.policy._strict_state_is_acceptable(first))
+        self.assertTrue(self.policy._strict_state_is_acceptable(second))
+
+    def test_isolated_low_distance_spike_cannot_accumulate(self):
+        self.policy._record_strict_vote("NV001", 0.45, 0.10, now=20.0)
+        self.policy._record_strict_noise(now=20.3)
+        self.policy._record_strict_vote("NV001", 0.45, 0.10, now=20.6)
+        self.policy._record_strict_noise(now=20.9)
+        state = self.policy._record_strict_vote("NV001", 0.45, 0.10, now=21.2)
+        self.assertEqual(state["votes"], 1)
+        self.assertFalse(self.policy._strict_state_is_acceptable(state))
 
 
 class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):

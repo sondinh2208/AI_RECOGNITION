@@ -11,9 +11,13 @@ from camera_capture import open_camera_capture
 
 from config import (
     DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, ARCFACE_TOP2_MARGIN,
+    ARCFACE_QUERY_AGGREGATION_FRAMES, ARCFACE_QUERY_AGGREGATION_MAX_SECONDS,
     ARCFACE_UNCERTAIN_THRESHOLD, ARCFACE_STRICT_CONFIRMATIONS,
     ARCFACE_HIGH_CONFIDENCE_THRESHOLD, ARCFACE_HIGH_CONFIDENCE_MARGIN,
+    ARCFACE_HIGH_CONFIDENCE_CONFIRMATIONS,
+    ARCFACE_HIGH_CONFIDENCE_MIN_SPAN_SECONDS,
     ARCFACE_STRICT_MAX_ATTEMPTS, ARCFACE_STRICT_WINDOW_SECONDS,
+    ARCFACE_STRICT_MIN_SPAN_SECONDS,
     KIOSK_MIN_FACE_WIDTH, FACE_CROP_PADDING_RATIO,
     KIOSK_PRIMARY_FACE_MIN_AREA_RATIO, KIOSK_FACE_STABLE_SECONDS,
     KIOSK_CONFIRMATION_INTERVAL_SECONDS, KIOSK_RESULT_HOLD_SECONDS,
@@ -42,6 +46,46 @@ def is_high_confidence_recognition(distance, margin):
         distance <= ARCFACE_HIGH_CONFIDENCE_THRESHOLD
         and margin >= ARCFACE_HIGH_CONFIDENCE_MARGIN
     )
+
+
+def profile_is_live_recognition_enabled(profile):
+    """Benchmark profiles never participate in real attendance matching."""
+    return bool(
+        profile.get("recognition_enabled", True)
+        and profile.get("source") != "LFW benchmark"
+    )
+
+
+def calculate_profile_distance(query_vector, profile):
+    """Compare against the normalized centroid, not the most permissive sample."""
+    vectors = profile.get("embeddings") or []
+    if not vectors and profile.get("embedding") is not None:
+        vectors = [profile["embedding"]]
+    normalized = []
+    for vector in vectors:
+        value = np.asarray(vector, dtype=np.float32).flatten()
+        norm = float(np.linalg.norm(value))
+        if value.size and norm > 1e-12:
+            normalized.append(value / norm)
+    if not normalized:
+        return float("inf")
+    centroid = np.mean(np.stack(normalized), axis=0)
+    return calculate_cosine_distance(query_vector, centroid)
+
+
+def aggregate_query_embeddings(vectors):
+    """Normalize then average consecutive frame embeddings to suppress JPEG noise."""
+    normalized = []
+    for vector in vectors:
+        value = np.asarray(vector, dtype=np.float32).flatten()
+        norm = float(np.linalg.norm(value))
+        if value.size and norm > 1e-12:
+            normalized.append(value / norm)
+    if not normalized:
+        return None
+    centroid = np.mean(np.stack(normalized), axis=0)
+    norm = float(np.linalg.norm(centroid))
+    return centroid / norm if norm > 1e-12 else None
 
 class AttendanceMixin:
     """Pipeline camera v? ch?nh s?ch nh?n di?n ?i?m danh."""
@@ -280,6 +324,9 @@ class AttendanceMixin:
                         self._safe_after(0, self._show_multiple_faces_notice)
             else:
                 self._kiosk_face_stable_since = None
+                self._kiosk_query_embeddings = []
+                self._kiosk_query_started_at = None
+                self._kiosk_query_face_box = None
                 if self._kiosk_face_absent_since is None:
                     self._kiosk_face_absent_since = curr_now
 
@@ -379,6 +426,37 @@ class AttendanceMixin:
         self._kiosk_strict_started_at = None
         self._kiosk_strict_distances = []
         self._kiosk_strict_margins = []
+        self._kiosk_strict_vote_times = []
+        self._kiosk_query_embeddings = []
+        self._kiosk_query_started_at = None
+        self._kiosk_query_face_box = None
+
+    def _aggregate_current_query(self, query_vector, now=None):
+        """Return one robust query after two fresh frames of the same face track."""
+        now = time.time() if now is None else now
+        active_box = getattr(self, "_kiosk_active_face_box", None)
+        started = getattr(self, "_kiosk_query_started_at", None)
+        previous_box = getattr(self, "_kiosk_query_face_box", None)
+        expired = started is not None and now - started > ARCFACE_QUERY_AGGREGATION_MAX_SECONDS
+        changed_face = bool(
+            previous_box is not None
+            and active_box is not None
+            and not self._kiosk_same_face_track(previous_box, active_box)
+        )
+        if started is None or expired or changed_face:
+            self._kiosk_query_embeddings = []
+            self._kiosk_query_started_at = now
+        self._kiosk_query_face_box = active_box
+        self._kiosk_query_embeddings.append(query_vector)
+        if len(self._kiosk_query_embeddings) < ARCFACE_QUERY_AGGREGATION_FRAMES:
+            return None
+        result = aggregate_query_embeddings(
+            self._kiosk_query_embeddings[-ARCFACE_QUERY_AGGREGATION_FRAMES:]
+        )
+        self._kiosk_query_embeddings = []
+        self._kiosk_query_started_at = None
+        self._kiosk_query_face_box = None
+        return result
 
     def _schedule_next_strict_frame(self):
         """Mở khóa frame kế tiếp nhanh hơn nhưng vẫn chừa thời gian ổn định."""
@@ -414,14 +492,16 @@ class AttendanceMixin:
             self._kiosk_strict_confirmations = 0
             self._kiosk_strict_distances = []
             self._kiosk_strict_margins = []
+            self._kiosk_strict_vote_times = []
 
         self._kiosk_strict_confirmations += 1
         self._kiosk_strict_distances.append(float(distance))
         self._kiosk_strict_margins.append(float(margin))
+        self._kiosk_strict_vote_times.append(float(now))
         return self._strict_window_state()
 
     def _record_strict_noise(self, now=None):
-        """Tính frame nhiễu vào số lượt nhưng không xóa các phiếu strict hợp lệ trước đó."""
+        """Frame không strict ngắt chuỗi để điểm thấp ngẫu nhiên không cộng dồn."""
         now = time.time() if now is None else now
         if self._kiosk_strict_started_at is None:
             return None
@@ -429,11 +509,17 @@ class AttendanceMixin:
             self._kiosk_strict_attempts = ARCFACE_STRICT_MAX_ATTEMPTS
             return self._strict_window_state()
         self._kiosk_strict_attempts += 1
+        self._kiosk_strict_candidate_id = None
+        self._kiosk_strict_confirmations = 0
+        self._kiosk_strict_distances = []
+        self._kiosk_strict_margins = []
+        self._kiosk_strict_vote_times = []
         return self._strict_window_state()
 
     def _strict_window_state(self):
         distances = self._kiosk_strict_distances
         margins = self._kiosk_strict_margins
+        vote_times = self._kiosk_strict_vote_times
         return {
             "candidate_id": self._kiosk_strict_candidate_id,
             "votes": self._kiosk_strict_confirmations,
@@ -444,20 +530,35 @@ class AttendanceMixin:
             ),
             "median_distance": float(np.median(distances)) if distances else None,
             "median_margin": float(np.median(margins)) if margins else None,
+            "vote_span": (
+                vote_times[-1] - vote_times[0] if len(vote_times) >= 2 else 0.0
+            ),
         }
 
     @staticmethod
     def _strict_state_is_acceptable(state):
-        """Cho phép thành công khi đủ phiếu strict cùng một ID trong cửa sổ."""
-        return bool(
+        """Hai frame rất mạnh hoặc ba frame strict liên tiếp mới được thành công."""
+        if not (
             state
             and state.get("candidate_id")
-            and state.get("votes", 0) >= ARCFACE_STRICT_CONFIRMATIONS
             and state.get("median_distance") is not None
-            and state["median_distance"] <= ARCFACE_THRESHOLD
             and state.get("median_margin") is not None
-            and state["median_margin"] >= ARCFACE_TOP2_MARGIN
+        ):
+            return False
+        fast = (
+            state.get("votes", 0) >= ARCFACE_HIGH_CONFIDENCE_CONFIRMATIONS
+            and state["median_distance"] <= ARCFACE_HIGH_CONFIDENCE_THRESHOLD
+            and state["median_margin"] >= ARCFACE_HIGH_CONFIDENCE_MARGIN
+            and state.get("vote_span", 0.0)
+            >= ARCFACE_HIGH_CONFIDENCE_MIN_SPAN_SECONDS
         )
+        normal = (
+            state.get("votes", 0) >= ARCFACE_STRICT_CONFIRMATIONS
+            and state["median_distance"] <= ARCFACE_THRESHOLD
+            and state["median_margin"] >= ARCFACE_TOP2_MARGIN
+            and state.get("vote_span", 0.0) >= ARCFACE_STRICT_MIN_SPAN_SECONDS
+        )
+        return bool(fast or normal)
 
     def _worker_recognition_test_image(self, image_path):
         """Chạy pipeline ảnh tĩnh trong nền, bao gồm cả hồ sơ chỉ kiểm thử."""
@@ -499,14 +600,8 @@ class AttendanceMixin:
                 self._reload_embeddings_cache()
             ranked = []
             for emp_info in (self.embeddings_cache or {}).values():
-                vectors = emp_info.get("embeddings") or []
-                if not vectors and emp_info.get("embedding") is not None:
-                    vectors = [emp_info["embedding"]]
-                if vectors:
-                    distance = min(
-                        calculate_cosine_distance(query_vector, vector)
-                        for vector in vectors
-                    )
+                distance = calculate_profile_distance(query_vector, emp_info)
+                if np.isfinite(distance):
                     ranked.append((distance, emp_info))
             ranked.sort(key=lambda item: item[0])
             if not ranked:
@@ -567,7 +662,14 @@ class AttendanceMixin:
                 self._safe_after(0, self._on_kiosk_recognition_failed, 1.0)
                 return
                 
-            query_vector = reps[0]["embedding"]
+            query_vector = self._aggregate_current_query(reps[0]["embedding"])
+            if query_vector is None:
+                self._schedule_next_strict_frame()
+                self._safe_after(
+                    0, self._on_kiosk_strict_confirmation_pending,
+                    1, 1, None, None,
+                )
+                return
             
             # 2. Đọc cơ sở dữ liệu vector từ RAM cache (siêu tốc, không tốn thời gian đọc đĩa)
             if self.embeddings_cache is None or len(self.embeddings_cache) == 0:
@@ -584,17 +686,10 @@ class AttendanceMixin:
             for emp_id, emp_info in embeddings_data.items():
                 # Hồ sơ bị tắt (ví dụ dữ liệu benchmark LFW) vẫn được giữ để
                 # kiểm thử nhưng tuyệt đối không tham gia nhận diện điểm danh.
-                if not emp_info.get("recognition_enabled", True):
+                if not profile_is_live_recognition_enabled(emp_info):
                     continue
-                employee_vectors = emp_info.get("embeddings") or []
-                if not employee_vectors and emp_info.get("embedding") is not None:
-                    employee_vectors = [emp_info["embedding"]]
-                if employee_vectors:
-                    # Khoảng cách của danh tính là mẫu phù hợp nhất trong hồ sơ.
-                    dist = min(
-                        calculate_cosine_distance(query_vector, emp_emb)
-                        for emp_emb in employee_vectors
-                    )
+                dist = calculate_profile_distance(query_vector, emp_info)
+                if np.isfinite(dist):
                     ranked_matches.append((dist, emp_info))
 
             ranked_matches.sort(key=lambda item: item[0])
@@ -613,45 +708,11 @@ class AttendanceMixin:
 
             if best_emp is not None and decision == "strict":
                 self._kiosk_unknown_attempts = 0
-                if is_high_confidence_recognition(best_dist, top2_margin):
-                    print(
-                        "[KIOSK AI] Xác nhận nhanh độ tin cậy cao: "
-                        f"distance={best_dist:.4f} <= "
-                        f"{ARCFACE_HIGH_CONFIDENCE_THRESHOLD:.4f}, "
-                        f"margin={top2_margin:.4f} >= "
-                        f"{ARCFACE_HIGH_CONFIDENCE_MARGIN:.4f}"
-                    )
-                    self._clear_strict_confirmation()
-                    self._safe_after(
-                        0, self._on_kiosk_recognition_success,
-                        best_emp, best_dist,
-                    )
-                else:
-                    candidate_id = str(best_emp.get("id", ""))
-                    state = self._record_strict_vote(
-                        candidate_id, best_dist, top2_margin
-                    )
-                    accepted = self._strict_state_is_acceptable(state)
-                    if accepted:
-                        confirmed_distance = state["median_distance"]
-                        self._clear_strict_confirmation()
-                        self._safe_after(
-                            0, self._on_kiosk_recognition_success,
-                            best_emp, confirmed_distance,
-                        )
-                    elif not state["exhausted"]:
-                        self._schedule_next_strict_frame()
-                        self._safe_after(
-                            0, self._on_kiosk_strict_confirmation_pending,
-                            state["votes"], state["attempts"],
-                            best_dist, top2_margin,
-                        )
-                    else:
-                        self._clear_strict_confirmation()
-                        self._safe_after(
-                            0, self._on_kiosk_recognition_ambiguous,
-                            best_dist, second_dist, top2_margin,
-                        )
+                self._clear_strict_confirmation()
+                self._safe_after(
+                    0, self._on_kiosk_recognition_success,
+                    best_emp, best_dist,
+                )
             elif best_emp is not None and decision == "ambiguous":
                 self._kiosk_unknown_attempts = 0
                 state = self._record_strict_noise()

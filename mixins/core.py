@@ -64,7 +64,11 @@ class CoreMixin:
 
                         # Hồ sơ benchmark chỉ phục vụ kiểm thử, không được tham gia
                         # điểm danh thật nếu chưa được người quản trị chủ động bật.
-                        if "recognition_enabled" not in profile:
+                        if profile.get("source") == "LFW benchmark":
+                            if profile.get("recognition_enabled", True):
+                                profile["recognition_enabled"] = False
+                                need_resave = True
+                        elif "recognition_enabled" not in profile:
                             profile["recognition_enabled"] = (
                                 profile.get("source") != "LFW benchmark"
                             )

@@ -444,6 +444,10 @@ def validate_kiosk_face_candidate(face_box, confidence, frame, face_detector):
     if aspect_ratio < 0.55 or aspect_ratio > 1.30:
         return False, "Vui lòng đưa toàn bộ khuôn mặt vào khung"
 
+    light_ok, _brightness = measure_face_brightness(frame, face_box)
+    if not light_ok:
+        return False, "Khuôn mặt chưa đủ sáng hoặc đang bị cháy sáng"
+
     if face_detector is None:
         return False, "Bộ kiểm tra khuôn mặt chưa sẵn sàng"
 
@@ -459,14 +463,10 @@ def validate_kiosk_face_candidate(face_box, confidence, frame, face_detector):
             max_tilt_angle=KIOSK_MAX_ROLL_ANGLE,
             yaw_ratio_range=(KIOSK_MIN_YAW_RATIO, KIOSK_MAX_YAW_RATIO),
             pitch_ratio_range=(KIOSK_MIN_PITCH_RATIO, KIOSK_MAX_PITCH_RATIO),
+            frame=frame,
+            strict_mode=True,
         )
         if not is_valid:
-            # YOLO đã xác nhận đây là khuôn mặt rõ với confidence đủ cao.
-            # MediaPipe đôi khi mất landmark ở góc nghiêng; không nên vì vậy mà
-            # chặn ArcFace trước khi mô hình có cơ hội đối chiếu danh tính.
-            if error == "Khuon mat chua ro rang":
-                print("[KIOSK QUALITY] Không đủ landmark; chuyển sang ArcFace dự phòng")
-                return True, ""
             message_map = {
                 "Giu thang mat voi khung hinh": "Góc nghiêng quá lớn, vui lòng nghiêng lại một chút",
                 "Vui long nhin thang vao camera": "Góc quay quá lớn, vui lòng quay nhẹ về camera",

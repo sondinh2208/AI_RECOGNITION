@@ -56,9 +56,9 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._display_cached_frame_id = -1
         self._display_cached_jpeg = None
         self._display_jpeg_encoded_at = 0.0
-        # Man hinh TFT muc tieu 5 FPS. Giu mot JPEG dung chung trong 200 ms de
+        # TFT dong bo voi camera, khong fetch lai
         # khong nen lai anh vo ich va khong tao backlog TCP tren ESP32 hien thi.
-        self._display_jpeg_min_interval = 1.0 / 5.0
+        self._display_jpeg_min_interval = 1.0 / 3.0
 
         self.kiosk_running = False
         self.is_recognizing = False
@@ -82,6 +82,9 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._kiosk_strict_started_at = None
         self._kiosk_strict_distances = []
         self._kiosk_strict_margins = []
+        self._kiosk_query_embeddings = []
+        self._kiosk_query_started_at = None
+        self._kiosk_query_face_box = None
         self._attendance_cooldowns = {}
         self._is_kiosk_ui_idle = True
 
@@ -299,7 +302,13 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             # Resize dung kich thuoc tuong ung tung che do:
             # - Diem danh: 480x250 (danh 70px cho khung trang thai diem danh o duoi)
             # - Dang ky: 480x320 (toan man hinh, khong con vung den, mat va cam giong y het laptop)
-            resized = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+            # Nguon ESP32 la QVGA, trong khi TFT rong 480 px. INTER_CUBIC giu
+            # duong net khuon mat/chu ro hon khi phong anh ma khong tang tai TFT.
+            resized = cv2.resize(
+                frame,
+                (target_width, target_height),
+                interpolation=cv2.INTER_CUBIC,
+            )
 
             # JPEG nhe hon giup ESP32 tai va giai ma nhanh hon. Chat luong AI
             # khong bi anh huong vi AI van xu ly frame goc o tren.
@@ -308,11 +317,25 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 resized,
                 [
                     cv2.IMWRITE_JPEG_QUALITY,
-                    25,
+                    50,
                     cv2.IMWRITE_JPEG_OPTIMIZE,
                     1,
                 ],
             )
+            # Canh nhieu chi tiet co the lam JPEG tang dot bien. Giu tran 16 KB
+            # de TFT van tai + giai ma du nhanh, nhung binh thuong
+            # van su dung quality 50 ro net hon.
+            if ok and encoded.nbytes > 16_000:
+                ok, encoded = cv2.imencode(
+                    ".jpg",
+                    resized,
+                    [
+                        cv2.IMWRITE_JPEG_QUALITY,
+                        42,
+                        cv2.IMWRITE_JPEG_OPTIMIZE,
+                        1,
+                    ],
+                )
             if not ok:
                 return frame_id, None
             self._display_cached_jpeg = encoded.tobytes()
@@ -442,7 +465,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self.recognition_state = {
             **self._idle_payload(), "state": "strict_confirmation",
             "title": "Đang kiểm tra quyền mở cửa",
-            "message": f"Đạt ngưỡng an toàn · {votes}/3 frame, lượt {attempts}/5",
+            "message": f"Đang gộp đặc trưng chống nhiễu JPEG · {votes}/2 frame",
             "metrics": {"distance": distance, "margin": margin},
         }
         self._publish()
@@ -797,7 +820,13 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         if not path.exists():
             return {}
         with path.open("rb") as file:
-            return pickle.load(file)
+            profiles = pickle.load(file)
+        # Phòng thủ nhiều lớp: dữ liệu benchmark chỉ dùng đánh giá offline,
+        # kể cả file cũ có cờ bật cũng không được xuất hiện là gallery thật.
+        for profile in profiles.values():
+            if profile.get("source") == "LFW benchmark":
+                profile["recognition_enabled"] = False
+        return profiles
 
     def _write_profiles(self, profiles):
         path = Path("data/embeddings.pkl")
@@ -939,6 +968,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             key = next((k for k in profiles if str(k).casefold() == emp_id.casefold()), None)
             if key is None:
                 raise KeyError("Không tìm thấy nhân viên")
+            if profiles[key].get("source") == "LFW benchmark":
+                raise ValueError("Hồ sơ benchmark không được bật nhận diện thực tế")
             profiles[key]["recognition_enabled"] = not bool(profiles[key].get("recognition_enabled", True))
             self._write_profiles(profiles)
             value = profiles[key]["recognition_enabled"]

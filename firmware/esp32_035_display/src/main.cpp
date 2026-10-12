@@ -395,8 +395,8 @@ void loop() {
     return;
   }
 
-  // Muc tieu 5 FPS: can bang do muot, tai HTTP va thoi gian giai ma/vẽ JPEG.
-  if (now - lastFrameFetch >= 200) {
+  // Dong bo 3 FPS voi camera va khong tao request thua.
+  if (now - lastFrameFetch >= 333) {
     lastFrameFetch = now;
     fetchAndDrawFrame();
   }
