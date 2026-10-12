@@ -395,8 +395,8 @@ void loop() {
     return;
   }
 
-  // Nhip muc tieu 7 FPS, danh them bang thong cho JPEG net hon ma van >5 FPS.
-  if (now - lastFrameFetch >= 143) {
+  // Muc tieu 5 FPS: can bang do muot, tai HTTP va thoi gian giai ma/vẽ JPEG.
+  if (now - lastFrameFetch >= 200) {
     lastFrameFetch = now;
     fetchAndDrawFrame();
   }

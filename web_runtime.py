@@ -56,9 +56,9 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._display_cached_frame_id = -1
         self._display_cached_jpeg = None
         self._display_jpeg_encoded_at = 0.0
-        # Luong rieng cho TFT dong bo voi camera 8 FPS. Khong phat nhanh hon
-        # toc do man hinh ve duoc, tranh frame cu ton trong bo dem TCP.
-        self._display_jpeg_min_interval = 1.0 / 8.0
+        # Man hinh TFT muc tieu 5 FPS. Giu mot JPEG dung chung trong 200 ms de
+        # khong nen lai anh vo ich va khong tao backlog TCP tren ESP32 hien thi.
+        self._display_jpeg_min_interval = 1.0 / 5.0
 
         self.kiosk_running = False
         self.is_recognizing = False
@@ -308,7 +308,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 resized,
                 [
                     cv2.IMWRITE_JPEG_QUALITY,
-                    35,
+                    25,
                     cv2.IMWRITE_JPEG_OPTIMIZE,
                     1,
                 ],
