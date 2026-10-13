@@ -80,6 +80,7 @@ void start_camera_socket() {
 
 void push_websocket_frame() {
   static unsigned long next_frame_at = 0;
+  static uint32_t last_wait_ms = 0;
   static unsigned long window_started = millis();
   static uint32_t window_frames = 0;
   static uint32_t window_bytes = 0;
@@ -112,8 +113,18 @@ void push_websocket_frame() {
   }
 
   ws_pacer.recordSuccess(send_ms);
-  // Schedule from completion so a slow write cannot trigger a catch-up burst.
-  next_frame_at = millis() + ws_pacer.intervalMs();
+  const uint32_t target_interval_ms = ws_pacer.intervalMs();
+  const uint32_t frame_work_ms = millis() - capture_started;
+  // Healthy writes use an absolute frame period: CAP + SEND + WAIT ~= target.
+  // A slow write gets a full cooldown after completion and can never trigger
+  // an immediate catch-up frame.
+  last_wait_ms = target_interval_ms;
+  if (send_ms <= 100) {
+    last_wait_ms = frame_work_ms < target_interval_ms
+        ? target_interval_ms - frame_work_ms
+        : 1;
+  }
+  next_frame_at = millis() + last_wait_ms;
 
   ++ws_frame_count;
   ++window_frames;
@@ -125,13 +136,13 @@ void push_websocket_frame() {
     ws_fps = window_frames * 1000.0f / elapsed;
     Serial.printf(
         "[WS] FPS=%.1f | CAP=%u ms | SEND=%u ms | JPEG=%u B | "
-        "RSSI=%d dBm | heap=%u | TARGET=%u FPS | PACE=%u ms\n",
+        "RSSI=%d dBm | heap=%u | TARGET=%u FPS | PACE=%u ms | WAIT=%u ms\n",
         ws_fps,
         window_frames ? window_capture_ms / window_frames : 0,
         window_frames ? window_send_ms / window_frames : 0,
         window_frames ? window_bytes / window_frames : 0,
         WiFi.RSSI(), ESP.getFreeHeap(), ws_pacer.targetFps(),
-        ws_pacer.intervalMs());
+        ws_pacer.intervalMs(), last_wait_ms);
     window_frames = 0;
     window_bytes = 0;
     window_capture_ms = 0;
