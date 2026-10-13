@@ -8,6 +8,7 @@
 #include "esp_task_wdt.h"
 #include "img_converters.h"
 #include "lwip/sockets.h"
+#include "send_pacing.h"
 #include "secrets.h"
 
 // ESP32-S3 WROOM CAM + OV3660 theo sơ đồ chân của bo đang sử dụng.
@@ -35,7 +36,7 @@ constexpr char kStreamPart[] =
     "\r\n--facecheck-boundary\r\nContent-Type: image/jpeg\r\n"
     "Content-Length: %u\r\n\r\n";
 // QVGA/q30: can bang do net va nhip truyen on dinh.
-constexpr uint32_t kStreamTargetFps = 3;
+constexpr uint32_t kStreamTargetFps = 5;
 constexpr uint32_t kStreamFrameIntervalMs = 1000 / kStreamTargetFps;
 
 httpd_handle_t web_server = nullptr;
@@ -50,12 +51,14 @@ WebSocketsClient camera_socket;
 volatile bool ws_connected = false;
 volatile uint32_t ws_frame_count = 0;
 volatile float ws_fps = 0.0f;
+AdaptiveSendPacer ws_pacer;
 
 void websocket_event(WStype_t type, uint8_t *payload, size_t length) {
   (void)payload;
   (void)length;
   if (type == WStype_CONNECTED) {
     ws_connected = true;
+    ws_pacer.beginConnection();
     Serial.printf("[WS] Da ket noi ws://%s:%u/camera\n",
                   FACECHECK_SERVER_HOST, FACECHECK_WS_PORT);
   } else if (type == WStype_DISCONNECTED) {
@@ -71,11 +74,12 @@ void start_camera_socket() {
   camera_socket.onEvent(websocket_event);
   camera_socket.setReconnectInterval(2000);
   // Phat hien socket nua-mo nhanh de video khong dung hang chuc giay.
-  camera_socket.enableHeartbeat(5000, 2000, 1);
+  // Do not turn one short Wi-Fi/TCP stall into a reconnect cycle.
+  camera_socket.enableHeartbeat(10000, 5000, 3);
 }
 
 void push_websocket_frame() {
-  static unsigned long last_frame_at = 0;
+  static unsigned long next_frame_at = 0;
   static unsigned long window_started = millis();
   static uint32_t window_frames = 0;
   static uint32_t window_bytes = 0;
@@ -84,8 +88,7 @@ void push_websocket_frame() {
   if (!ws_connected || stream_client_count > 0) return;
 
   const unsigned long now = millis();
-  if (now - last_frame_at < kStreamFrameIntervalMs) return;
-  last_frame_at = now;
+  if (static_cast<int32_t>(now - next_frame_at) < 0) return;
 
   const unsigned long capture_started = millis();
   camera_fb_t *frame = esp_camera_fb_get();
@@ -102,10 +105,15 @@ void push_websocket_frame() {
   const size_t frame_length = frame->len;
   esp_camera_fb_return(frame);
   if (!sent) {
+    ws_pacer.recordFailure();
     // Khong giu socket nua-mo sau mot frame gui that bai.
     camera_socket.disconnect();
     return;
   }
+
+  ws_pacer.recordSuccess(send_ms);
+  // Schedule from completion so a slow write cannot trigger a catch-up burst.
+  next_frame_at = millis() + ws_pacer.intervalMs();
 
   ++ws_frame_count;
   ++window_frames;
@@ -117,12 +125,13 @@ void push_websocket_frame() {
     ws_fps = window_frames * 1000.0f / elapsed;
     Serial.printf(
         "[WS] FPS=%.1f | CAP=%u ms | SEND=%u ms | JPEG=%u B | "
-        "RSSI=%d dBm | heap=%u\n",
+        "RSSI=%d dBm | heap=%u | TARGET=%u FPS | PACE=%u ms\n",
         ws_fps,
         window_frames ? window_capture_ms / window_frames : 0,
         window_frames ? window_send_ms / window_frames : 0,
         window_frames ? window_bytes / window_frames : 0,
-        WiFi.RSSI(), ESP.getFreeHeap());
+        WiFi.RSSI(), ESP.getFreeHeap(), ws_pacer.targetFps(),
+        ws_pacer.intervalMs());
     window_frames = 0;
     window_bytes = 0;
     window_capture_ms = 0;
@@ -183,7 +192,7 @@ esp_err_t health_handler(httpd_req_t *request) {
            "\"ip\":\"%s\"}",
            WiFi.RSSI(), ESP.getFreeHeap(),
            stream_client_active ? "true" : "false", stream_client_count,
-           stream_frame_count, stream_fps, kStreamTargetFps,
+           stream_frame_count, stream_fps, AdaptiveSendPacer::kMaxFps,
            ws_connected ? "true" : "false", ws_frame_count, ws_fps,
            WiFi.localIP().toString().c_str());
   httpd_resp_set_type(request, "application/json");
