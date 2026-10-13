@@ -401,7 +401,7 @@ bool start_camera() {
   config.pin_sccb_scl = CAM_PIN_SIOC;
   config.pin_pwdn = CAM_PIN_PWDN;
   config.pin_reset = CAM_PIN_RESET;
-  config.xclk_freq_hz = 10000000;
+  config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size = FRAMESIZE_QVGA;
   // Số lớn hơn tạo JPEG nhẹ hơn. 15 giữ đủ chi tiết khuôn mặt và giảm tải Wi-Fi.
@@ -451,7 +451,7 @@ void setup() {
   if (!start_camera()) {
     while (true) delay(1000);
   }
-  Serial.println("[CAMERA] San sang (QVGA/q30, XCLK 10 MHz, 1 buffer)");
+  Serial.println("[CAMERA] San sang (QVGA/q30, XCLK 20 MHz, 1 buffer)");
 #else
   Serial.println("[TEST] Bo qua camera va web server, chi kiem tra SoftAP.");
 #endif
