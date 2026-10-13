@@ -17,6 +17,7 @@ class LatestMjpegCapture:
         self.url = url
         self._condition = threading.Condition()
         self._frame = None
+        self._jpeg = None
         self._sequence = 0
         self._last_read_sequence = 0
         self._running = True
@@ -66,6 +67,7 @@ class LatestMjpegCapture:
                                 continue
                             with self._condition:
                                 self._frame = frame
+                                self._jpeg = jpeg
                                 self._sequence += 1
                                 self._opened.set()
                                 self._condition.notify_all()
@@ -91,6 +93,11 @@ class LatestMjpegCapture:
                 return False, None
             self._last_read_sequence = self._sequence
             return True, self._frame
+
+    def latest_jpeg(self):
+        """Return the newest original JPEG without decoding or re-encoding it."""
+        with self._condition:
+            return self._sequence, self._jpeg
 
     def release(self):
         self._running = False

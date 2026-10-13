@@ -147,7 +147,18 @@
 
       <section class="page active" data-page="recognition">
         <div class="recognition-grid">
-          <article class="card camera-card recognition-camera"><div class="camera-slot" data-camera-slot="recognition"></div></article>
+          <article class="card camera-card recognition-camera kiosk-recognition-camera"><div class="camera-slot" data-camera-slot="recognition"></div></article>
+          <article class="card recognition-monitor">
+            <div class="recognition-monitor-head"><span><svg><use href="#i-monitor"/></svg></span><div><h2>Giám sát cửa</h2><p>Trạng thái vận hành theo thời gian thực</p></div></div>
+            <div class="monitor-status-grid">
+              <div class="monitor-status-item"><span><svg><use href="#i-camera"/></svg></span><div><small>Camera kiosk</small><strong id="monitorCameraState">Đang kiểm tra...</strong></div></div>
+              <div class="monitor-status-item"><span><svg><use href="#i-target"/></svg></span><div><small>Dịch vụ nhận diện</small><strong id="monitorRecognitionState">Sẵn sàng</strong></div></div>
+              <div class="monitor-status-item"><span><svg><use href="#i-users"/></svg></span><div><small>Khuôn mặt hiện tại</small><strong id="monitorFaceCount">0 khuôn mặt</strong></div></div>
+              <div class="monitor-status-item"><span><svg><use href="#i-clock"/></svg></span><div><small>Tốc độ xử lý</small><strong id="monitorProcessingFps">0 FPS</strong></div></div>
+            </div>
+            <div class="monitor-guidance"><strong>Camera trực tiếp đang hiển thị tại kiosk</strong><span>Chỉ mở luồng trên máy quản trị khi cần kiểm tra vị trí hoặc chẩn đoán sự cố.</span></div>
+            <button class="secondary wide monitor-live-button" id="openLiveCamera" type="button"><svg><use href="#i-camera"/></svg>Xem camera trực tiếp</button>
+          </article>
           <article class="card result-panel" id="recognitionResult"><div class="result-header"><span class="result-icon"><svg><use href="#i-target"/></svg></span><span><h2>Cửa đang đóng</h2><p>Đưa khuôn mặt vào khung để xác thực mở cửa</p></span></div><div class="employee-summary"><div class="avatar placeholder"><svg><use href="#i-users"/></svg></div><div><h3>Chưa có lượt xác thực</h3><p>Mã NV: <b>---</b></p><p>Chức vụ: ---</p><p>Phòng ban: ---</p></div></div><div class="result-notice"><strong>Đưa đầy đủ khuôn mặt vào khung để xác thực mở cửa.</strong><span>Cửa đang đóng và sẵn sàng xác thực.</span></div><div class="result-time"><svg><use href="#i-clock"/></svg><span><small>Thời gian xác thực</small><b>Chờ xác thực...</b></span></div><div class="result-actions"><input id="recognitionImageInput" type="file" accept="image/jpeg,image/png,image/bmp,image/webp" hidden><button class="secondary wide" id="testRecognitionImage">Kiểm thử bằng file ảnh</button><button class="status-action success">Hệ thống kiểm soát cửa đang hoạt động</button><button class="secondary wide" id="retryRecognition" hidden>Thử lại</button></div></article>
         </div>
         <article class="card recent-card"><div class="card-title"><span><svg><use href="#i-clock"/></svg> Lịch sử ra vào hôm nay</span><button class="link" data-route="history">Xem tất cả →</button></div><div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Nhân viên</th><th>Mã NV</th><th>Chức vụ</th><th>Phòng ban</th><th>Trạng thái</th></tr></thead><tbody id="recentAttendance"></tbody></table></div></article>

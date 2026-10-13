@@ -43,6 +43,12 @@ CAMERA_HORIZONTAL_FLIP = os.environ.get(
     "FACECHECK_CAMERA_FLIP", _default_flip
 ).strip().lower() in ("1", "true", "yes")
 
+# Bounding boxes are useful while tuning the detector, but the production kiosk
+# keeps the camera image clean and reports only the final recognition result.
+KIOSK_DRAW_DEBUG_BOXES = os.environ.get(
+    "FACECHECK_DRAW_DEBUG_BOXES", "0"
+).strip().lower() in ("1", "true", "yes")
+
 
 # ============================================
 # CẤU HÌNH AI MODELS

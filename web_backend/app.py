@@ -209,7 +209,7 @@ async def camera_stream(_request):
         last_frame_id = -1
         try:
             while True:
-                frame_id, frame = runtime.camera_jpeg_frame()
+                frame_id, frame = runtime.camera_preview_jpeg_frame()
                 if frame and frame_id != last_frame_id:
                     last_frame_id = frame_id
                     yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"

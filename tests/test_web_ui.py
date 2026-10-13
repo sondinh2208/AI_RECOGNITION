@@ -128,6 +128,9 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         for page in ("dashboard", "enrollment", "recognition", "employees", "history"):
             self.assertIn(f'data-page="{page}"', html)
         self.assertEqual(html.count('id="cameraSurface"'), 1)
+        self.assertIn('id="openLiveCamera"', html)
+        self.assertIn('class="card recognition-monitor"', html)
+        self.assertIn('kiosk-recognition-camera', html)
         self.assertIn('type="module" src="/js/app.js"', html)
         self.assertIn('/css/kiosk.css', html)
         self.assertIn('id="startEnrollmentScan"', html)
@@ -172,8 +175,10 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         source = response.text
         self.assertIn('["attendance", "add_employee"].includes(mode)', source)
         self.assertIn('const simulatedAdminView = viewRole === "admin"', source)
+        self.assertIn('let adminLiveViewOpen = false', source)
+        self.assertIn('enrollmentActive', source)
         self.assertIn(
-            'const active = kioskView && visible && ["attendance", "add_employee"].includes(mode)',
+            'const active = visible && (kioskActive || enrollmentActive || adminLiveViewOpen)',
             source,
         )
         self.assertNotIn('else if (!simulatedAdminView', source)
@@ -280,6 +285,62 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertEqual(encoder.call_count, 1)
         self.assertEqual(results, [(1, b"\x01\x02\x03")] * 2)
         self.assertEqual(throttled_result, (1, b"\x01\x02\x03"))
+
+    def test_attendance_preview_uses_original_camera_jpeg(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "attendance"
+        runtime.camera_cap = Mock()
+        runtime.camera_cap.latest_jpeg.return_value = (15, b"source-jpeg")
+
+        with patch.object(runtime, "camera_jpeg_frame") as processed:
+            result = runtime.camera_preview_jpeg_frame()
+
+        self.assertEqual(result, (15, b"source-jpeg"))
+        processed.assert_not_called()
+
+    def test_enrollment_preview_keeps_processed_overlays(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "add_employee"
+        runtime.camera_cap = Mock()
+
+        with patch.object(
+            runtime, "camera_jpeg_frame", return_value=(9, b"processed-jpeg")
+        ) as processed:
+            result = runtime.camera_preview_jpeg_frame()
+
+        self.assertEqual(result, (9, b"processed-jpeg"))
+        processed.assert_called_once_with()
+
+    def test_display_hides_intermediate_recognition_states(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "attendance"
+        runtime.recognition_state = {
+            "state": "recognizing",
+            "title": "Đang xác thực quyền truy cập",
+            "message": "Đang đối chiếu",
+        }
+
+        display = runtime.display_snapshot()
+
+        self.assertEqual(display["state"], "idle")
+        self.assertEqual(display["title"], "NHIN THANG VAO CAMERA")
+        self.assertEqual(display["name"], "")
+
+    def test_display_keeps_final_recognition_result(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "attendance"
+        runtime.recognition_state = {
+            "state": "success",
+            "title": "Điểm danh thành công",
+            "message": "Đã mở cửa",
+            "employee": {"name": "Nguyen Van A", "id": "NV001"},
+        }
+
+        display = runtime.display_snapshot()
+
+        self.assertEqual(display["state"], "success")
+        self.assertEqual(display["name"], "Nguyen Van A")
+        self.assertEqual(display["employee_id"], "NV001")
 
     def test_navigation_does_not_reload_models_or_reopen_camera(self):
         runtime = WebFaceCheckRuntime(load_ai=True)

@@ -88,6 +88,14 @@
     gap: 10px;
 }
 
+.kiosk-view .kiosk-recognition-camera {
+    display: block;
+}
+
+.kiosk-view .recognition-monitor {
+    display: none !important;
+}
+
 .kiosk-view .recognition-camera {
     height: 100%;
     min-height: 0;

@@ -250,6 +250,16 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         else:
             source = state["recognition"]
             screen_state = source.get("state", "idle")
+            terminal_states = {"success", "duplicate", "unknown", "ambiguous", "error"}
+            if screen_state not in terminal_states:
+                # The small kiosk screen should not flicker through detector and
+                # validation states. It changes only for a final pass/fail result.
+                source = {
+                    "state": "idle",
+                    "title": "Nhìn thẳng vào camera",
+                    "message": "",
+                }
+                screen_state = "idle"
             # Khi da nhan dien nhan vien (ke ca luot quet lai "duplicate" trong thoi gian cooldown),
             # man hinh luon the hien trang thai thanh cong de hien thi mau xanh OK
             if screen_state == "duplicate":
@@ -421,6 +431,21 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 self._last_jpeg_encoded_at = now
                 return frame_id, cached_bytes
             return frame_id, None
+
+    def camera_preview_jpeg_frame(self):
+        """Prefer the source JPEG for a smooth attendance preview.
+
+        Enrollment keeps the processed image because its guide overlays are part
+        of the capture workflow. Non-MJPEG cameras transparently fall back to
+        the existing processed-frame encoder.
+        """
+        if self.current_page == "attendance":
+            latest_jpeg = getattr(self.camera_cap, "latest_jpeg", None)
+            if callable(latest_jpeg):
+                frame_id, frame = latest_jpeg()
+                if frame:
+                    return frame_id, frame
+        return self.camera_jpeg_frame()
 
 
 

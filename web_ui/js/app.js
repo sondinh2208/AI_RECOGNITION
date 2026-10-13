@@ -36,6 +36,7 @@ const cameraSurface = $("#cameraSurface");
 const cameraImage = $("#cameraStream");
 const cameraLoadingText = $("#cameraLoadingText");
 let cameraStreamActive = false;
+let adminLiveViewOpen = false;
 cameraImage.addEventListener("load", () => cameraSurface.classList.add("loaded"));
 
 function setCameraStreamActive(active, inactiveMessage = "Đang kết nối camera...") {
@@ -53,7 +54,9 @@ function setCameraStreamActive(active, inactiveMessage = "Đang kết nối came
 function syncCameraStream() {
   const mode = store.runtime?.mode;
   const visible = !document.hidden || kioskView;
-  const active = kioskView && visible && ["attendance", "add_employee"].includes(mode);
+  const kioskActive = kioskView && ["attendance", "add_employee"].includes(mode);
+  const enrollmentActive = !kioskView && store.route === "enrollment" && mode === "add_employee";
+  const active = visible && (kioskActive || enrollmentActive || adminLiveViewOpen);
   let message = "Camera trực tiếp được hiển thị tại kiosk";
 
   if (kioskView) {
@@ -248,6 +251,13 @@ function renderStatus(state) {
   markDataStale(state.history_version);
   $("#sideCamera").textContent = state.camera.running ? "Hoạt động" : "Ngoại tuyến";
   $("#sideDevice").textContent = state.camera.device === "cpu" ? "CPU" : "GPU sẵn sàng";
+  const monitorCamera = $("#monitorCameraState");
+  if (monitorCamera) {
+    monitorCamera.textContent = state.camera.running ? "Đang hoạt động" : "Ngoại tuyến";
+    $("#monitorRecognitionState").textContent = ["recognizing", "strict_confirmation"].includes(state.recognition.state) ? "Đang xác thực" : "Sẵn sàng";
+    $("#monitorFaceCount").textContent = `${Number(state.camera.faces || 0)} khuôn mặt`;
+    $("#monitorProcessingFps").textContent = `${Math.round(state.camera.fps || 0)} FPS`;
+  }
   if (!kioskView && state.enrollment?.state === "success") {
     if (!enrollmentFormClearedForSuccess) {
       $("#enrollmentForm").reset();
@@ -388,6 +398,11 @@ async function loadHistory(force = false) {
 const modal = $("#modal");
 let focusBeforeModal = null;
 function closeModal() {
+  if (adminLiveViewOpen) {
+    adminLiveViewOpen = false;
+    moveCamera(store.route === "enrollment" ? "enrollment" : "recognition");
+    syncCameraStream();
+  }
   modal.hidden = true;
   $("#modalContent").innerHTML = "";
   focusBeforeModal?.focus?.();
@@ -429,6 +444,12 @@ $("#employeeSearch").addEventListener("input", event => { employeeRequestVersion
 $("#historySearch").addEventListener("input", event => { clearTimeout(historyTimer); historyTimer = setTimeout(() => { store.history.query = event.target.value; store.history.page = 1; store.history.stale = true; loadHistory(); }, 300); });
 $("#historyStatus").addEventListener("change", event => { store.history.status = event.target.value; store.history.page = 1; store.history.stale = true; loadHistory(); });
 $("#retryRecognition").addEventListener("click", () => api.retry().catch(error => toast(error.message, true)));
+$("#openLiveCamera").addEventListener("click", () => {
+  adminLiveViewOpen = true;
+  openModal('<h2>Camera trực tiếp tại kiosk</h2><p class="subtitle">Luồng chỉ hoạt động trong khi cửa sổ này đang mở.</p><div class="admin-live-camera" id="adminLiveCamera"></div>');
+  $("#adminLiveCamera").append(cameraSurface);
+  syncCameraStream();
+});
 $("#testRecognitionImage").addEventListener("click", () => $("#recognitionImageInput").click());
 $("#recognitionImageInput").addEventListener("change", async event => {
   const file = event.target.files?.[0];

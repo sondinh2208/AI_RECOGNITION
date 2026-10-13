@@ -24,7 +24,7 @@ from config import (
     KIOSK_PROCESSED_FACE_TTL_SECONDS, KIOSK_PROCESSED_FACE_ABSENCE_SECONDS,
     KIOSK_UNKNOWN_CONFIRMATIONS,
     KIOSK_DETECTION_INTERVAL_SECONDS, CAMERA_STREAM_URL, CAMERA_SOURCES,
-    CAMERA_HORIZONTAL_FLIP,
+    CAMERA_HORIZONTAL_FLIP, KIOSK_DRAW_DEBUG_BOXES,
 )
 from ai_engine import (
     detect_faces, calculate_cosine_distance, draw_kiosk_face_box,
@@ -298,15 +298,17 @@ class AttendanceMixin:
                 )
             )
 
-            # Mặt chính màu xanh; các mặt phía xa chỉ đánh dấu xám và bị bỏ qua.
-            for face in faces:
-                fx1, fy1, fx2, fy2, _ = face
-                is_primary = face == primary_face
-                draw_kiosk_face_box(
-                    frame, fx1, fy1, fx2, fy2,
-                    color=(100, 255, 100) if is_primary else (150, 150, 150),
-                    thickness=3 if is_primary else 1,
-                )
+            # Production display stays clean. Bounding boxes can still be
+            # enabled explicitly when detector diagnostics are needed.
+            if KIOSK_DRAW_DEBUG_BOXES:
+                for face in faces:
+                    fx1, fy1, fx2, fy2, _ = face
+                    is_primary = face == primary_face
+                    draw_kiosk_face_box(
+                        frame, fx1, fy1, fx2, fy2,
+                        color=(100, 255, 100) if is_primary else (150, 150, 150),
+                        thickness=3 if is_primary else 1,
+                    )
                 
             waiting_for_departure = getattr(
                 self, '_kiosk_waiting_for_departure', False
