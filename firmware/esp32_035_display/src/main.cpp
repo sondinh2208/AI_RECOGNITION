@@ -210,9 +210,9 @@ void drawStatusPanel() {
   display.drawFastVLine(kMetricsX, 260, 50, 0x344054);
 
   display.setTextDatum(lgfx::textdatum_t::top_right);
-  // Bao mau do neu toc do ve thuc te tut duoi nguong yeu cau 5 FPS.
+  // Bao mau do khi toc do ve thuc te tut ro ret duoi muc tieu 4 FPS.
   const uint32_t fpsColor =
-      renderedFpsValue > 0.0f && renderedFpsValue < 5.0f ? kRed : kMuted;
+      renderedFpsValue > 0.0f && renderedFpsValue < 3.5f ? kRed : kMuted;
   display.setTextColor(fpsColor, kPanel);
   display.drawString(String(renderedFpsValue, 1) + " FPS", kMetricsRight, 264);
   if (kiosk.mode == "add_employee" && kiosk.sampleTarget > 0) {
@@ -395,8 +395,8 @@ void loop() {
     return;
   }
 
-  // Dong bo 3 FPS voi camera va khong tao request thua.
-  if (now - lastFrameFetch >= 333) {
+  // Dong bo muc tieu 4 FPS voi camera va khong tao request thua.
+  if (now - lastFrameFetch >= 250) {
     lastFrameFetch = now;
     fetchAndDrawFrame();
   }

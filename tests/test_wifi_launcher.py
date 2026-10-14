@@ -89,6 +89,23 @@ class WifiLauncherTests(unittest.TestCase):
         with patch.object(launcher, "camera_health", return_value=None):
             self.assertIsNone(launcher.discover_camera("bad-host", scan_lan=False))
 
+    def test_wifi_camera_uses_direct_mjpeg_stream(self):
+        host = f"127.0.0.1:{self.server.server_port}"
+        environment = {}
+
+        launcher.configure_wifi_camera(
+            environment,
+            camera_host=host,
+            scan_lan=False,
+            check_fps=False,
+        )
+
+        self.assertEqual(
+            environment["FACECHECK_CAMERA_URL"],
+            "http://127.0.0.1:81/stream",
+        )
+        self.assertEqual(environment["FACECHECK_CAMERA_HOST"], "127.0.0.1")
+
     def test_single_cli_selects_all_camera_modes(self):
         for mode in ("webcam", "usb", "wifi"):
             self.assertEqual(launcher.parse_args([mode]).camera, mode)

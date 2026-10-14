@@ -4,12 +4,13 @@
 
 // Application-level AIMD for the synchronous WebSocket writer. Healthy
 // delivery increases one FPS at a time; confirmed congestion decreases it.
-// The floor stays at 3 FPS after a successful write, so one radio retry can
-// never trap the video at sub-1 FPS.
+// The deployed Wi-Fi path has shown long blocking writes for an ~8 KB frame.
+// Start at 2 FPS so the synchronous writer has enough recovery time instead
+// of permanently offering frames faster than this path can deliver them.
 class AdaptiveSendPacer {
  public:
-  static constexpr uint8_t kMinFps = 3;
-  static constexpr uint8_t kMaxFps = 15;
+  static constexpr uint8_t kMinFps = 2;
+  static constexpr uint8_t kMaxFps = 4;
   static constexpr uint8_t kHealthyFramesToIncrease = 12;
 
   void beginConnection() {

@@ -4,12 +4,15 @@
 #include <WebSocketsClient.h>
 #include "esp_camera.h"
 #include "esp_http_server.h"
-#include "esp_wifi.h"
 #include "esp_task_wdt.h"
 #include "img_converters.h"
 #include "lwip/sockets.h"
 #include "send_pacing.h"
 #include "secrets.h"
+
+#ifndef FACECHECK_WIFI_ONLY_DIAGNOSTIC
+#define FACECHECK_WIFI_ONLY_DIAGNOSTIC 0
+#endif
 
 // ESP32-S3 WROOM CAM + OV3660 theo sơ đồ chân của bo đang sử dụng.
 #define CAM_PIN_PWDN  -1
@@ -35,9 +38,17 @@ constexpr char kStreamContentType[] =
 constexpr char kStreamPart[] =
     "\r\n--facecheck-boundary\r\nContent-Type: image/jpeg\r\n"
     "Content-Length: %u\r\n\r\n";
-// QVGA/q30: can bang do net va nhip truyen on dinh.
-constexpr uint32_t kStreamTargetFps = 5;
+// HVGA/q20: khop khung 480x320 va nham JPEG khoang 8 KB/frame.
+constexpr uint32_t kStreamTargetFps = 4;
 constexpr uint32_t kStreamFrameIntervalMs = 1000 / kStreamTargetFps;
+// Pulling MJPEG from the server is more robust on ESP32 than pushing large
+// synchronous WebSocket frames. The WebSocket implementation remains
+// available for diagnostics but is disabled in the deployed transport.
+constexpr bool kWebSocketPushEnabled = false;
+constexpr uint32_t kWsReconnectMinMs = 2000;
+constexpr uint32_t kWsReconnectMaxMs = 8000;
+constexpr uint32_t kWsSlowSendMs = 1500;
+constexpr uint8_t kWsFailuresBeforeReconnect = 3;
 
 httpd_handle_t web_server = nullptr;
 httpd_handle_t stream_server = nullptr;
@@ -51,20 +62,37 @@ WebSocketsClient camera_socket;
 volatile bool ws_connected = false;
 volatile uint32_t ws_frame_count = 0;
 volatile float ws_fps = 0.0f;
+volatile uint32_t ws_last_send_ms = 0;
+volatile uint8_t ws_send_pressure = 0;
+TaskHandle_t websocket_task_handle = nullptr;
 AdaptiveSendPacer ws_pacer;
+uint32_t ws_reconnect_delay_ms = kWsReconnectMinMs;
+bool ws_disconnect_requested = false;
 
 void websocket_event(WStype_t type, uint8_t *payload, size_t length) {
   (void)payload;
   (void)length;
   if (type == WStype_CONNECTED) {
     ws_connected = true;
+    ws_send_pressure = 0;
+    ws_reconnect_delay_ms = kWsReconnectMinMs;
+    ws_disconnect_requested = false;
+    camera_socket.setReconnectInterval(ws_reconnect_delay_ms);
     ws_pacer.beginConnection();
     Serial.printf("[WS] Da ket noi ws://%s:%u/camera\n",
                   FACECHECK_SERVER_HOST, FACECHECK_WS_PORT);
   } else if (type == WStype_DISCONNECTED) {
     ws_connected = false;
     ws_fps = 0.0f;
-    Serial.println("[WS] Mat ket noi; se tu ket noi lai.");
+    ws_send_pressure = 0;
+    if (!ws_disconnect_requested) {
+      ws_reconnect_delay_ms = min(kWsReconnectMaxMs,
+                                  ws_reconnect_delay_ms * 2);
+    }
+    ws_disconnect_requested = false;
+    camera_socket.setReconnectInterval(ws_reconnect_delay_ms);
+    Serial.printf("[WS] Mat ket noi; thu lai sau %u ms.\n",
+                  ws_reconnect_delay_ms);
   }
 }
 
@@ -72,7 +100,7 @@ void start_camera_socket() {
   const String path = String("/camera?token=") + FACECHECK_CAMERA_TOKEN;
   camera_socket.begin(FACECHECK_SERVER_HOST, FACECHECK_WS_PORT, path.c_str());
   camera_socket.onEvent(websocket_event);
-  camera_socket.setReconnectInterval(2000);
+  camera_socket.setReconnectInterval(kWsReconnectMinMs);
   // Phat hien socket nua-mo nhanh de video khong dung hang chuc giay.
   // Do not turn one short Wi-Fi/TCP stall into a reconnect cycle.
   camera_socket.enableHeartbeat(10000, 5000, 3);
@@ -105,14 +133,44 @@ void push_websocket_frame() {
   }
   const size_t frame_length = frame->len;
   esp_camera_fb_return(frame);
+  ws_last_send_ms = send_ms;
   if (!sent) {
     ws_pacer.recordFailure();
-    // Khong giu socket nua-mo sau mot frame gui that bai.
-    camera_socket.disconnect();
+    ++ws_send_pressure;
+    // Never retry immediately after a blocked/failed write. Immediate retries
+    // used to keep loopTask inside the TCP writer until the watchdog rebooted.
+    next_frame_at = millis() + ws_pacer.intervalMs();
+    Serial.printf("[WS] Gui that bai (%u/%u) | SEND=%u ms | retry=%u ms\n",
+                  ws_send_pressure, kWsFailuresBeforeReconnect, send_ms,
+                  ws_pacer.intervalMs());
+    if (ws_send_pressure >= kWsFailuresBeforeReconnect) {
+      ws_reconnect_delay_ms = min(kWsReconnectMaxMs,
+                                  ws_reconnect_delay_ms * 2);
+      camera_socket.setReconnectInterval(ws_reconnect_delay_ms);
+      ws_disconnect_requested = true;
+      ws_send_pressure = 0;
+      camera_socket.disconnect();
+    }
     return;
   }
 
   ws_pacer.recordSuccess(send_ms);
+  if (send_ms >= kWsSlowSendMs) {
+    ++ws_send_pressure;
+  } else if (send_ms <= ws_pacer.intervalMs()) {
+    ws_send_pressure = 0;
+  }
+  if (ws_send_pressure >= kWsFailuresBeforeReconnect) {
+    ws_reconnect_delay_ms = min(kWsReconnectMaxMs,
+                                ws_reconnect_delay_ms * 2);
+    camera_socket.setReconnectInterval(ws_reconnect_delay_ms);
+    ws_disconnect_requested = true;
+    ws_send_pressure = 0;
+    Serial.printf("[WS] TCP cham lien tiep; tao lai socket sau %u ms.\n",
+                  ws_reconnect_delay_ms);
+    camera_socket.disconnect();
+    return;
+  }
   const uint32_t target_interval_ms = ws_pacer.intervalMs();
   const uint32_t frame_work_ms = millis() - capture_started;
   // Healthy writes use an absolute frame period: CAP + SEND + WAIT ~= target.
@@ -148,6 +206,31 @@ void push_websocket_frame() {
     window_capture_ms = 0;
     window_send_ms = 0;
     window_started = millis();
+  }
+}
+
+void websocket_task(void *parameter) {
+  (void)parameter;
+  // This task is deliberately not registered with the task watchdog. A slow
+  // TCP write may still time out, but it can no longer starve loopTask, Wi-Fi
+  // recovery, status reporting, or reboot the complete camera.
+  for (;;) {
+    if (WiFi.status() == WL_CONNECTED) {
+      camera_socket.loop();
+      push_websocket_frame();
+    }
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
+}
+
+void start_websocket_task() {
+  if (websocket_task_handle != nullptr) return;
+  const BaseType_t created = xTaskCreatePinnedToCore(
+      websocket_task, "camera_ws", 8192, nullptr, 1,
+      &websocket_task_handle, 0);
+  if (created != pdPASS) {
+    websocket_task_handle = nullptr;
+    Serial.println("[WS] Khong tao duoc task WebSocket.");
   }
 }
 
@@ -200,11 +283,14 @@ esp_err_t health_handler(httpd_req_t *request) {
            "\"stream_frames\":%u,"
            "\"stream_fps\":%.1f,\"target_fps\":%u,"
            "\"ws_connected\":%s,\"ws_frames\":%u,\"ws_fps\":%.1f,"
+           "\"ws_send_ms\":%u,\"ws_pressure\":%u,"
            "\"ip\":\"%s\"}",
            WiFi.RSSI(), ESP.getFreeHeap(),
            stream_client_active ? "true" : "false", stream_client_count,
-           stream_frame_count, stream_fps, AdaptiveSendPacer::kMaxFps,
+           stream_frame_count, stream_fps,
+           kWebSocketPushEnabled ? ws_pacer.targetFps() : kStreamTargetFps,
            ws_connected ? "true" : "false", ws_frame_count, ws_fps,
+           ws_last_send_ms, ws_send_pressure,
            WiFi.localIP().toString().c_str());
   httpd_resp_set_type(request, "application/json");
   httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "*");
@@ -401,14 +487,13 @@ bool start_camera() {
   config.pin_sccb_scl = CAM_PIN_SIOC;
   config.pin_pwdn = CAM_PIN_PWDN;
   config.pin_reset = CAM_PIN_RESET;
-  config.xclk_freq_hz = 20000000;
+  // Reduce continuous camera DMA pressure so Wi-Fi can transmit reliably.
+  config.xclk_freq_hz = 8000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_QVGA;
-  // Số lớn hơn tạo JPEG nhẹ hơn. 15 giữ đủ chi tiết khuôn mặt và giảm tải Wi-Fi.
-  // QVGA/q30 nhe hon q20 de giu 2 FPS on dinh, nhung van ro hon cau hinh
-  // q45 truoc day. Mot framebuffer ngan hang doi frame khi mang cham.
-  config.jpeg_quality = 30;
-  // Mot framebuffer ngan camera ghi frame moi khi TCP dang gui frame hien tai.
+  config.frame_size = FRAMESIZE_HVGA;
+  // Gia tri lon hon nen manh hon; q20 nham muc tieu khoang 8 KB/frame.
+  config.jpeg_quality = 20;
+  // One on-demand framebuffer avoids continuous PSRAM/DMA contention.
   config.fb_count = 1;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
@@ -425,7 +510,7 @@ bool start_camera() {
     // chuyen dong trai/phai hien dung, tranh hinh anh nhu trong guong.
     sensor->set_vflip(sensor, 1);
     sensor->set_hmirror(sensor, 0);
-    sensor->set_sharpness(sensor, 0);
+    sensor->set_sharpness(sensor, 1);
     sensor->set_contrast(sensor, 0);
     if (sensor->id.PID == OV3660_PID) {
       sensor->set_brightness(sensor, 1);
@@ -447,11 +532,11 @@ void setup() {
   }
   Serial.printf("[PSRAM] San sang: %u bytes\n", ESP.getPsramSize());
 
-#if !FACECHECK_AP_ONLY_TEST
+#if !FACECHECK_AP_ONLY_TEST && !FACECHECK_WIFI_ONLY_DIAGNOSTIC
   if (!start_camera()) {
     while (true) delay(1000);
   }
-  Serial.println("[CAMERA] San sang (QVGA/q30, XCLK 20 MHz, 1 buffer)");
+  Serial.println("[CAMERA] San sang (HVGA 480x320/q20, 1 buffer, XCLK 8 MHz)");
 #else
   Serial.println("[TEST] Bo qua camera va web server, chi kiem tra SoftAP.");
 #endif
@@ -471,18 +556,10 @@ void setup() {
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   Serial.printf("[WIFI] SoftAP san sang: %s | channel=%u | max_clients=1\n",
                 CAMERA_AP_SSID, ap_channel);
+#elif FACECHECK_WIFI_ONLY_DIAGNOSTIC
+  Serial.println("[TEST] Wi-Fi only; camera/DMA disabled.");
 #else
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  const esp_err_t power_save_result = esp_wifi_set_ps(WIFI_PS_NONE);
-  const esp_err_t bandwidth_result =
-      esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
-  const esp_err_t protocol_result = esp_wifi_set_protocol(
-      WIFI_IF_STA,
-      WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
-  Serial.printf("[WIFI] Performance b/g/n HT20: ps=%d bw=%d proto=%d\n",
-                power_save_result, bandwidth_result, protocol_result);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
   begin_station_connection();
@@ -493,7 +570,11 @@ void setup() {
     Serial.print('.');
   }
   Serial.println();
-  if (WiFi.status() != WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED) {
+    // Match the stable display firmware: let the driver negotiate protocol,
+    // bandwidth and TX power with the access point, then disable sleep.
+    WiFi.setSleep(false);
+  } else {
     Serial.println(
         "[WIFI] Chua ket noi duoc; firmware se tu thu lai moi 5 giay.");
   }
@@ -504,9 +585,15 @@ void setup() {
 #else
   if (WiFi.status() == WL_CONNECTED) start_mdns();
 #endif
-#if !FACECHECK_AP_ONLY_TEST
+#if !FACECHECK_AP_ONLY_TEST && !FACECHECK_WIFI_ONLY_DIAGNOSTIC
+  // Starting esp_http_server before STA owns an IP can leave listening
+  // sockets that accept TCP but never dispatch a request after DHCP recovers.
+#if CAMERA_USE_SOFT_AP
   start_web_servers();
-  start_camera_socket();
+#else
+  if (WiFi.status() == WL_CONNECTED) start_web_servers();
+#endif
+  if (kWebSocketPushEnabled) start_camera_socket();
 #endif
 
 #if CAMERA_USE_SOFT_AP
@@ -529,6 +616,9 @@ void setup() {
   // giai doan ket noi Wi-Fi de setup duoc phep cho DHCP toi 30 giay.
   esp_task_wdt_init(8, true);
   esp_task_wdt_add(nullptr);
+#if !FACECHECK_AP_ONLY_TEST && !FACECHECK_WIFI_ONLY_DIAGNOSTIC
+  if (kWebSocketPushEnabled) start_websocket_task();
+#endif
 }
 
 void loop() {
@@ -539,10 +629,16 @@ void loop() {
   static bool was_connected = WiFi.status() == WL_CONNECTED;
   const bool is_connected = WiFi.status() == WL_CONNECTED;
   if (is_connected && !was_connected) {
+    WiFi.setSleep(false);
     const String ip = WiFi.localIP().toString();
     Serial.printf("[WIFI] Da ket noi lai: %s | RSSI=%d dBm\n",
                   ip.c_str(), WiFi.RSSI());
     start_mdns();
+#if !FACECHECK_AP_ONLY_TEST
+    if (!web_server_ready && !stream_server_ready) {
+      start_web_servers();
+    }
+#endif
   } else if (!is_connected && was_connected) {
     Serial.println("[WIFI] Mat ket noi.");
   }
@@ -554,10 +650,6 @@ void loop() {
     WiFi.disconnect(false);
     begin_station_connection();
   }
-#endif
-#if !FACECHECK_AP_ONLY_TEST
-  camera_socket.loop();
-  push_websocket_frame();
 #endif
   if (millis() - last_report >= 10000) {
     last_report = millis();

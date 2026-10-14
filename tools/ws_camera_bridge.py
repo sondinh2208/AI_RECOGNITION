@@ -47,8 +47,29 @@ class LatestFrameStore:
     recent_frames: deque = field(default_factory=deque)
     invalid_frames: int = 0
     started_at: float = field(default_factory=time.monotonic)
+    session_id: int = 0
 
-    def update(self, jpeg: bytes) -> bool:
+    def begin_session(self) -> int:
+        with self.condition:
+            self.session_id += 1
+            self.active_connections = 1
+            self.connected = True
+            self.started_at = time.monotonic()
+            self.session_frames = 0
+            self.recent_frames.clear()
+            self.condition.notify_all()
+            return self.session_id
+
+    def end_session(self, session_id: int) -> None:
+        with self.condition:
+            # A superseded socket must never mark the replacement as offline.
+            if session_id != self.session_id:
+                return
+            self.active_connections = 0
+            self.connected = False
+            self.condition.notify_all()
+
+    def update(self, jpeg: bytes, session_id: int | None = None) -> bool:
         if (
             len(jpeg) < 4
             or len(jpeg) > MAX_JPEG_BYTES
@@ -59,6 +80,8 @@ class LatestFrameStore:
                 self.invalid_frames += 1
             return False
         with self.condition:
+            if session_id is not None and session_id != self.session_id:
+                return False
             self.jpeg = jpeg
             self.sequence += 1
             self.total_frames += 1
@@ -96,6 +119,8 @@ class LatestFrameStore:
                 "ok": self.connected and age_ms is not None and age_ms < 3000,
                 "service": "FaceCheck WebSocket Camera",
                 "connected": self.connected,
+                "active_connections": self.active_connections,
+                "session_id": self.session_id,
                 "frames": self.total_frames,
                 "invalid_frames": self.invalid_frames,
                 "frame_age_ms": age_ms,
@@ -105,21 +130,30 @@ class LatestFrameStore:
 
 STORE = LatestFrameStore()
 CAMERA_TOKEN = ""
+CAMERA_CONNECTION_LOCK = asyncio.Lock()
+ACTIVE_CAMERA: WebSocket | None = None
 
 
 async def camera_socket(websocket: WebSocket):
+    global ACTIVE_CAMERA
     supplied = websocket.query_params.get("token", "")
     if not CAMERA_TOKEN or not secrets.compare_digest(supplied, CAMERA_TOKEN):
         await websocket.close(code=1008)
         return
     await websocket.accept()
-    with STORE.condition:
-        STORE.active_connections += 1
-        STORE.connected = True
-        STORE.started_at = time.monotonic()
-        STORE.session_frames = 0
-        STORE.recent_frames.clear()
-    print(f"[WS-CAMERA] ESP32 ket noi tu {websocket.client}", flush=True)
+    async with CAMERA_CONNECTION_LOCK:
+        previous = ACTIVE_CAMERA
+        ACTIVE_CAMERA = websocket
+        session_id = STORE.begin_session()
+    if previous is not None and previous is not websocket:
+        try:
+            await previous.close(code=1012, reason="Camera session replaced")
+        except (RuntimeError, WebSocketDisconnect):
+            pass
+    print(
+        f"[WS-CAMERA] ESP32 ket noi tu {websocket.client} | session={session_id}",
+        flush=True,
+    )
     try:
         while True:
             message = await websocket.receive()
@@ -127,15 +161,15 @@ async def camera_socket(websocket: WebSocket):
                 break
             payload = message.get("bytes")
             if payload is not None:
-                STORE.update(payload)
+                STORE.update(payload, session_id=session_id)
     except WebSocketDisconnect:
         pass
     finally:
-        with STORE.condition:
-            STORE.active_connections = max(0, STORE.active_connections - 1)
-            STORE.connected = STORE.active_connections > 0
-            STORE.condition.notify_all()
-        print("[WS-CAMERA] ESP32 ngat ket noi", flush=True)
+        async with CAMERA_CONNECTION_LOCK:
+            if ACTIVE_CAMERA is websocket:
+                ACTIVE_CAMERA = None
+        STORE.end_session(session_id)
+        print(f"[WS-CAMERA] ESP32 ngat ket noi | session={session_id}", flush=True)
 
 
 class LocalCameraHandler(BaseHTTPRequestHandler):

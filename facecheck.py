@@ -265,7 +265,7 @@ def configure_wifi_camera(
         if fps < MINIMUM_DISPLAY_FPS:
             print("[CẢNH BÁO] Nguồn ảnh dưới 5 FPS; hãy đặt camera gần router hơn.")
 
-    environment["FACECHECK_CAMERA_URL"] = WS_CAMERA_STREAM_URL
+    environment["FACECHECK_CAMERA_URL"] = stream_url
     environment["FACECHECK_CAMERA_HOST"] = resolved_host
     environment["FACECHECK_CAMERA_PROFILE"] = "embedded_ov3660"
     environment.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
@@ -307,39 +307,11 @@ def run(arguments) -> int:
             environment["FACECHECK_CAMERA_URL"] = USB_STREAM_URL
             environment["FACECHECK_CAMERA_PROFILE"] = "embedded_ov3660"
         else:
-            bridge = start_wifi_bridge(environment)
-            # Khi da chi dinh IP va nhan duoc frame WebSocket xac thuc, khong
-            # phu thuoc vao HTTP /health cua camera. Kenh HTTP chi la chan doan
-            # phu va co the tam thoi ban trong khi WebSocket van hoat dong tot.
-            status = None
-            if arguments.camera_host:
-                status = wait_for_wifi_frames(timeout=15.0)
-            if status:
-                environment["FACECHECK_CAMERA_URL"] = WS_CAMERA_STREAM_URL
-                environment["FACECHECK_CAMERA_HOST"] = arguments.camera_host
-                environment["FACECHECK_CAMERA_PROFILE"] = "embedded_ov3660"
-                environment.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
-                print(
-                    f"[WIFI-CAMERA] WebSocket truc tiep tu "
-                    f"{arguments.camera_host}"
-                )
-            else:
-                configure_wifi_camera(
-                    environment,
-                    camera_host=arguments.camera_host,
-                    scan_lan=not arguments.no_lan_scan,
-                    check_fps=False,
-                )
-                status = wait_for_wifi_frames()
-            if not status:
-                raise RuntimeError(
-                    "ESP32 chua ket noi WebSocket. Kiem tra FACECHECK_SERVER_HOST "
-                    "trong secrets.h va Windows Firewall cho cong 8768."
-                )
-            print(
-                f"[WS-CAMERA] Da nhan frame binary | "
-                f"FPS trung binh={status.get('average_fps', 0):.1f} | "
-                f"do tuoi frame={status.get('frame_age_ms')} ms"
+            configure_wifi_camera(
+                environment,
+                camera_host=arguments.camera_host,
+                scan_lan=not arguments.no_lan_scan,
+                check_fps=False,
             )
 
         command = [sys.executable, str(ROOT / "web_admin.py")]
