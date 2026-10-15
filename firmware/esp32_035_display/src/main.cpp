@@ -22,6 +22,8 @@ constexpr uint32_t kGreen = 0x12B76A;
 constexpr uint32_t kRed = 0xF04438;
 constexpr uint32_t kOrange = 0xF79009;
 constexpr uint32_t kMuted = 0x98A2B3;
+constexpr uint32_t kTargetDisplayFps = 5;
+constexpr uint32_t kFrameFetchIntervalMs = 1000 / kTargetDisplayFps;
 
 class FaceCheckDisplay : public lgfx::LGFX_Device {
  public:
@@ -210,9 +212,12 @@ void drawStatusPanel() {
   display.drawFastVLine(kMetricsX, 260, 50, 0x344054);
 
   display.setTextDatum(lgfx::textdatum_t::top_right);
-  // Bao mau do khi toc do ve thuc te tut ro ret duoi muc tieu 4 FPS.
+  // Bao mau do khi toc do ve thuc te tut ro ret duoi muc tieu.
   const uint32_t fpsColor =
-      renderedFpsValue > 0.0f && renderedFpsValue < 3.5f ? kRed : kMuted;
+      renderedFpsValue > 0.0f &&
+              renderedFpsValue < static_cast<float>(kTargetDisplayFps) - 0.5f
+          ? kRed
+          : kMuted;
   display.setTextColor(fpsColor, kPanel);
   display.drawString(String(renderedFpsValue, 1) + " FPS", kMetricsRight, 264);
   if (kiosk.mode == "add_employee" && kiosk.sampleTarget > 0) {
@@ -395,8 +400,9 @@ void loop() {
     return;
   }
 
-  // Dong bo muc tieu 4 FPS voi camera va khong tao request thua.
-  if (now - lastFrameFetch >= 250) {
+  // Ban thu 5 FPS: backend va camera deu cap nhat moi 200 ms, nen TFT nhan
+  // du frame moi ma khong can poll nhanh hon nguon hoac tao backlog HTTP/SPI.
+  if (now - lastFrameFetch >= kFrameFetchIntervalMs) {
     lastFrameFetch = now;
     fetchAndDrawFrame();
   }

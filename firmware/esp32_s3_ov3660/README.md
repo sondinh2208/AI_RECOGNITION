@@ -50,8 +50,8 @@ Từ thư mục gốc dự án:
 .\venv\Scripts\python.exe facecheck.py wifi --simulate-display
 ```
 
-Chương trình tự tìm camera, đo FPS MJPEG thực nhận và cảnh báo khi dưới 5 FPS.
-Firmware dùng QVGA 320x240, JPEG quality 15 và 3 frame buffer để phát mục tiêu
-18 FPS qua Wi-Fi 802.11n; màn hình riêng lấy tối đa 7 FPS. TFT lấy từng JPEG mới
+Chương trình tự tìm camera và kết nối trực tiếp với MJPEG stream. Firmware bản
+thử dùng HVGA 480x320, JPEG quality 20 và một frame buffer để phát mục tiêu
+5 FPS qua Wi-Fi. Backend và TFT cùng dùng chu kỳ 200 ms; TFT lấy từng JPEG mới
 nhất qua `/frame.jpg` để tránh tồn khung hình và lệch thời gian.
 USB-UART chỉ dùng để nạp và xem log 115200 baud, không còn mang dữ liệu ảnh.

@@ -39,7 +39,8 @@ constexpr char kStreamPart[] =
     "\r\n--facecheck-boundary\r\nContent-Type: image/jpeg\r\n"
     "Content-Length: %u\r\n\r\n";
 // HVGA/q20: khop khung 480x320 va nham JPEG khoang 8 KB/frame.
-constexpr uint32_t kStreamTargetFps = 4;
+// Ban thu dong bo toan tuyen: camera, backend va TFT cung chay 5 FPS.
+constexpr uint32_t kStreamTargetFps = 5;
 constexpr uint32_t kStreamFrameIntervalMs = 1000 / kStreamTargetFps;
 // Pulling MJPEG from the server is more robust on ESP32 than pushing large
 // synchronous WebSocket frames. The WebSocket implementation remains

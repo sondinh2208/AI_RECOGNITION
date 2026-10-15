@@ -461,6 +461,9 @@ Lưu ý cổng upload và cổng CDC runtime có thể khác nhau. Xem Device Ma
 4. Cho phép inbound TCP 8767 trên Windows Firewall trong mạng private.
 
 TFT chỉ tải JPEG và đọc trạng thái từ laptop; thiết bị không chạy AI và không kết nối trực tiếp với camera.
+Kênh hiển thị thử nghiệm được đồng bộ ở 5 FPS với camera Wi-Fi: backend tạo tối
+đa một JPEG mới mỗi 200 ms và firmware TFT poll cùng chu kỳ, nhờ đó không tích
+lũy frame cũ.
 
 Mỗi thư mục firmware có README riêng với hướng dẫn phần cứng chi tiết.
 

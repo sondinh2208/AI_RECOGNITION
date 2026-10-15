@@ -56,9 +56,10 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._display_cached_frame_id = -1
         self._display_cached_jpeg = None
         self._display_jpeg_encoded_at = 0.0
-        # TFT dong bo voi camera, khong fetch lai
-        # khong nen lai anh vo ich va khong tao backlog TCP tren ESP32 hien thi.
-        self._display_jpeg_min_interval = 1.0 / 3.0
+        # Ban thu dong bo camera Wi-Fi va TFT o 5 FPS. Firmware TFT poll moi
+        # 200 ms nen khong tao request thua
+        # hay backlog TCP. Frame trung van duoc tai su dung tu cache ben duoi.
+        self._display_jpeg_min_interval = 1.0 / 5.0
 
         self.kiosk_running = False
         self.is_recognizing = False
