@@ -10,6 +10,18 @@
 #include "send_pacing.h"
 #include "secrets.h"
 
+#ifndef WIFI_SECONDARY_SSID
+#define WIFI_SECONDARY_SSID ""
+#endif
+
+#ifndef WIFI_SECONDARY_PASSWORD
+#define WIFI_SECONDARY_PASSWORD ""
+#endif
+
+#ifndef FACECHECK_SECONDARY_SERVER_HOST
+#define FACECHECK_SECONDARY_SERVER_HOST FACECHECK_SERVER_HOST
+#endif
+
 #ifndef FACECHECK_WIFI_ONLY_DIAGNOSTIC
 #define FACECHECK_WIFI_ONLY_DIAGNOSTIC 0
 #endif
@@ -70,6 +82,14 @@ AdaptiveSendPacer ws_pacer;
 uint32_t ws_reconnect_delay_ms = kWsReconnectMinMs;
 bool ws_disconnect_requested = false;
 
+const char* facecheck_server_host() {
+  if (strlen(WIFI_SECONDARY_SSID) > 0 &&
+      WiFi.SSID() == WIFI_SECONDARY_SSID) {
+    return FACECHECK_SECONDARY_SERVER_HOST;
+  }
+  return FACECHECK_SERVER_HOST;
+}
+
 void websocket_event(WStype_t type, uint8_t *payload, size_t length) {
   (void)payload;
   (void)length;
@@ -81,7 +101,7 @@ void websocket_event(WStype_t type, uint8_t *payload, size_t length) {
     camera_socket.setReconnectInterval(ws_reconnect_delay_ms);
     ws_pacer.beginConnection();
     Serial.printf("[WS] Da ket noi ws://%s:%u/camera\n",
-                  FACECHECK_SERVER_HOST, FACECHECK_WS_PORT);
+                  facecheck_server_host(), FACECHECK_WS_PORT);
   } else if (type == WStype_DISCONNECTED) {
     ws_connected = false;
     ws_fps = 0.0f;
@@ -99,7 +119,7 @@ void websocket_event(WStype_t type, uint8_t *payload, size_t length) {
 
 void start_camera_socket() {
   const String path = String("/camera?token=") + FACECHECK_CAMERA_TOKEN;
-  camera_socket.begin(FACECHECK_SERVER_HOST, FACECHECK_WS_PORT, path.c_str());
+  camera_socket.begin(facecheck_server_host(), FACECHECK_WS_PORT, path.c_str());
   camera_socket.onEvent(websocket_event);
   camera_socket.setReconnectInterval(kWsReconnectMinMs);
   // Phat hien socket nua-mo nhanh de video khong dung hang chuc giay.
@@ -235,12 +255,46 @@ void start_websocket_task() {
   }
 }
 
-void begin_station_connection() {
-  if (strlen(WIFI_PASSWORD) == 0) {
-    WiFi.begin(WIFI_SSID);
+bool facecheck_server_reachable(const char* host) {
+  WiFiClient probe;
+  probe.setTimeout(1200);
+  const bool connected = probe.connect(host, 8767, 1200);
+  probe.stop();
+  return connected;
+}
+
+bool connect_station(const char* ssid, const char* password,
+                     const char* server_host) {
+  if (strlen(ssid) == 0) return false;
+  WiFi.disconnect(false);
+  delay(100);
+  if (strlen(password) == 0) {
+    WiFi.begin(ssid);
   } else {
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(ssid, password);
   }
+  Serial.printf("[WIFI] Thu %s", ssid);
+  const unsigned long started_at = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - started_at < 7000) {
+    delay(250);
+    Serial.print('.');
+    if (web_server_ready || stream_server_ready) esp_task_wdt_reset();
+  }
+  Serial.println();
+  if (WiFi.status() != WL_CONNECTED) return false;
+  if (!facecheck_server_reachable(server_host)) {
+    Serial.printf("[WIFI] %s co song nhung khong thay FaceCheck tai %s:8767\n",
+                  ssid, server_host);
+    return false;
+  }
+  return true;
+}
+
+void begin_station_connection() {
+  if (connect_station(WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER_HOST)) return;
+  if (connect_station(WIFI_SECONDARY_SSID, WIFI_SECONDARY_PASSWORD,
+                      FACECHECK_SECONDARY_SERVER_HOST)) return;
+  Serial.println("[WIFI] Chua tim thay mang co may chu FaceCheck.");
 }
 
 void start_mdns() {
@@ -564,7 +618,8 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
   begin_station_connection();
-  Serial.printf("[WIFI] Dang ket noi %s", WIFI_SSID);
+  Serial.printf("[WIFI] Dang tim %s hoac %s\n", WIFI_SSID,
+                WIFI_SECONDARY_SSID);
   const unsigned long started_at = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - started_at < 30000) {
     delay(400);
@@ -602,7 +657,8 @@ void setup() {
   Serial.printf("[WIFI] IP truc tiep: %s\n", ip.c_str());
 #else
   const String ip = WiFi.localIP().toString();
-  Serial.printf("[WIFI] IP: %s | RSSI: %d dBm\n", ip.c_str(), WiFi.RSSI());
+    Serial.printf("[WIFI] SSID: %s | IP: %s | RSSI: %d dBm\n",
+                  WiFi.SSID().c_str(), ip.c_str(), WiFi.RSSI());
 #endif
   if (web_server_ready) {
     Serial.printf("[WEB] Trang kiem tra: http://%s/\n", ip.c_str());
@@ -627,8 +683,17 @@ void loop() {
   static unsigned long last_report = 0;
 #if !CAMERA_USE_SOFT_AP
   static unsigned long last_reconnect_attempt = 0;
+  static unsigned long last_server_probe = 0;
   static bool was_connected = WiFi.status() == WL_CONNECTED;
-  const bool is_connected = WiFi.status() == WL_CONNECTED;
+  bool is_connected = WiFi.status() == WL_CONNECTED;
+  if (is_connected && millis() - last_server_probe >= 6000) {
+    last_server_probe = millis();
+    if (!facecheck_server_reachable(facecheck_server_host())) {
+      Serial.println("[WIFI] Laptop da doi mang; dang tim FaceCheck tren mang con lai.");
+      WiFi.disconnect(false);
+      is_connected = false;
+    }
+  }
   if (is_connected && !was_connected) {
     WiFi.setSleep(false);
     const String ip = WiFi.localIP().toString();

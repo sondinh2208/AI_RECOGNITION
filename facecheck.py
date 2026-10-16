@@ -254,7 +254,10 @@ def configure_wifi_camera(
 
     host, health = discovered
     resolved_host = str(health.get("ip") or host)
-    stream_url = f"http://{resolved_host}:81/stream"
+    # Giu hostname mDNS trong URL de luong camera tu phuc hoi khi laptop va
+    # ESP32 chuyen qua lai giua cac LAN co dai IP khac nhau.
+    stream_host = host if host.lower().endswith(".local") else resolved_host
+    stream_url = f"http://{stream_host}:81/stream"
     print(
         f"[WIFI-CAMERA] Đã kết nối {resolved_host} | "
         f"RSSI={health.get('rssi')} dBm | mục tiêu={health.get('target_fps', 10)} FPS"
@@ -266,7 +269,7 @@ def configure_wifi_camera(
             print("[CẢNH BÁO] Nguồn ảnh dưới 5 FPS; hãy đặt camera gần router hơn.")
 
     environment["FACECHECK_CAMERA_URL"] = stream_url
-    environment["FACECHECK_CAMERA_HOST"] = resolved_host
+    environment["FACECHECK_CAMERA_HOST"] = stream_host
     environment["FACECHECK_CAMERA_PROFILE"] = "embedded_ov3660"
     environment.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
 

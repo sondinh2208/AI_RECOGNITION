@@ -106,6 +106,30 @@ class WifiLauncherTests(unittest.TestCase):
         )
         self.assertEqual(environment["FACECHECK_CAMERA_HOST"], "127.0.0.1")
 
+    def test_wifi_camera_keeps_mdns_host_across_network_changes(self):
+        environment = {}
+        health = {"ok": True, "camera": "OV3660", "ip": "172.20.10.4"}
+        with patch.object(
+            launcher,
+            "discover_camera",
+            return_value=("facecheck-cam.local", health),
+        ):
+            launcher.configure_wifi_camera(
+                environment,
+                camera_host="facecheck-cam.local",
+                scan_lan=False,
+                check_fps=False,
+            )
+
+        self.assertEqual(
+            environment["FACECHECK_CAMERA_URL"],
+            "http://facecheck-cam.local:81/stream",
+        )
+        self.assertEqual(
+            environment["FACECHECK_CAMERA_HOST"],
+            "facecheck-cam.local",
+        )
+
     def test_single_cli_selects_all_camera_modes(self):
         for mode in ("webcam", "usb", "wifi"):
             self.assertEqual(launcher.parse_args([mode]).camera, mode)

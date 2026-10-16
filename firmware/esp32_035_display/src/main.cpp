@@ -6,6 +6,18 @@
 
 #include "secrets.h"
 
+#ifndef WIFI_SECONDARY_SSID
+#define WIFI_SECONDARY_SSID ""
+#endif
+
+#ifndef WIFI_SECONDARY_PASSWORD
+#define WIFI_SECONDARY_PASSWORD ""
+#endif
+
+#ifndef FACECHECK_SECONDARY_SERVER
+#define FACECHECK_SECONDARY_SERVER FACECHECK_SERVER
+#endif
+
 namespace {
 
 constexpr int kTftMosi = 13;
@@ -99,6 +111,7 @@ struct KioskState {
 };
 
 FaceCheckDisplay display;
+String facecheckServer = FACECHECK_SERVER;
 KioskState kiosk;
 uint32_t lastStateFetch = 0;
 uint32_t lastFrameFetch = 0;
@@ -122,6 +135,60 @@ uint32_t totalDrawMs = 0;
 
 constexpr size_t kMaxJpegSize = 40960;
 static uint8_t s_jpegBuffer[kMaxJpegSize];
+
+void selectFaceCheckServer() {
+  if (strlen(WIFI_SECONDARY_SSID) > 0 &&
+      WiFi.SSID() == WIFI_SECONDARY_SSID) {
+    facecheckServer = FACECHECK_SECONDARY_SERVER;
+  } else {
+    facecheckServer = FACECHECK_SERVER;
+  }
+  Serial.printf("[SERVER] SSID=%s | %s\n",
+                WiFi.SSID().c_str(), facecheckServer.c_str());
+}
+
+bool faceCheckServerReachable(const String& server) {
+  String address = server;
+  if (address.startsWith("http://")) address.remove(0, 7);
+  const int slash = address.indexOf('/');
+  if (slash >= 0) address.remove(slash);
+  uint16_t port = 80;
+  const int colon = address.lastIndexOf(':');
+  if (colon >= 0) {
+    port = static_cast<uint16_t>(address.substring(colon + 1).toInt());
+    address.remove(colon);
+  }
+  WiFiClient probe;
+  probe.setTimeout(1200);
+  const bool connected = probe.connect(address.c_str(), port, 1200);
+  probe.stop();
+  return connected;
+}
+
+bool connectConfiguredNetwork(const char* ssid, const char* password,
+                              const char* server) {
+  if (strlen(ssid) == 0) return false;
+  WiFi.disconnect(true);
+  delay(100);
+  WiFi.mode(WIFI_STA);
+  if (strlen(password) == 0) {
+    WiFi.begin(ssid);
+  } else {
+    WiFi.begin(ssid, password);
+  }
+  const uint32_t started = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - started < 7000) {
+    delay(250);
+  }
+  if (WiFi.status() != WL_CONNECTED) return false;
+  if (!faceCheckServerReachable(server)) {
+    Serial.printf("[WIFI] %s co song nhung khong thay FaceCheck tai %s\n",
+                  ssid, server);
+    return false;
+  }
+  facecheckServer = server;
+  return true;
+}
 
 void centerText(const String& text, int y, int size, uint32_t color) {
   display.setFont(&fonts::Font0);
@@ -241,7 +308,7 @@ bool fetchAndDrawFrame() {
         "X-FaceCheck-Brightness", "X-FaceCheck-Sample-Count",
         "X-FaceCheck-Sample-Target"};
     frameHttp.collectHeaders(headerKeys, sizeof(headerKeys) / sizeof(headerKeys[0]));
-    if (!frameHttp.begin(frameClient, String(FACECHECK_SERVER) + "/frame.jpg")) {
+    if (!frameHttp.begin(frameClient, facecheckServer + "/frame.jpg")) {
       return false;
     }
     frameHttpReady = true;
@@ -348,26 +415,22 @@ void ensureWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
   frameHttp.end();
   frameHttpReady = false;
-  WiFi.disconnect(true);
-  delay(100);
-  WiFi.mode(WIFI_STA);
-  if (strlen(WIFI_PASSWORD) == 0) {
-    WiFi.begin(WIFI_SSID);
-  } else {
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  bool connected = connectConfiguredNetwork(
+      WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER);
+  if (!connected) {
+    connected = connectConfiguredNetwork(
+        WIFI_SECONDARY_SSID, WIFI_SECONDARY_PASSWORD,
+        FACECHECK_SECONDARY_SERVER);
   }
   drawConnectionScreen("Dang ket noi Wi-Fi 2.4 GHz");
-  const uint32_t started = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - started < 15000) {
-    delay(250);
-  }
-  if (WiFi.status() == WL_CONNECTED) {
+  if (connected && WiFi.status() == WL_CONNECTED) {
     WiFi.setSleep(false);
-    Serial.printf("[WIFI] %s | RSSI=%d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    Serial.printf("[WIFI] %s | %s | RSSI=%d dBm\n",
+                  WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
     drawConnectionScreen("Wi-Fi OK, dang cho FaceCheck");
     lastSuccessfulRequest = millis();
   } else {
-    Serial.printf("[WIFI] Khong ket noi duoc SSID: %s | status=%d\n", WIFI_SSID, WiFi.status());
+    Serial.printf("[WIFI] Khong ket noi duoc mang da cau hinh | status=%d\n", WiFi.status());
     drawConnectionScreen("Khong ket noi duoc Wi-Fi");
     int n = WiFi.scanNetworks();
     Serial.printf("[WIFI SCAN] Tim thay %d mang:\n", n);
@@ -414,6 +477,7 @@ void loop() {
     frameHttpReady = false;
     drawConnectionScreen("Mat ket noi FaceCheck");
     lastSuccessfulRequest = 0;
+    WiFi.disconnect(true);
   }
   delay(3);
 }
