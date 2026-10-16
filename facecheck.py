@@ -36,6 +36,7 @@ WS_CAMERA_HEALTH_URL = "http://127.0.0.1:8769/health"
 WS_CAMERA_STREAM_URL = "http://127.0.0.1:8769/stream"
 DEFAULT_CAMERA_HOST = "facecheck-cam.local"
 MINIMUM_DISPLAY_FPS = 5.0
+DISPLAY_PORT = 8767
 
 
 def load_local_environment(environment: dict[str, str]) -> dict[str, str]:
@@ -67,6 +68,19 @@ def facecheck_running() -> bool:
         and status.get("ok") is True
         and status.get("service") == "FaceCheck Web UI"
     )
+
+
+def reserve_display_probe():
+    """Mo tam cong TFT de ESP32 biet laptop dang o LAN nao khi khoi dong."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("0.0.0.0", DISPLAY_PORT))
+        listener.listen(8)
+        return listener
+    except OSError:
+        listener.close()
+        return None
 
 
 def camera_health(host: str, timeout: float = 0.7) -> dict | None:
@@ -299,6 +313,7 @@ def run(arguments) -> int:
 
     environment = load_local_environment(os.environ.copy())
     bridge = None
+    display_probe = None
     try:
         if arguments.camera == "webcam":
             environment.pop("FACECHECK_CAMERA_URL", None)
@@ -310,12 +325,17 @@ def run(arguments) -> int:
             environment["FACECHECK_CAMERA_URL"] = USB_STREAM_URL
             environment["FACECHECK_CAMERA_PROFILE"] = "embedded_ov3660"
         else:
+            display_probe = reserve_display_probe()
             configure_wifi_camera(
                 environment,
                 camera_host=arguments.camera_host,
                 scan_lan=not arguments.no_lan_scan,
                 check_fps=False,
             )
+
+        if display_probe is not None:
+            display_probe.close()
+            display_probe = None
 
         command = [sys.executable, str(ROOT / "web_admin.py")]
         if arguments.simulate_display:
@@ -325,6 +345,8 @@ def run(arguments) -> int:
         print(f"[FACECHECK] {error}")
         return 1
     finally:
+        if display_probe is not None:
+            display_probe.close()
         if bridge is not None and bridge.poll() is None:
             bridge.terminate()
             try:
