@@ -81,6 +81,7 @@ TaskHandle_t websocket_task_handle = nullptr;
 AdaptiveSendPacer ws_pacer;
 uint32_t ws_reconnect_delay_ms = kWsReconnectMinMs;
 bool ws_disconnect_requested = false;
+unsigned long server_probe_after = 0;
 
 const char* facecheck_server_host() {
   if (strlen(WIFI_SECONDARY_SSID) > 0 &&
@@ -264,7 +265,7 @@ bool facecheck_server_reachable(const char* host) {
 }
 
 bool connect_station(const char* ssid, const char* password,
-                     const char* server_host) {
+                     const char* server_host, bool require_server = true) {
   if (strlen(ssid) == 0) return false;
   WiFi.disconnect(false);
   delay(100);
@@ -282,19 +283,68 @@ bool connect_station(const char* ssid, const char* password,
   }
   Serial.println();
   if (WiFi.status() != WL_CONNECTED) return false;
-  if (!facecheck_server_reachable(server_host)) {
+  if (require_server && !facecheck_server_reachable(server_host)) {
     Serial.printf("[WIFI] %s co song nhung khong thay FaceCheck tai %s:8767\n",
                   ssid, server_host);
     return false;
   }
+  // Giu ket noi du lau de launcher quet LAN va khoi dong backend. Neu kiem
+  // tra server ngay sau DHCP, camera co the roi mang dung luc launcher quet.
+  server_probe_after = millis() + 60000;
   return true;
 }
 
 void begin_station_connection() {
+  if (web_server_ready || stream_server_ready) esp_task_wdt_reset();
+  WiFi.disconnect(false);
+  delay(100);
+  const int count = WiFi.scanNetworks(false, true);
+  bool primary_visible = false;
+  bool secondary_visible = false;
+  int primary_rssi = -127;
+  int secondary_rssi = -127;
+  for (int index = 0; index < count; ++index) {
+    const String found_ssid = WiFi.SSID(index);
+    if (found_ssid == WIFI_SSID) {
+      primary_visible = true;
+      primary_rssi = max(primary_rssi, WiFi.RSSI(index));
+    }
+    if (found_ssid == WIFI_SECONDARY_SSID) {
+      secondary_visible = true;
+      secondary_rssi = max(secondary_rssi, WiFi.RSSI(index));
+    }
+  }
+  WiFi.scanDelete();
+  if (web_server_ready || stream_server_ready) esp_task_wdt_reset();
+
+  // Neu chi co mot mang da cau hinh thi giu mang do ngay. Khong bat camera
+  // phai cho backend mo cong 8767, tranh vong cho launcher <-> camera.
+  if (primary_visible && !secondary_visible) {
+    connect_station(WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER_HOST, false);
+    return;
+  }
+  if (secondary_visible && !primary_visible) {
+    connect_station(WIFI_SECONDARY_SSID, WIFI_SECONDARY_PASSWORD,
+                    FACECHECK_SECONDARY_SERVER_HOST, false);
+    return;
+  }
+
   if (connect_station(WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER_HOST)) return;
   if (connect_station(WIFI_SECONDARY_SSID, WIFI_SECONDARY_PASSWORD,
                       FACECHECK_SECONDARY_SERVER_HOST)) return;
-  Serial.println("[WIFI] Chua tim thay mang co may chu FaceCheck.");
+  // Ca hai AP cung bat nhung backend chua khoi dong: tam giu AP manh hon de
+  // launcher co the tim camera. Khi backend xuat hien, probe dinh ky se chot
+  // dung LAN cua laptop.
+  if (primary_visible || secondary_visible) {
+    if (secondary_visible && secondary_rssi > primary_rssi) {
+      connect_station(WIFI_SECONDARY_SSID, WIFI_SECONDARY_PASSWORD,
+                      FACECHECK_SECONDARY_SERVER_HOST, false);
+    } else {
+      connect_station(WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER_HOST, false);
+    }
+    return;
+  }
+  Serial.println("[WIFI] Khong thay Dinh Duc hoac Sonb.");
 }
 
 void start_mdns() {
@@ -671,7 +721,8 @@ void setup() {
 
   // Tu khoi dong lai neu camera/TCP driver giu loop qua lau. Bat watchdog sau
   // giai doan ket noi Wi-Fi de setup duoc phep cho DHCP toi 30 giay.
-  esp_task_wdt_init(8, true);
+  // Mot chu ky quet + thu hai AP co the vuot 8 giay khi mot AP vang mat.
+  esp_task_wdt_init(30, true);
   esp_task_wdt_add(nullptr);
 #if !FACECHECK_AP_ONLY_TEST && !FACECHECK_WIFI_ONLY_DIAGNOSTIC
   if (kWebSocketPushEnabled) start_websocket_task();
@@ -686,7 +737,9 @@ void loop() {
   static unsigned long last_server_probe = 0;
   static bool was_connected = WiFi.status() == WL_CONNECTED;
   bool is_connected = WiFi.status() == WL_CONNECTED;
-  if (is_connected && millis() - last_server_probe >= 6000) {
+  if (is_connected &&
+      static_cast<int32_t>(millis() - server_probe_after) >= 0 &&
+      millis() - last_server_probe >= 6000) {
     last_server_probe = millis();
     if (!facecheck_server_reachable(facecheck_server_host())) {
       Serial.println("[WIFI] Laptop da doi mang; dang tim FaceCheck tren mang con lai.");
