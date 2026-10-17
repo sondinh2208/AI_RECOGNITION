@@ -16,6 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from door_service import DoorService
 from config import (
     DATA_FACES_DIR,
     ENROLLMENT_EMBEDDING_SAMPLES,
@@ -88,6 +89,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._kiosk_query_face_box = None
         self._attendance_cooldowns = {}
         self._is_kiosk_ui_idle = True
+        self.door_service = DoorService.from_environment(on_change=self._publish)
 
         self.enrollment_running = False
         self.is_face_valid = False
@@ -151,6 +153,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             if self._started:
                 return
             self._started = True
+        self.door_service.start()
         if self._load_ai_requested:
             self._load_ai_models()
             self._start_camera()
@@ -174,6 +177,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 self.face_detector.close()
             except Exception:
                 pass
+        self.door_service.shutdown()
 
     def after(self, _delay_ms, callback, *args):
         """Tương thích callback Tk; web runtime không có main-loop widget."""
@@ -207,6 +211,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                     "device": self.device,
                 },
                 "recognition": dict(self.recognition_state),
+                "door": self.door_service.snapshot(),
                 "recognition_test": dict(self.recognition_test_result),
                 "enrollment": {
                     **self.enrollment_result,
@@ -289,6 +294,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         with self._display_jpeg_lock:
             frame = None
             if self.current_page == "attendance":
+                # Anh diem danh phu kin vung camera cua TFT. Camera goc va
+                # frame AI van duoc xu ly doc lap tren laptop.
                 target_width, target_height = 480, 250
                 if self.kiosk_latest_frame is not None:
                     frame = self.kiosk_latest_frame
@@ -311,7 +318,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 return self._display_cached_frame_id, self._display_cached_jpeg
 
             # Resize dung kich thuoc tuong ung tung che do:
-            # - Diem danh: 480x250 (danh 70px cho khung trang thai diem danh o duoi)
+            # - Diem danh: 480x250 (danh 70px cho bang trang thai phia duoi)
             # - Dang ky: 480x320 (toan man hinh, khong con vung den, mat va cam giong y het laptop)
             # Nguon ESP32 la QVGA, trong khi TFT rong 480 px. INTER_CUBIC giu
             # duong net khuon mat/chu ro hon khi phong anh ma khong tang tai TFT.
@@ -520,6 +527,12 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             "department": emp_info.get("department") or emp_info.get("dept") or "Phòng IT",
             "image_url": self._employee_image_url(emp_id, emp_info),
         }
+        door_decision = self.door_service.request_open(emp_id)
+        if not door_decision.get("accepted"):
+            print(
+                f"[DOOR] Khong gui OPEN cho {emp_id}: "
+                f"{door_decision.get('reason', 'unknown')}"
+            )
         if not duplicate:
             self._attendance_cooldowns[emp_id] = (time.time(), now_display)
             self._add_attendance_record({

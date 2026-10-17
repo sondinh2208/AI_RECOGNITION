@@ -32,6 +32,9 @@ class _CameraHandler(BaseHTTPRequestHandler):
 
 
 class WifiLauncherTests(unittest.TestCase):
+    def test_default_camera_mode_is_esp32_wifi(self):
+        self.assertEqual(launcher.parse_args([]).camera, "wifi")
+
     @classmethod
     def setUpClass(cls):
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _CameraHandler)
@@ -88,6 +91,24 @@ class WifiLauncherTests(unittest.TestCase):
     def test_invalid_health_payload_is_rejected(self):
         with patch.object(launcher, "camera_health", return_value=None):
             self.assertIsNone(launcher.discover_camera("bad-host", scan_lan=False))
+
+    def test_wait_for_camera_retries_while_device_switches_network(self):
+        health = {"ok": True, "camera": "OV3660", "ip": "192.168.1.12"}
+        with (
+            patch.object(
+                launcher,
+                "discover_camera",
+                side_effect=[None, ("facecheck-cam.local", health)],
+            ) as discover,
+            patch.object(launcher.time, "sleep") as sleep,
+        ):
+            result = launcher.wait_for_camera(
+                "facecheck-cam.local", environment={}, timeout=60,
+            )
+
+        self.assertEqual(result, ("facecheck-cam.local", health))
+        self.assertEqual(discover.call_count, 2)
+        sleep.assert_called_once()
 
     def test_wifi_camera_uses_direct_mjpeg_stream(self):
         host = f"127.0.0.1:{self.server.server_port}"

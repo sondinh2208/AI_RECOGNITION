@@ -3,6 +3,8 @@
 #include <HTTPClient.h>
 #include <LovyanGFX.hpp>
 #include <WiFi.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 #include "secrets.h"
 
@@ -36,6 +38,10 @@ constexpr uint32_t kOrange = 0xF79009;
 constexpr uint32_t kMuted = 0x98A2B3;
 constexpr uint32_t kTargetDisplayFps = 5;
 constexpr uint32_t kFrameFetchIntervalMs = 1000 / kTargetDisplayFps;
+constexpr int32_t kAttendanceImageWidth = 480;
+constexpr int32_t kAttendanceImageHeight = 250;
+constexpr int32_t kAttendanceImageX = 0;
+constexpr int32_t kAttendanceImageY = 0;
 
 class FaceCheckDisplay : public lgfx::LGFX_Device {
  public:
@@ -113,9 +119,7 @@ struct KioskState {
 FaceCheckDisplay display;
 String facecheckServer = FACECHECK_SERVER;
 KioskState kiosk;
-uint32_t lastStateFetch = 0;
-uint32_t lastFrameFetch = 0;
-uint32_t lastSuccessfulRequest = 0;
+volatile uint32_t lastSuccessfulRequest = 0;
 uint32_t renderedFrameCount = 0;
 uint32_t renderedWindowStarted = 0;
 float renderedFpsValue = 0.0f;
@@ -132,9 +136,41 @@ bool frameAreaPrepared = false;
 uint32_t totalHeaderMs = 0;
 uint32_t totalReadMs = 0;
 uint32_t totalDrawMs = 0;
+uint32_t maxHeaderMs = 0;
+uint32_t maxReadMs = 0;
+uint32_t maxDrawMs = 0;
+volatile uint32_t droppedFrameCount = 0;
+volatile uint32_t fetchFailureCount = 0;
+volatile uint32_t fetchRetryCount = 0;
+uint32_t reportedDroppedFrames = 0;
+uint32_t reportedFetchFailures = 0;
+uint32_t reportedFetchRetries = 0;
 
-constexpr size_t kMaxJpegSize = 40960;
-static uint8_t s_jpegBuffer[kMaxJpegSize];
+// Backend gioi han JPEG TFT duoi 16 KB. Hai slot 20 KB giu nguyen chat luong
+// nhung tong RAM buffer van bang mot slot 40 KB cua firmware cu.
+constexpr size_t kMaxJpegSize = 20000;
+
+struct FrameSlot {
+  uint8_t jpeg[kMaxJpegSize];
+  size_t length = 0;
+  uint32_t headerMs = 0;
+  uint32_t readMs = 0;
+  char mode[24] = {};
+  char state[32] = {};
+  char title[96] = {};
+  char name[64] = {};
+  char employeeId[32] = {};
+  float fps = 0;
+  float brightness = 0;
+  int sampleCount = 0;
+  int sampleTarget = 0;
+};
+
+static FrameSlot s_frameSlots[2];
+QueueHandle_t freeFrameQueue = nullptr;
+QueueHandle_t readyFrameQueue = nullptr;
+SemaphoreHandle_t frameHttpMutex = nullptr;
+TaskHandle_t frameFetchTaskHandle = nullptr;
 
 void selectFaceCheckServer() {
   if (strlen(WIFI_SECONDARY_SSID) > 0 &&
@@ -232,10 +268,35 @@ void drawConnectionScreen(const String& detail) {
   centerText(WiFi.localIP().toString(), 252, 1, kMuted);
 }
 
+void drawMetricsPanel() {
+  constexpr int kMetricsX = 350;
+  constexpr int kMetricsRight = 455;
+  // Chi ve lai cot thong so nho. Truoc day moi cua so do FPS lai ve ca
+  // status panel 480x70, tao mot spike SPI khong nam trong so lieu DRAW.
+  display.fillRect(kMetricsX, 250, 130, 70, kPanel);
+  display.drawFastVLine(kMetricsX, 260, 50, 0x344054);
+  display.setFont(&fonts::Font0);
+  display.setTextSize(1);
+  display.setTextDatum(lgfx::textdatum_t::top_right);
+  const uint32_t fpsColor =
+      renderedFpsValue > 0.0f &&
+              renderedFpsValue < static_cast<float>(kTargetDisplayFps) - 0.5f
+          ? kRed
+          : kMuted;
+  display.setTextColor(fpsColor, kPanel);
+  display.drawString(String(renderedFpsValue, 1) + " FPS", kMetricsRight, 264);
+  if (kiosk.mode == "add_employee" && kiosk.sampleTarget > 0) {
+    display.drawString(String(kiosk.sampleCount) + "/" + String(kiosk.sampleTarget),
+                       kMetricsRight, 292);
+  } else if (kiosk.brightness > 0) {
+    display.drawString(String(static_cast<int>(kiosk.brightness)) + "% SANG",
+                       kMetricsRight, 292);
+  }
+}
+
 void drawStatusPanel() {
   constexpr int kTextX = 65;
   constexpr int kMetricsX = 350;
-  constexpr int kMetricsRight = 455;
   constexpr int kTextWidth = kMetricsX - kTextX - 10;
   const uint32_t color = statusColor();
   display.fillRect(0, 250, 480, 70, kPanel);
@@ -274,34 +335,34 @@ void drawStatusPanel() {
   display.drawString(subtitle, kTextX, 289);
   display.clearClipRect();
 
-  // Cot thong so co nen rieng de noi dung trang thai khong the de len FPS/mau quet.
-  display.fillRect(kMetricsX, 250, 130, 70, kPanel);
-  display.drawFastVLine(kMetricsX, 260, 50, 0x344054);
-
-  display.setTextDatum(lgfx::textdatum_t::top_right);
-  // Bao mau do khi toc do ve thuc te tut ro ret duoi muc tieu.
-  const uint32_t fpsColor =
-      renderedFpsValue > 0.0f &&
-              renderedFpsValue < static_cast<float>(kTargetDisplayFps) - 0.5f
-          ? kRed
-          : kMuted;
-  display.setTextColor(fpsColor, kPanel);
-  display.drawString(String(renderedFpsValue, 1) + " FPS", kMetricsRight, 264);
-  if (kiosk.mode == "add_employee" && kiosk.sampleTarget > 0) {
-    display.drawString(String(kiosk.sampleCount) + "/" + String(kiosk.sampleTarget), kMetricsRight, 292);
-  } else if (kiosk.brightness > 0) {
-    display.drawString(String(static_cast<int>(kiosk.brightness)) + "% SANG", kMetricsRight, 292);
-  }
+  drawMetricsPanel();
 }
 
-bool fetchAndDrawFrame() {
+void copyHeader(char* destination, size_t capacity, const String& value) {
+  if (capacity == 0) return;
+  strlcpy(destination, value.c_str(), capacity);
+}
+
+bool fetchFrame(uint8_t slotIndex) {
+  if (frameHttpMutex == nullptr ||
+      xSemaphoreTake(frameHttpMutex, pdMS_TO_TICKS(1500)) != pdTRUE) {
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    xSemaphoreGive(frameHttpMutex);
+    return false;
+  }
+
+  FrameSlot& slot = s_frameSlots[slotIndex];
   const uint32_t requestStarted = millis();
   if (!frameHttpReady) {
-    frameHttp.setConnectTimeout(800);
-    frameHttp.setTimeout(1200);
+    // LAN binh thuong chi 50-70 ms. Khong de mot request hong khoa pipeline
+    // 1.2 giay va lam mat 5-6 frame lien tiep.
+    frameHttp.setConnectTimeout(150);
+    frameHttp.setTimeout(150);
     frameHttp.setReuse(true);
     frameClient.setNoDelay(true);
-    frameClient.setTimeout(1200);
+    frameClient.setTimeout(150);
     static const char* headerKeys[] = {
         "X-FaceCheck-Mode", "X-FaceCheck-State", "X-FaceCheck-Title",
         "X-FaceCheck-Name", "X-FaceCheck-Employee", "X-FaceCheck-Fps",
@@ -309,6 +370,7 @@ bool fetchAndDrawFrame() {
         "X-FaceCheck-Sample-Target"};
     frameHttp.collectHeaders(headerKeys, sizeof(headerKeys) / sizeof(headerKeys[0]));
     if (!frameHttp.begin(frameClient, facecheckServer + "/frame.jpg")) {
+      xSemaphoreGive(frameHttpMutex);
       return false;
     }
     frameHttpReady = true;
@@ -319,93 +381,171 @@ bool fetchAndDrawFrame() {
   if (code != HTTP_CODE_OK) {
     frameHttp.end();
     frameHttpReady = false;
+    xSemaphoreGive(frameHttpMutex);
     return false;
   }
 
-  const String modeBeforeFrame = kiosk.mode;
-  kiosk.mode = frameHttp.header("X-FaceCheck-Mode");
-  kiosk.state = frameHttp.header("X-FaceCheck-State");
-  kiosk.title = frameHttp.header("X-FaceCheck-Title");
-  kiosk.name = frameHttp.header("X-FaceCheck-Name");
-  kiosk.employeeId = frameHttp.header("X-FaceCheck-Employee");
-  kiosk.fps = frameHttp.header("X-FaceCheck-Fps").toFloat();
-  kiosk.brightness = frameHttp.header("X-FaceCheck-Brightness").toFloat();
-  kiosk.sampleCount = frameHttp.header("X-FaceCheck-Sample-Count").toInt();
-  kiosk.sampleTarget = frameHttp.header("X-FaceCheck-Sample-Target").toInt();
+  copyHeader(slot.mode, sizeof(slot.mode), frameHttp.header("X-FaceCheck-Mode"));
+  copyHeader(slot.state, sizeof(slot.state), frameHttp.header("X-FaceCheck-State"));
+  copyHeader(slot.title, sizeof(slot.title), frameHttp.header("X-FaceCheck-Title"));
+  copyHeader(slot.name, sizeof(slot.name), frameHttp.header("X-FaceCheck-Name"));
+  copyHeader(slot.employeeId, sizeof(slot.employeeId),
+             frameHttp.header("X-FaceCheck-Employee"));
+  slot.fps = frameHttp.header("X-FaceCheck-Fps").toFloat();
+  slot.brightness = frameHttp.header("X-FaceCheck-Brightness").toFloat();
+  slot.sampleCount = frameHttp.header("X-FaceCheck-Sample-Count").toInt();
+  slot.sampleTarget = frameHttp.header("X-FaceCheck-Sample-Target").toInt();
   const int length = frameHttp.getSize();
   WiFiClient* stream = frameHttp.getStreamPtr();
   const uint32_t headersReceived = millis();
-  if (stream == nullptr || length <= 0 || static_cast<size_t>(length) > sizeof(s_jpegBuffer)) {
+  if (stream == nullptr || length <= 0 ||
+      static_cast<size_t>(length) > sizeof(slot.jpeg)) {
     frameHttp.end();
     frameHttpReady = false;
+    xSemaphoreGive(frameHttpMutex);
     return false;
   }
 
-  const size_t received = stream->readBytes(s_jpegBuffer, length);
+  const size_t received = stream->readBytes(slot.jpeg, length);
   const uint32_t jpegReceived = millis();
-  bool drawn = false;
-  if (received == static_cast<size_t>(length)) {
-    const bool enrollment = isEnrollmentMode();
-    if (modeBeforeFrame != kiosk.mode) {
-      display.fillScreen(TFT_BLACK);
-      frameAreaPrepared = false;
-      previousStatusKey = "";
-      previousMode = kiosk.mode;
-    }
-    if (!frameAreaPrepared) {
-      display.fillScreen(TFT_BLACK);
-      frameAreaPrepared = true;
-      if (!enrollment) {
-        drawStatusPanel();
-      }
-    }
-    if (enrollment) {
-      drawn = display.drawJpg(s_jpegBuffer, length, 0, 0, 480, 320);
-    } else {
-      drawn = display.drawJpg(s_jpegBuffer, length, 0, 0, 480, 250);
-    }
-    if (drawn && !enrollment) {
-      String key = kiosk.mode + kiosk.state + kiosk.title + kiosk.name
-          + kiosk.employeeId + String(kiosk.sampleCount);
-      if (key != previousStatusKey) {
-        previousStatusKey = key;
-        drawStatusPanel();
-      }
-    }
-  } else {
-    // Neu doc byte thieu thi frame TCP bi lech, phai reset socket
+  if (received != static_cast<size_t>(length)) {
+    // Byte thieu lam HTTP keep-alive lech frame; tao lai socket o lan sau.
     frameHttp.end();
     frameHttpReady = false;
+    xSemaphoreGive(frameHttpMutex);
+    return false;
   }
-  const uint32_t frameDrawn = millis();
-  // Giu TCP Keep-Alive, nhung moi GET luon lay JPEG moi nhat de khong tich frame cu.
+
+  slot.length = received;
+  slot.headerMs = headersReceived - requestStarted;
+  slot.readMs = jpegReceived - headersReceived;
+  lastSuccessfulRequest = jpegReceived;
+  xSemaphoreGive(frameHttpMutex);
+  return true;
+}
+
+void frameFetchTask(void* parameter) {
+  (void)parameter;
+  for (;;) {
+    const uint32_t cycleStarted = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+      uint8_t slotIndex = 0;
+      if (xQueueReceive(freeFrameQueue, &slotIndex,
+                        pdMS_TO_TICKS(kFrameFetchIntervalMs)) == pdTRUE) {
+        bool fetched = fetchFrame(slotIndex);
+        if (!fetched && WiFi.status() == WL_CONNECTED) {
+          // Keep-alive cu thinh thoang bi server dong. fetchFrame da end()
+          // socket loi; thu dung mot lan tren ket noi moi, khong retry vo han.
+          ++fetchRetryCount;
+          vTaskDelay(pdMS_TO_TICKS(1));
+          fetched = fetchFrame(slotIndex);
+        }
+        if (fetched) {
+          // Queue ready chi dai 1: frame moi ghi de frame cu chua kip ve.
+          uint8_t staleIndex = 0;
+          if (xQueueReceive(readyFrameQueue, &staleIndex, 0) == pdTRUE) {
+            xQueueSend(freeFrameQueue, &staleIndex, 0);
+            ++droppedFrameCount;
+          }
+          if (xQueueSend(readyFrameQueue, &slotIndex, 0) != pdTRUE) {
+            xQueueSend(freeFrameQueue, &slotIndex, 0);
+            ++droppedFrameCount;
+          }
+        } else {
+          xQueueSend(freeFrameQueue, &slotIndex, 0);
+          ++fetchFailureCount;
+        }
+      }
+    }
+    const uint32_t elapsed = millis() - cycleStarted;
+    vTaskDelay(pdMS_TO_TICKS(
+        elapsed < kFrameFetchIntervalMs ? kFrameFetchIntervalMs - elapsed : 1));
+  }
+}
+
+bool drawFrame(uint8_t slotIndex) {
+  FrameSlot& slot = s_frameSlots[slotIndex];
+  const String modeBeforeFrame = kiosk.mode;
+  kiosk.mode = slot.mode;
+  kiosk.state = slot.state;
+  kiosk.title = slot.title;
+  kiosk.name = slot.name;
+  kiosk.employeeId = slot.employeeId;
+  kiosk.fps = slot.fps;
+  kiosk.brightness = slot.brightness;
+  kiosk.sampleCount = slot.sampleCount;
+  kiosk.sampleTarget = slot.sampleTarget;
+
+  if (modeBeforeFrame != kiosk.mode) {
+    display.fillScreen(TFT_BLACK);
+    frameAreaPrepared = false;
+    previousStatusKey = "";
+    previousMode = kiosk.mode;
+  }
+  const bool enrollment = isEnrollmentMode();
+  if (!frameAreaPrepared) {
+    display.fillScreen(TFT_BLACK);
+    frameAreaPrepared = true;
+    if (!enrollment) drawStatusPanel();
+  }
+
+  const uint32_t drawStarted = millis();
+  bool drawn = enrollment
+      ? display.drawJpg(slot.jpeg, slot.length, 0, 0, 480, 320)
+      : display.drawJpg(slot.jpeg, slot.length,
+                        kAttendanceImageX, kAttendanceImageY,
+                        kAttendanceImageWidth, kAttendanceImageHeight);
+  if (drawn && !enrollment) {
+    String key = kiosk.mode + kiosk.state + kiosk.title + kiosk.name
+        + kiosk.employeeId + String(kiosk.sampleCount);
+    if (key != previousStatusKey) {
+      previousStatusKey = key;
+      drawStatusPanel();
+    }
+  }
+  const uint32_t drawMs = millis() - drawStarted;
 
   if (drawn) {
     const uint32_t now = millis();
-    lastSuccessfulRequest = now;
     ++renderedFrameCount;
-    totalHeaderMs += headersReceived - requestStarted;
-    totalReadMs += jpegReceived - headersReceived;
-    totalDrawMs += frameDrawn - jpegReceived;
+    totalHeaderMs += slot.headerMs;
+    totalReadMs += slot.readMs;
+    totalDrawMs += drawMs;
+    maxHeaderMs = max(maxHeaderMs, slot.headerMs);
+    maxReadMs = max(maxReadMs, slot.readMs);
+    maxDrawMs = max(maxDrawMs, drawMs);
     if (renderedWindowStarted == 0) renderedWindowStarted = now;
     const uint32_t elapsed = now - renderedWindowStarted;
     if (elapsed >= 2000) {
       const float renderedFps = renderedFrameCount * 1000.0f / elapsed;
       renderedFpsValue = renderedFps;
-      Serial.printf("[DISPLAY] FPS=%.1f | HTTP=%lu ms | READ=%lu ms | DRAW=%lu ms | RSSI=%d | JPEG=%d B\n",
+      const uint32_t dropped = droppedFrameCount - reportedDroppedFrames;
+      const uint32_t failures = fetchFailureCount - reportedFetchFailures;
+      const uint32_t retries = fetchRetryCount - reportedFetchRetries;
+      Serial.printf("[DISPLAY] FPS=%.1f | HTTP=%lu/%lu ms | READ=%lu/%lu ms | "
+                    "DRAW=%lu/%lu ms | DROP=%lu | RETRY=%lu | FAIL=%lu | "
+                    "RSSI=%d | JPEG=%u B\n",
                     renderedFps,
                     totalHeaderMs / renderedFrameCount,
+                    maxHeaderMs,
                     totalReadMs / renderedFrameCount,
+                    maxReadMs,
                     totalDrawMs / renderedFrameCount,
-                    WiFi.RSSI(), length);
+                    maxDrawMs,
+                    dropped, retries, failures, WiFi.RSSI(),
+                    static_cast<unsigned int>(slot.length));
+      reportedDroppedFrames = droppedFrameCount;
+      reportedFetchFailures = fetchFailureCount;
+      reportedFetchRetries = fetchRetryCount;
       renderedFrameCount = 0;
       totalHeaderMs = 0;
       totalReadMs = 0;
       totalDrawMs = 0;
+      maxHeaderMs = 0;
+      maxReadMs = 0;
+      maxDrawMs = 0;
       renderedWindowStarted = now;
-      // Cap nhat chi so FPS tren TFT moi cua so do, khong cho doi thay doi
-      // trang thai nhan dien moi ve lai bang thong so.
-      if (!isEnrollmentMode()) drawStatusPanel();
+      if (!isEnrollmentMode()) drawMetricsPanel();
     }
   }
   return drawn;
@@ -413,6 +553,9 @@ bool fetchAndDrawFrame() {
 
 void ensureWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
+  if (frameHttpMutex != nullptr) {
+    xSemaphoreTake(frameHttpMutex, portMAX_DELAY);
+  }
   frameHttp.end();
   frameHttpReady = false;
   bool connected = connectConfiguredNetwork(
@@ -421,6 +564,9 @@ void ensureWiFi() {
     connected = connectConfiguredNetwork(
         WIFI_SECONDARY_SSID, WIFI_SECONDARY_PASSWORD,
         FACECHECK_SECONDARY_SERVER);
+  }
+  if (frameHttpMutex != nullptr) {
+    xSemaphoreGive(frameHttpMutex);
   }
   drawConnectionScreen("Dang ket noi Wi-Fi 2.4 GHz");
   if (connected && WiFi.status() == WL_CONNECTED) {
@@ -448,33 +594,56 @@ void setup() {
   display.setRotation(1);
   display.setBrightness(220);
   drawConnectionScreen("Khoi dong bo man hinh");
+  frameHttpMutex = xSemaphoreCreateMutex();
+  freeFrameQueue = xQueueCreate(2, sizeof(uint8_t));
+  readyFrameQueue = xQueueCreate(1, sizeof(uint8_t));
+  if (frameHttpMutex == nullptr || freeFrameQueue == nullptr ||
+      readyFrameQueue == nullptr) {
+    Serial.println("[PIPELINE] Khong du RAM de tao queue/mutex.");
+    while (true) delay(1000);
+  }
+  uint8_t firstSlot = 0;
+  uint8_t secondSlot = 1;
+  xQueueSend(freeFrameQueue, &firstSlot, 0);
+  xQueueSend(freeFrameQueue, &secondSlot, 0);
   WiFi.mode(WIFI_STA);
   ensureWiFi();
   if (!isEnrollmentMode()) {
     drawStatusPanel();
   }
+  const BaseType_t taskCreated = xTaskCreatePinnedToCore(
+      // Wi-Fi/TCP cua ESP-IDF da chay tren Core 0. Dat HTTPClient len Core 0
+      // co the khoa IDLE0 khi socket gap loi, nen pipeline ung dung o Core 1.
+      frameFetchTask, "tft_fetch", 6144, nullptr, 1,
+      &frameFetchTaskHandle, 1);
+  if (taskCreated != pdPASS) {
+    frameFetchTaskHandle = nullptr;
+    Serial.println("[PIPELINE] Khong tao duoc task tai JPEG.");
+    while (true) delay(1000);
+  }
+  Serial.println("[PIPELINE] Core 0 Wi-Fi/TCP | Core 1 fetch+draw | 2 buffer latest-frame");
 }
 
 void loop() {
   ensureWiFi();
-  const uint32_t now = millis();
   if (WiFi.status() != WL_CONNECTED) {
     delay(250);
     return;
   }
 
-  // Ban thu 5 FPS: backend va camera deu cap nhat moi 200 ms, nen TFT nhan
-  // du frame moi ma khong can poll nhanh hon nguon hoac tao backlog HTTP/SPI.
-  if (now - lastFrameFetch >= kFrameFetchIntervalMs) {
-    lastFrameFetch = now;
-    fetchAndDrawFrame();
+  uint8_t readySlot = 0;
+  if (xQueueReceive(readyFrameQueue, &readySlot, pdMS_TO_TICKS(5)) == pdTRUE) {
+    drawFrame(readySlot);
+    xQueueSend(freeFrameQueue, &readySlot, portMAX_DELAY);
   }
 
   const uint32_t connectionCheckNow = millis();
   if (lastSuccessfulRequest != 0 &&
       connectionCheckNow - lastSuccessfulRequest > 6000) {
+    xSemaphoreTake(frameHttpMutex, portMAX_DELAY);
     frameHttp.end();
     frameHttpReady = false;
+    xSemaphoreGive(frameHttpMutex);
     drawConnectionScreen("Mat ket noi FaceCheck");
     lastSuccessfulRequest = 0;
     WiFi.disconnect(true);

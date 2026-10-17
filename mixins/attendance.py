@@ -270,6 +270,7 @@ class AttendanceMixin:
                 )
             faces = cached_faces
             self.kiosk_face_count = len(faces)
+            self.door_service.observe_faces(self.kiosk_face_count)
             
             # 2. Chọn khuôn mặt gần camera nhất theo diện tích bounding box.
             curr_now = time.time()

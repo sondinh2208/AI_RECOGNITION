@@ -4,7 +4,7 @@ FaceCheck là ứng dụng điểm danh/kiểm soát truy cập bằng khuôn m�
 
 Ứng dụng có giao diện quản trị dạng web chạy trong cửa sổ desktop, chế độ kiosk dành cho người điểm danh, API nội bộ, luồng camera MJPEG và firmware cho camera/màn hình ESP32.
 
-> **Phạm vi hiện tại:** phần mềm quyết định nhận diện, hiển thị trạng thái “cửa mở/cửa đóng” và ghi lịch sử. Repository chưa có module điều khiển relay, khóa điện hoặc GPIO để mở cửa vật lý.
+> **Phạm vi hiện tại:** phần mềm quyết định nhận diện, ghi lịch sử và gửi lệnh `OPEN` ngắn hạn qua MQTT/TLS cho ESP32-S3 điều khiển khóa. Vân tay và nút thoát vẫn hoạt động offline trực tiếp trên ESP32.
 
 ## 1. Chức năng chính
 
@@ -74,6 +74,7 @@ Các lớp được tách theo trách nhiệm:
 - `web_admin.py` giữ cổng backend, khởi động Uvicorn, mở cửa sổ PyWebView và dừng dịch vụ khi cửa sổ đóng.
 - `web_backend/app.py` chỉ vận chuyển dữ liệu qua REST, WebSocket và MJPEG; quyết định nghiệp vụ nằm trong runtime.
 - `web_runtime.py` giữ state dùng chung, điều phối chế độ, CRUD nhân viên, lịch sử và dữ liệu gửi đến UI/TFT.
+- `door_service.py` quản lý MQTT/TLS, ACK mở cửa, timeout, cooldown và điều kiện khuôn mặt phải rời camera trước lượt mới.
 - `mixins/attendance.py` chứa pipeline nhận diện và chính sách quyết định điểm danh.
 - `mixins/camera.py` chứa pipeline camera/kiểm tra chất lượng khi đăng ký.
 - `mixins/enrollment.py` tạo embedding và lưu hồ sơ mới.
@@ -286,6 +287,18 @@ FACECHECK_DISPLAY_TOKEN=THAY_BANG_TOKEN_DAI_NGAU_NHIEN
 # Dùng cho WebSocket camera bridge thử nghiệm
 FACECHECK_CAMERA_TOKEN=THAY_BANG_TOKEN_CAMERA_KHAC
 
+# Điều khiển cửa ESP32-S3 qua HiveMQ Cloud
+MQTT_HOST=THAY_BANG_HOST_HIVEMQ
+MQTT_PORT=8883
+MQTT_USERNAME=THAY_BANG_TAI_KHOAN
+MQTT_PASSWORD=THAY_BANG_MAT_KHAU
+MQTT_DOOR_DEVICE_ID=door-01
+FACECHECK_DOOR_ENABLED=1
+FACECHECK_DOOR_OPEN_DURATION_MS=3000
+FACECHECK_DOOR_COOLDOWN_SECONDS=8
+FACECHECK_DOOR_FACE_EXIT_SECONDS=1.5
+FACECHECK_DOOR_ACK_TIMEOUT_SECONDS=12
+
 # Tùy chọn preview/bridge
 FACECHECK_PREVIEW_WIDTH=640
 FACECHECK_PREVIEW_QUALITY=80
@@ -300,16 +313,31 @@ Các biến runtime đáng chú ý:
 - `FACECHECK_DRAW_DEBUG_BOXES=1`: vẽ bounding box khi chẩn đoán detector.
 - `FACECHECK_DISPLAY_HOST`: IP laptop được in cho màn hình TFT.
 - `FACECHECK_DISPLAY_TOKEN`: token bắt buộc cho API TFT ở cổng `8767`.
+- `FACECHECK_DOOR_ENABLED`: `1` để tự mở cửa sau nhận diện thành công; đặt `0` để tắt mà không xóa thông tin broker.
+- `FACECHECK_DOOR_OPEN_DURATION_MS`: thời gian giữ relay, firmware giới hạn trong 500–10000 ms.
+- `FACECHECK_DOOR_COOLDOWN_SECONDS`: thời gian nghỉ toàn cửa sau ACK `finished`, mặc định 8 giây.
+- `FACECHECK_DOOR_FACE_EXIT_SECONDS`: camera phải không thấy khuôn mặt liên tục trong thời gian này mới re-arm, mặc định 1,5 giây.
+- `FACECHECK_DOOR_ACK_TIMEOUT_SECONDS`: thời gian tối đa chờ ESP32 hoàn tất lệnh, mặc định 12 giây.
 - `FACECHECK_WEB_SKIP_AI=1`: chỉ dùng cho test/smoke test; bỏ qua tải model và mở camera.
 
 Biến môi trường đặt từ PowerShell có độ ưu tiên cao hơn giá trị trong `.env`.
 
 ## 12. Chạy hệ thống
 
-### Webcam mặc định
+### ESP32-S3 Wi-Fi mặc định
 
 ```powershell
 python facecheck.py
+```
+
+Lệnh không có tham số mặc định tìm camera ESP32-S3 theo
+`FACECHECK_CAMERA_HOST`, sau đó thử mDNS `facecheck-cam.local` và quét LAN nếu
+cần. Nó không tự rơi về webcam máy tính.
+
+### Webcam máy tính
+
+```powershell
+python facecheck.py webcam
 ```
 
 Hoặc chọn camera cụ thể:
@@ -437,6 +465,12 @@ Không chỉnh sửa `embeddings.pkl` thủ công. Khi khởi động, cache s�
 
 ## 16. Firmware
 
+### Bộ điều khiển cửa/vân tay — `firmware/Smart_Door`
+
+ESP32-S3 nhận `OPEN` qua MQTT/TLS nhưng callback mạng không điều khiển relay trực tiếp. Lệnh hợp lệ được đưa vào FreeRTOS queue và chỉ `Task_LockControl` được phép mở khóa. Mỗi lệnh có `command_id`, TTL, giới hạn thời gian mở và ACK `started`/`finished`/`failed`. Khi mất mạng, vân tay và nút thoát vẫn mở cửa cục bộ.
+
+Server chỉ phát một lệnh tại một thời điểm. Sau khi hoàn tất, nó áp dụng cooldown và yêu cầu camera không còn khuôn mặt liên tục trước khi cho phép lượt mở tiếp theo. Nếu mất ACK, server giả định relay có thể đã hoạt động và chuyển sang trạng thái khóa lặp an toàn.
+
 ### Camera Wi-Fi — `firmware/esp32_s3_ov3660`
 
 1. Sao chép `secrets.example.h` thành `secrets.h`.
@@ -461,9 +495,14 @@ Lưu ý cổng upload và cổng CDC runtime có thể khác nhau. Xem Device Ma
 4. Cho phép inbound TCP 8767 trên Windows Firewall trong mạng private.
 
 TFT chỉ tải JPEG và đọc trạng thái từ laptop; thiết bị không chạy AI và không kết nối trực tiếp với camera.
-Kênh hiển thị thử nghiệm được đồng bộ ở 5 FPS với camera Wi-Fi: backend tạo tối
-đa một JPEG mới mỗi 200 ms và firmware TFT poll cùng chu kỳ, nhờ đó không tích
-lũy frame cũ.
+Ở chế độ chấm công, backend tạo JPEG 480×250 phủ kín vùng ảnh phía trên;
+camera gốc, frame AI và chế độ đăng ký 480×320 không đổi.
+Kênh hiển thị chạy 5 FPS với pipeline latest-frame hai buffer: Wi-Fi/TCP của
+ESP-IDF xử lý ở Core 0, còn task HTTP và task vẽ LovyanGFX được điều phối ở
+Core 1. Queue chỉ giữ một frame sẵn sàng nên frame cũ không thể tích backlog.
+Request LAN dùng timeout ngắn và chỉ retry một lần trên socket mới; log TFT
+hiển thị `DROP`, `RETRY`, `FAIL` cùng thời gian trung bình/tối đa để phân biệt
+chậm mạng với chậm giải mã/vẽ.
 
 Mỗi thư mục firmware có README riêng với hướng dẫn phần cứng chi tiết.
 
@@ -472,6 +511,9 @@ Mỗi thư mục firmware có README riêng với hướng dẫn phần cứng c
 - `tools/usb_camera_bridge.py`: serial JPEG → MJPEG local cho mode USB.
 - `tools/ws_camera_bridge.py`: nhận binary JPEG từ ESP32 qua WebSocket có token → MJPEG local.
 - `tools/mqtt_camera_bridge.py`: MQTT JPEG → MJPEG local; cần cài thêm client MQTT tương ứng nếu sử dụng.
+- `tools/mqtt_door_monitor.py`: theo dõi heartbeat/status của bộ điều khiển cửa.
+- `tools/mqtt_door_ping.py`: kiểm tra MQTT hai chiều mà không kích relay.
+- `tools/mqtt_door_open.py`: gửi `OPEN` thủ công, bắt buộc có `--confirm-open`.
 - `tools/read_serial.py`: đọc log serial trong một khoảng thời gian.
 - `tools/benchmark_wifi_camera.py`: đo nhiều mức FPS camera Wi-Fi và chọn mức ổn định.
 - `tools/prepare_lfw_benchmark.py`: chuẩn bị bộ đánh giá LFW.

@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 import httpx
+import cv2
 import numpy as np
 
 
@@ -297,6 +298,18 @@ class RuntimeLifecycleTests(unittest.TestCase):
 
         self.assertEqual(result, (15, b"source-jpeg"))
         processed.assert_not_called()
+
+    def test_tft_attendance_frame_fills_480_by_250_area(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "attendance"
+        runtime.kiosk_latest_frame = np.zeros((250, 480, 3), dtype=np.uint8)
+        runtime._current_frame_id = 7
+
+        frame_id, payload = runtime.display_jpeg_frame()
+        decoded = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+        self.assertEqual(frame_id, 7)
+        self.assertEqual(decoded.shape[:2], (250, 480))
 
     def test_enrollment_preview_keeps_processed_overlays(self):
         runtime = WebFaceCheckRuntime(load_ai=False)

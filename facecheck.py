@@ -173,6 +173,34 @@ def discover_camera(
     return None
 
 
+def wait_for_camera(
+    preferred_host: str | None,
+    scan_lan: bool = True,
+    environment: dict[str, str] | None = None,
+    timeout: float = 60.0,
+) -> tuple[str, dict] | None:
+    """Cho camera du thoi gian doi qua lai giua cac Wi-Fi da cau hinh."""
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    while True:
+        attempt += 1
+        discovered = discover_camera(
+            preferred_host,
+            scan_lan=scan_lan,
+            environment=environment,
+        )
+        if discovered:
+            return discovered
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        print(
+            f"[WIFI-CAMERA] Chua thay camera (lan {attempt}); "
+            f"tiep tuc cho camera chuyen mang..."
+        )
+        time.sleep(min(2.0, remaining))
+
+
 def measure_mjpeg_fps(stream_url: str, duration: float = 3.0) -> float:
     request = urllib.request.Request(stream_url, headers={"Cache-Control": "no-cache"})
     started_at = time.perf_counter()
@@ -260,7 +288,11 @@ def configure_wifi_camera(
     check_fps: bool,
 ) -> None:
     print("[WIFI-CAMERA] Đang tìm ESP32-S3 OV3660...")
-    discovered = discover_camera(camera_host, scan_lan=scan_lan, environment=environment)
+    discovered = wait_for_camera(
+        camera_host,
+        scan_lan=scan_lan,
+        environment=environment,
+    )
     if not discovered:
         raise RuntimeError(
             "Không tìm thấy camera Wi-Fi. Kiểm tra nguồn, Wi-Fi 2.4 GHz và log USB-UART."
@@ -293,9 +325,9 @@ def parse_args(argv=None):
     parser.add_argument(
         "camera",
         nargs="?",
-        default="webcam",
+        default="wifi",
         choices=("webcam", "usb", "wifi"),
-        help="Nguồn camera (mặc định: webcam)",
+        help="Nguồn camera (mặc định: ESP32 Wi-Fi)",
     )
     parser.add_argument("--simulate-display", "--simulate-pi", action="store_true")
     parser.add_argument("--camera-index", type=int, help="ID webcam, ví dụ 0 hoặc 1")
