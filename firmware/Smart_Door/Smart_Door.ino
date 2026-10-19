@@ -34,6 +34,7 @@
 
 static QueueHandle_t      displayQueue   = NULL;
 static QueueHandle_t      serverUnlockQueue = NULL;
+static QueueHandle_t      fingerprintCommandQueue = NULL;
 static EventGroupHandle_t lockEventGroup = NULL;
 
 #define EVT_UNLOCK_SERVER   (1 << 3)
@@ -105,9 +106,93 @@ void Task_LockControl(void *pvParameters) {
 // ==========================================
 void Task_Fingerprint(void *pvParameters) {
     static unsigned long lastWarningTime = 0;
+    static unsigned long lastReconnectAttempt = 0;
+    bool sensorWasConnected = isFingerprintConnected();
 
     for (;;) {
-        if (!isLockOpen() && isFingerprintConnected()) {
+        FingerprintCommandRequest managementRequest;
+        if (xQueueReceive(fingerprintCommandQueue, &managementRequest, 0) == pdTRUE) {
+            const int64_t now = static_cast<int64_t>(time(nullptr));
+            const bool enroll =
+                strcmp(managementRequest.command, "FINGERPRINT_ENROLL") == 0;
+            if (now <= 0 || now > managementRequest.expiresAt) {
+                queueMQTTAck(
+                    managementRequest.commandId, managementRequest.command,
+                    "failed", "expired_before_execution"
+                );
+            } else if (!isFingerprintConnected()) {
+                queueMQTTAck(
+                    managementRequest.commandId, managementRequest.command,
+                    "failed", "sensor_offline"
+                );
+            } else if (enroll && fingerprintExists(managementRequest.fingerprintId)) {
+                queueMQTTAck(
+                    managementRequest.commandId, managementRequest.command,
+                    "failed", "fingerprint_id_exists"
+                );
+            } else if (!enroll && !fingerprintExists(managementRequest.fingerprintId)) {
+                queueMQTTAck(
+                    managementRequest.commandId, managementRequest.command,
+                    "failed", "fingerprint_id_not_found"
+                );
+            } else {
+                if (enroll) {
+                    DisplayMsg workingMsg = {
+                        DISP_FP_ENROLL, managementRequest.fingerprintId
+                    };
+                    xQueueSend(displayQueue, &workingMsg, 0);
+                }
+                queueMQTTAck(
+                    managementRequest.commandId, managementRequest.command,
+                    "started"
+                );
+                const bool succeeded = enroll
+                    ? enrollFingerprint(managementRequest.fingerprintId)
+                    : deleteFingerprint(managementRequest.fingerprintId);
+                queueMQTTAck(
+                    managementRequest.commandId, managementRequest.command,
+                    succeeded ? "finished" : "failed",
+                    succeeded ? nullptr : "sensor_operation_failed"
+                );
+                if (succeeded) {
+                    queueMQTTEvent(
+                        enroll ? "fingerprint_enrolled" : "fingerprint_deleted",
+                        "server_management",
+                        managementRequest.fingerprintId
+                    );
+                }
+                DisplayMsg resultMsg = {
+                    succeeded
+                        ? (enroll ? DISP_FP_SAVED : DISP_FP_DELETED)
+                        : DISP_FP_FAILED,
+                    managementRequest.fingerprintId
+                };
+                xQueueSend(displayQueue, &resultMsg, 0);
+                vTaskDelay(pdMS_TO_TICKS(1500));
+                DisplayMsg homeMsg = { DISP_HOME, 0 };
+                xQueueSend(displayQueue, &homeMsg, 0);
+            }
+        }
+
+        bool sensorConnected = isFingerprintConnected();
+        if (!sensorConnected && millis() - lastReconnectAttempt >= 10000UL) {
+            lastReconnectAttempt = millis();
+            sensorConnected = tryReconnectFingerprint();
+        }
+        if (sensorConnected != sensorWasConnected) {
+            sensorWasConnected = sensorConnected;
+            queueMQTTEvent(
+                sensorConnected ? "sensor_online" : "sensor_offline",
+                "fingerprint_sensor"
+            );
+            DisplayMsg sensorMsg = {
+                sensorConnected ? DISP_HOME : DISP_SENSOR_ERROR,
+                0
+            };
+            xQueueSend(displayQueue, &sensorMsg, 0);
+        }
+
+        if (!isLockOpen() && sensorConnected) {
             int result = checkFingerprint();
 
             if (result > 0) {
@@ -122,6 +207,11 @@ void Task_Fingerprint(void *pvParameters) {
                 xEventGroupSetBits(lockEventGroup, EVT_UNLOCK_FINGER);
 
                 String fpName = getFingerprintName(result);
+                queueMQTTEvent(
+                    "fingerprint_granted",
+                    "fingerprint",
+                    static_cast<int16_t>(result)
+                );
                 char msgBuf[TELEGRAM_NOTIF_MAX_LEN];
                 if (fpName.length() > 0) {
                     snprintf(msgBuf, sizeof(msgBuf), "🚪 Mở cửa - %s (ID #%d) lúc %s", fpName.c_str(), result, getTimeStr().c_str());
@@ -145,6 +235,7 @@ void Task_Fingerprint(void *pvParameters) {
                 // 2. VÂN TAY KHÔNG HỢP LỆ (LẠ) -> BÁO ĐỘNG
                 // ==========================================
                 Serial.println(F("[AUTH] Tu choi: Van tay khong hop le!"));
+                queueMQTTEvent("fingerprint_denied", "fingerprint");
                 alertError();
 
                 DisplayMsg errMsg = { DISP_ERROR, 0 };
@@ -188,6 +279,12 @@ void Task_Display(void *pvParameters) {
                 case DISP_SUCCESS:      showSuccessScreen(msg.id);  break;
                 case DISP_ERROR:        showErrorScreen();          break;
                 case DISP_SENSOR_ERROR: showSensorErrorScreen();    break;
+                case DISP_FP_ENROLL:
+                case DISP_FP_SAVED:
+                case DISP_FP_DELETED:
+                case DISP_FP_FAILED:
+                    showFingerprintManagementScreen(msg.type, msg.id);
+                    break;
             }
         }
     }
@@ -212,6 +309,7 @@ void Task_Button(void *pvParameters) {
                 DisplayMsg msg = { DISP_SUCCESS, 0 }; // id=0: nút nhấn
                 xQueueSend(displayQueue, &msg, 0);
                 xEventGroupSetBits(lockEventGroup, EVT_UNLOCK_BUTTON);
+                queueMQTTEvent("button_open", "inside_button");
 
                 if (telegramNotifQueue) {
                     TelegramNotif notif;
@@ -272,8 +370,10 @@ void setup() {
     lockEventGroup = xEventGroupCreate();
     displayQueue   = xQueueCreate(5, sizeof(DisplayMsg));
     serverUnlockQueue = xQueueCreate(SERVER_UNLOCK_QUEUE_LENGTH, sizeof(ServerUnlockRequest));
+    fingerprintCommandQueue = xQueueCreate(2, sizeof(FingerprintCommandRequest));
 
-    if (!lockEventGroup || !displayQueue || !serverUnlockQueue) {
+    if (!lockEventGroup || !displayQueue || !serverUnlockQueue ||
+        !fingerprintCommandQueue) {
         Serial.println(F("[SYSTEM] LOI: Khong tao duoc FreeRTOS primitive."));
         for (;;) delay(1000);
     }
@@ -285,7 +385,16 @@ void setup() {
 
     // 3. Khởi tạo Telegram Driver (tạo queue + mutex nội bộ)
     initTelegram(displayQueue, lockEventGroup);
-    initMQTT(serverUnlockQueue, lockEventGroup, EVT_UNLOCK_SERVER);
+    initMQTT(
+        serverUnlockQueue,
+        fingerprintCommandQueue,
+        lockEventGroup,
+        EVT_UNLOCK_SERVER
+    );
+    queueMQTTEvent(
+        fpOk ? "sensor_online" : "sensor_offline",
+        "fingerprint_sensor"
+    );
 
     // 4. Tạo Task phần cứng — Core 1
     xTaskCreatePinnedToCore(Task_LockControl, "Lock",    2048, NULL, 4, NULL, 1);

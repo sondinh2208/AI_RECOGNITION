@@ -36,7 +36,7 @@ def _window_specs(simulate_pi=False):
                 "min_size": (320, 240),
             },
             {
-                "title": "FaceCheck - Quản trị",
+                "title": "FaceCheck - Quản lý ra vào",
                 "url": SIMULATED_ADMIN_URL,
                 "width": 1440,
                 "height": 900,
@@ -45,7 +45,7 @@ def _window_specs(simulate_pi=False):
         ]
     return [
         {
-            "title": "FaceCheck - HỆ THỐNG ĐIỂM DANH & QUẢN TRỊ AI",
+            "title": "FaceCheck - HỆ THỐNG QUẢN LÝ RA VÀO TÍCH HỢP NHẬN DIỆN KHUÔN MẶT VÀ CẢM BIẾN VÂN TAY",
             "url": ADMIN_URL,
             "width": 1440,
             "height": 900,

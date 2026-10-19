@@ -1,6 +1,6 @@
-# FaceCheck — Hệ thống nhận diện khuôn mặt và điểm danh
+# FaceCheck — Hệ thống quản lý ra vào tích hợp nhận diện khuôn mặt và cảm biến vân tay
 
-FaceCheck là ứng dụng điểm danh/kiểm soát truy cập bằng khuôn mặt chạy trên máy tính. Hệ thống nhận hình ảnh từ webcam hoặc camera ESP32-S3 OV3660, phát hiện và kiểm tra chất lượng khuôn mặt, trích xuất đặc trưng ArcFace, đối chiếu với hồ sơ đã đăng ký rồi lưu lịch sử xác thực.
+FaceCheck là hệ thống quản lý ra vào tích hợp nhận diện khuôn mặt và cảm biến vân tay. Server nhận hình ảnh từ camera ESP32-S3 OV3660, xử lý YOLO/ArcFace, quản lý hồ sơ và nhật ký xác thực; ESP32-S3 cửa xử lý AS608, OLED, nút và relay, đồng thời vẫn cho phép vân tay hoạt động khi mất mạng.
 
 Ứng dụng có giao diện quản trị dạng web chạy trong cửa sổ desktop, chế độ kiosk dành cho người điểm danh, API nội bộ, luồng camera MJPEG và firmware cho camera/màn hình ESP32.
 
@@ -283,6 +283,8 @@ FACECHECK_CAMERA_FLIP=1
 # Địa chỉ LAN của laptop để TFT truy cập, ví dụ 192.168.1.11
 FACECHECK_DISPLAY_HOST=192.168.1.11
 FACECHECK_DISPLAY_TOKEN=THAY_BANG_TOKEN_DAI_NGAU_NHIEN
+FACECHECK_ADMIN_TOKEN=THAY_BANG_TOKEN_QUAN_TRI_DAI_NGAU_NHIEN
+FACECHECK_ADMIN_TOKEN=THAY_BANG_TOKEN_QUAN_TRI_DAI_NGAU_NHIEN
 
 # Dùng cho WebSocket camera bridge thử nghiệm
 FACECHECK_CAMERA_TOKEN=THAY_BANG_TOKEN_CAMERA_KHAC
@@ -313,6 +315,8 @@ Các biến runtime đáng chú ý:
 - `FACECHECK_DRAW_DEBUG_BOXES=1`: vẽ bounding box khi chẩn đoán detector.
 - `FACECHECK_DISPLAY_HOST`: IP laptop được in cho màn hình TFT.
 - `FACECHECK_DISPLAY_TOKEN`: token bắt buộc cho API TFT ở cổng `8767`.
+- `FACECHECK_ADMIN_TOKEN`: mã mở khóa API quản lý vân tay. API này chỉ nằm trên dịch vụ quản trị localhost `127.0.0.1:8765`; giao diện chỉ giữ mã trong `sessionStorage` của tab hiện tại.
+- `FACECHECK_ADMIN_TOKEN`: mã mở khóa API quản lý vân tay. API này chỉ nằm trên dịch vụ quản trị localhost `127.0.0.1:8765`; giao diện chỉ giữ mã trong `sessionStorage` của tab hiện tại.
 - `FACECHECK_DOOR_ENABLED`: `1` để tự mở cửa sau nhận diện thành công; đặt `0` để tắt mà không xóa thông tin broker.
 - `FACECHECK_DOOR_OPEN_DURATION_MS`: thời gian giữ relay, firmware giới hạn trong 500–10000 ms.
 - `FACECHECK_DOOR_COOLDOWN_SECONDS`: thời gian nghỉ toàn cửa sau ACK `finished`, mặc định 8 giây.
@@ -514,6 +518,12 @@ Mỗi thư mục firmware có README riêng với hướng dẫn phần cứng c
 - `tools/mqtt_door_monitor.py`: theo dõi heartbeat/status của bộ điều khiển cửa.
 - `tools/mqtt_door_ping.py`: kiểm tra MQTT hai chiều mà không kích relay.
 - `tools/mqtt_door_open.py`: gửi `OPEN` thủ công, bắt buộc có `--confirm-open`.
+
+Sự kiện cục bộ từ bộ điều khiển cửa được nhận tại
+`smartdoor/v1/<device_id>/event`, lọc theo whitelist rồi lưu tối đa 100 bản ghi
+trong `data/door_events.json`. API đọc là `GET /api/door/events`; snapshot
+WebSocket cũng chứa trạng thái heartbeat, AS608 và sự kiện gần nhất. Không có
+tên, ảnh hay template vân tay trong payload MQTT.
 - `tools/read_serial.py`: đọc log serial trong một khoảng thời gian.
 - `tools/benchmark_wifi_camera.py`: đo nhiều mức FPS camera Wi-Fi và chọn mức ổn định.
 - `tools/prepare_lfw_benchmark.py`: chuẩn bị bộ đánh giá LFW.

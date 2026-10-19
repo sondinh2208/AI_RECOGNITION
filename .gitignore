@@ -17,6 +17,8 @@ logs/
 # Local browser/build artifacts
 /.codex-build/
 /.codex-output/
+/.codex-history-inspect/
+/.codex-history-backup/
 
 # Data and Models
 data/

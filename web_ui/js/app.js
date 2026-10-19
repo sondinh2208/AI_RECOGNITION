@@ -7,10 +7,12 @@ const esc = value => String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&a
 const viewRole = new URLSearchParams(location.search).get("view");
 const kioskView = viewRole === "kiosk";
 const simulatedAdminView = viewRole === "admin";
+const debugView = new URLSearchParams(location.search).get("debug") === "1";
 document.body.classList.toggle("kiosk-view", kioskView);
 document.body.classList.toggle("simulated-admin-view", simulatedAdminView);
-if (kioskView) document.title = "FaceCheck - Kiosk kiểm soát cửa";
+if (kioskView) document.title = "FaceCheck - Kiosk quản lý ra vào";
 if (simulatedAdminView) $("#enrollmentCameraHeading").textContent = "Theo dõi quét tại kiosk";
+$("#testRecognitionImage").hidden = !debugView;
 const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 const success = value => String(value || "").includes("Thành công");
 
@@ -67,6 +69,17 @@ function syncCameraStream() {
 
   setCameraStreamActive(active, message);
 }
+
+const fingerprintErrorLabels = {
+  mqtt_disconnected: "ESP32 cửa đang mất kết nối MQTT.",
+  management_command_pending: "Một thao tác vân tay khác đang chạy.",
+  invalid_fingerprint_id: "ID vân tay phải nằm trong khoảng 1–127.",
+  fingerprint_id_exists: "ID vân tay này đã tồn tại.",
+  fingerprint_id_not_found: "Không tìm thấy ID vân tay này.",
+  publish_error: "Không thể gửi lệnh tới MQTT.",
+  publish_failed: "MQTT từ chối gửi lệnh.",
+};
+const friendlyFingerprintError = error => fingerprintErrorLabels[error?.message] || error?.message || "Thao tác vân tay thất bại.";
 
 function syncKioskMode(state) {
   if (!kioskView) return;
@@ -244,19 +257,39 @@ function renderEnrollment(state) {
 }
 
 function renderStatus(state) {
-  const recognitionChanged = !store.runtime || store.runtime.version !== state.version;
   store.runtime = state;
   syncKioskMode(state);
   syncCameraStream();
   markDataStale(state.history_version);
   $("#sideCamera").textContent = state.camera.running ? "Hoạt động" : "Ngoại tuyến";
-  $("#sideDevice").textContent = state.camera.device === "cpu" ? "CPU" : "GPU sẵn sàng";
+  $("#sideDevice").textContent = state.camera.device === "cpu" ? "CPU đang xử lý" : "GPU đang xử lý";
+  const door = state.door || {};
+  const deviceStatus = door.device_status || {};
+  const lastSeenAt = Date.parse(deviceStatus.received_at || "");
+  const heartbeatFresh = Number.isFinite(lastSeenAt) && Date.now() - lastSeenAt < 90000;
+  const controllerOnline = deviceStatus.state === "online" && heartbeatFresh;
+  $("#sideDoor").textContent = controllerOnline ? "Trực tuyến" : "Ngoại tuyến";
   const monitorCamera = $("#monitorCameraState");
   if (monitorCamera) {
     monitorCamera.textContent = state.camera.running ? "Đang hoạt động" : "Ngoại tuyến";
     $("#monitorRecognitionState").textContent = ["recognizing", "strict_confirmation"].includes(state.recognition.state) ? "Đang xác thực" : "Sẵn sàng";
     $("#monitorFaceCount").textContent = `${Number(state.camera.faces || 0)} khuôn mặt`;
     $("#monitorProcessingFps").textContent = `${Math.round(state.camera.fps || 0)} FPS`;
+    $("#monitorDoorState").textContent = controllerOnline ? "Đang trực tuyến" : "Ngoại tuyến / chưa xác nhận";
+    $("#monitorFingerprintState").textContent = door.fingerprint_sensor_state === "sensor_online"
+      ? "Đang hoạt động"
+      : door.fingerprint_sensor_state === "sensor_offline"
+        ? "Mất kết nối"
+        : "Chưa có trạng thái";
+    const latest = door.last_event || {};
+    const eventLabels = {
+      fingerprint_granted: `Vân tay ID #${latest.fingerprint_id ?? "?"} được chấp nhận`,
+      fingerprint_denied: "Vân tay lạ bị từ chối",
+      button_open: "Mở cửa bằng nút bên trong",
+      sensor_online: "Cảm biến vân tay đã kết nối",
+      sensor_offline: "Cảm biến vân tay mất kết nối",
+    };
+    $("#monitorDoorEvent").textContent = eventLabels[latest.event] || "Chưa nhận sự kiện từ ESP32.";
   }
   if (!kioskView && state.enrollment?.state === "success") {
     if (!enrollmentFormClearedForSuccess) {
@@ -270,21 +303,27 @@ function renderStatus(state) {
   }
   renderEnrollment(state);
   updateEnrollmentControls(state);
-  if (recognitionChanged) renderRecognition(state.recognition);
+  const access = state.access || state.recognition;
+  const accessSignature = JSON.stringify(access);
+  if (store.accessSignature !== accessSignature) {
+    store.accessSignature = accessSignature;
+    renderRecognition(access);
+  }
   renderRecognitionTest(state.recognition_test);
   if (store.route === "recognition" && store.history.stale) loadRecent();
+  if (store.route === "fingerprints" && store.fingerprints.unlocked) renderFingerprintState(state.door || {});
 }
 
 function renderRecognitionTest(test) {
   if (!test) return;
   const button = $("#testRecognitionImage");
   button.disabled = test.state === "processing";
-  button.textContent = test.state === "processing" ? "Đang phân tích ảnh..." : "Kiểm thử bằng file ảnh";
+  button.textContent = test.state === "processing" ? "Đang phân tích ảnh..." : "Công cụ kiểm thử ảnh";
   if (test.version <= store.recognitionTestVersion || !["complete", "error"].includes(test.state)) return;
   store.recognitionTestVersion = test.version;
   if (test.error) { toast(test.error, true); return; }
   const result = test.result;
-  openModal(`<h2>Kết quả kiểm thử ảnh</h2><p class="subtitle">${esc(result.file)} · Không ghi vào lịch sử ra vào</p><div class="test-result"><strong>${esc(result.conclusion)}</strong><p>Top 1: ${esc(result.best.name || "Không rõ")} (${esc(result.best.id || "---")}) · Distance ${esc(result.best_distance)}</p><p>Top 2: ${esc(result.second.name || "Không có")} (${esc(result.second.id || "---")}) · Distance ${esc(result.second_distance ?? "---")}</p><p>Margin: ${esc(result.margin)}</p></div><div class="modal-actions"><button class="primary" id="closeTestResult">Đóng</button></div>`);
+  openModal(`<h2>Kết quả kiểm thử ảnh</h2><p class="subtitle">${esc(result.file)} · Không ghi vào nhật ký xác thực</p><div class="test-result"><strong>${esc(result.conclusion)}</strong><p>Top 1: ${esc(result.best.name || "Không rõ")} (${esc(result.best.id || "---")}) · Distance ${esc(result.best_distance)}</p><p>Top 2: ${esc(result.second.name || "Không có")} (${esc(result.second.id || "---")}) · Distance ${esc(result.second_distance ?? "---")}</p><p>Margin: ${esc(result.margin)}</p></div><div class="modal-actions"><button class="primary" id="closeTestResult">Đóng</button></div>`);
   $("#closeTestResult").addEventListener("click", closeModal);
 }
 
@@ -295,25 +334,32 @@ function renderRecognition(result) {
   panel.querySelector(".result-header h2").textContent = result.title;
   panel.querySelector(".result-header p").textContent = result.message;
   const employee = result.employee;
-  panel.querySelector(".employee-summary").innerHTML = employee ? `<img class="avatar" src="${esc(employee.image_url)}" alt="${esc(employee.name)}"><div><h3>${esc(employee.name)}</h3><p>Mã NV: <b>${esc(employee.id)}</b></p><p>Chức vụ: ${esc(employee.role)}</p><p>Phòng ban: ${esc(employee.department)}</p></div>` : `<div class="avatar placeholder">${icon("users")}</div><div><h3>${result.state === "unknown" ? "Người lạ / Khách" : result.state === "ambiguous" ? "Chưa xác định" : "Chưa có lượt xác thực"}</h3><p>Mã NV: <b>---</b></p><p>Chức vụ: ---</p><p>Phòng ban: ---</p></div>`;
+  const avatar = employee?.image_url
+    ? `<img class="avatar" src="${esc(employee.image_url)}" alt="${esc(employee.name)}">`
+    : `<div class="avatar placeholder">${icon(result.method === "fingerprint" ? "fingerprint" : "users")}</div>`;
+  panel.querySelector(".employee-summary").innerHTML = employee ? `${avatar}<div><h3>${esc(employee.name)}</h3><p>Mã NV: <b>${esc(employee.id || "—")}</b></p><p>Chức vụ: ${esc(employee.role || "—")}</p><p>Phòng ban: ${esc(employee.department || "—")}</p></div>` : `${avatar}<div><h3>${result.state === "unknown" ? "Chưa xác định" : result.state === "ambiguous" ? "Chưa xác định" : "Chưa có lượt xác thực"}</h3><p>Mã NV: <b>---</b></p><p>Chức vụ: ---</p><p>Phòng ban: ---</p></div>`;
   const notice = panel.querySelector(".result-notice");
-  notice.querySelector("strong").textContent = result.state === "ambiguous" ? "Từ chối mở cửa: độ tin cậy chưa đạt yêu cầu." : result.state === "unknown" ? "Từ chối mở cửa: khuôn mặt chưa được đăng ký." : employee ? `Cửa đang mở cho ${employee.name}.` : "Đưa đầy đủ khuôn mặt vào khung để xác thực mở cửa.";
-  notice.querySelector("span").textContent = ["ambiguous", "unknown"].includes(result.state) ? "Cửa vẫn đóng. Vui lòng thử lại hoặc liên hệ quản trị viên." : employee ? "Quyền truy cập đã được xác nhận." : "Cửa đang đóng và sẵn sàng xác thực.";
+  notice.querySelector("strong").textContent = result.access_label || "Sẵn sàng tiếp nhận xác thực";
+  notice.querySelector("span").textContent = `Phương thức: ${result.method_label || "Khuôn mặt hoặc vân tay"}`;
   panel.querySelector(".result-time b").textContent = result.timestamp || "Chờ xác thực...";
-  const retry = $("#retryRecognition"); retry.hidden = !["ambiguous", "unknown", "error"].includes(result.state);
-  panel.querySelector(".status-action").hidden = !retry.hidden;
+  const retry = $("#retryRecognition");
+  retry.hidden = result.method === "fingerprint" || !["ambiguous", "unknown", "error"].includes(result.state);
+  const accessStatus = panel.querySelector(".status-action");
+  accessStatus.hidden = false;
+  accessStatus.className = `status-action ${result.access_state || "waiting"}`;
+  accessStatus.textContent = `Quyền ra vào: ${result.access_label || "Sẵn sàng xác thực"}`;
 }
 
 function rowsHtml(rows) {
   if (!rows.length) return `<tr><td class="empty" colspan="6">Chưa có dữ liệu</td></tr>`;
   return rows.map(row => {
     const allowed = success(row.status);
-    return `<tr><td>${esc(row.time)}</td><td><strong>${esc(row.name)}</strong></td><td>${esc(row.id)}</td><td>${esc(row.role)}</td><td>${esc(row.dept)}</td><td><span class="status-text ${allowed ? "success" : "failed"}">${allowed ? "Đã mở cửa" : "Từ chối"}</span></td></tr>`;
+    return `<tr><td>${esc(row.time)}</td><td><strong>${esc(row.name)}</strong></td><td>${esc(row.id)}</td><td>${esc(row.role)}</td><td>${esc(row.dept)}</td><td><span class="status-text ${allowed ? "success" : "failed"}">${allowed ? "Xác thực thành công" : "Xác thực bị từ chối"}</span></td></tr>`;
   }).join("");
 }
 
 async function loadRecent() {
-  try { const data = await api.history({ page: 1, pageSize: 5 }); replaceHtml($("#recentAttendance"), rowsHtml(data.items)); store.history.stale = false; } catch (error) { toast(error.message, true); }
+  try { const data = await api.history({ page: 1, pageSize: 5 }); replaceHtml($("#recentAttendance"), rowsHtml(data.items)); } catch (error) { toast(error.message, true); }
 }
 
 function statCard(title, value, iconName) { return `<article class="card stat-card"><span class="stat-icon">${icon(iconName)}</span><span><small>${esc(title)}</small><strong>${esc(value)}</strong></span></article>`; }
@@ -345,8 +391,8 @@ async function loadDashboard(force = false) {
     const data = await api.dashboard(); store.dashboard.data = data; store.dashboard.stale = false;
     const online = store.runtime?.camera?.running;
     replaceHtml($("#dashboardStats"), [
-      dashboardMetric({ tone: "green", iconName: "monitor", label: "Kiosk kiểm soát cửa", value: online ? "Hoạt động" : "Sẵn sàng", note: online ? "Camera đang kết nối" : "Cửa đang đóng", decoration: "pulse" }),
-      dashboardMetric({ tone: "blue", iconName: "users", label: "Người đăng ký", value: `${data.employees} hồ sơ`, note: "Đã đăng ký trong hệ thống" }),
+      dashboardMetric({ tone: "green", iconName: "monitor", label: "Kiosk xác thực", value: online ? "Hoạt động" : "Ngoại tuyến", note: online ? "Camera đang kết nối" : "Camera chưa kết nối", decoration: "pulse" }),
+      dashboardMetric({ tone: "blue", iconName: "users", label: "Nhân viên", value: `${data.employees} hồ sơ`, note: "Hồ sơ đang có trong hệ thống" }),
       dashboardMetric({ tone: "orange", iconName: "clock", label: "Lượt xác thực", value: `${data.today_total} lượt`, note: "Trong ngày hôm nay" }),
       dashboardMetric({ tone: "violet", iconName: "target", label: "Tỷ lệ thành công", value: `${data.success_rate}%`, note: "Trong ngày hôm nay", decoration: "wave" }),
     ].join(""));
@@ -355,7 +401,7 @@ async function loadDashboard(force = false) {
     replaceHtml($("#weekChart"), `<div class="chart-grid"><span>50</span><span>40</span><span>30</span><span>20</span><span>10</span><span>0</span></div><div class="chart-bars">${data.week.map((day, index) => `<div class="chart-column"><div class="chart-value">${day.value}</div><div class="chart-bar-track"><i class="chart-bar-fill${index === currentWeekday ? " current" : ""}" style="height:${Math.max(3, day.value / max * 100)}%"></i></div><strong>${esc(day.label)}</strong><span>${esc(day.date)}</span></div>`).join("")}</div>`);
     replaceHtml($("#dashboardRecent"), data.recent.length ? data.recent.map(row => {
       const ok = success(row.status);
-      return `<div class="timeline-item ${ok ? "ok" : "fail"}"><span class="timeline-dot"></span><span class="timeline-avatar">${icon(ok ? "check" : "x")}</span><div class="timeline-copy"><strong>${esc(row.name)}</strong><span>${ok ? "Xác thực thành công · Đã mở cửa" : esc(row.reason || "Từ chối mở cửa")}</span></div><time>${esc(relativeTime(row.time))}</time><span class="timeline-status">${ok ? "Đã mở cửa" : "Từ chối"}</span></div>`;
+      return `<div class="timeline-item ${ok ? "ok" : "fail"}"><span class="timeline-dot"></span><span class="timeline-avatar">${icon(ok ? "check" : "x")}</span><div class="timeline-copy"><strong>${esc(row.name)}</strong><span>${ok ? "Danh tính đã được xác thực" : esc(row.reason || "Xác thực bị từ chối")}</span></div><time>${esc(relativeTime(row.time))}</time><span class="timeline-status">${ok ? "Thành công" : "Từ chối"}</span></div>`;
     }).join("") : `<div class="empty">Chưa có hoạt động</div>`);
     const failureRate = Math.max(0, 100 - data.success_rate);
     replaceHtml($("#successOverview"), `<div class="success-donut" style="--rate:${data.success_rate}"><div><strong>${data.success_rate}%</strong><span>Thành công</span></div></div><div class="success-legend"><div><i class="legend-blue"></i><span>Được phép mở cửa</span><strong>${data.success_rate}%<small>${data.today_success} lượt</small></strong></div><div><i class="legend-red"></i><span>Bị từ chối</span><strong>${failureRate}%<small>${data.today_failed} lượt</small></strong></div></div>`);
@@ -384,8 +430,25 @@ async function loadEmployees(force = false) {
     const data = await api.employees({ query: state.query, page: state.page, pageSize: state.pageSize });
     if (requestVersion !== employeeRequestVersion) return;
     state.data = data; state.page = data.page; state.stale = false;
-    $("#employeeStats").innerHTML = statCard("Tổng nhân viên", data.all_total, "users") + statCard("Đang nhận diện", data.enabled_total, "check") + statCard("Trang hiện tại", `${data.page}/${data.pages}`, "list");
-    replaceHtml($("#employeeRows"), data.items.length ? data.items.map(item => `<tr><td><img class="row-avatar" loading="lazy" src="${item.image_url}" alt=""></td><td>${esc(item.id)}</td><td><strong>${esc(item.name)}</strong></td><td>${esc(item.role)}</td><td>${esc(item.department)}</td><td><span class="status-text ${item.recognition_enabled ? "success" : "failed"}">${item.recognition_enabled ? "Đang nhận diện" : "Chỉ kiểm thử"}</span></td><td><div class="actions"><button class="icon-button" data-action="view" data-id="${esc(item.id)}" aria-label="Xem ảnh">${icon("eye")}</button><button class="icon-button" data-action="edit" data-id="${esc(item.id)}" aria-label="Sửa">${icon("edit")}</button><button class="icon-button" data-action="toggle" data-id="${esc(item.id)}" aria-label="Bật tắt">${icon("target")}</button><button class="icon-button danger" data-action="delete" data-id="${esc(item.id)}" aria-label="Xóa">${icon("trash")}</button></div></td></tr>`).join("") : `<tr><td class="empty" colspan="7">Không tìm thấy nhân viên</td></tr>`);
+    $("#employeeStats").innerHTML = statCard("Tổng hồ sơ", data.all_total, "users") + statCard("Có khuôn mặt", data.face_total, "user-scan") + statCard("Có vân tay", data.fingerprint_total, "fingerprint") + statCard("Có cả hai", data.both_total, "check");
+    replaceHtml($("#employeeRows"), data.items.length ? data.items.map(item => {
+      const avatar = item.image_url
+        ? `<img class="row-avatar" loading="lazy" src="${esc(item.image_url)}" alt="">`
+        : `<span class="row-avatar placeholder">${icon("users")}</span>`;
+      const fingerprintLabel = item.fingerprint_registered
+        ? item.fingerprint_ids.map(id => `#${id}`).join(", ")
+        : "Chưa đăng ký";
+      const faceStatus = item.face_registered
+        ? `<span class="method-status active">${icon("user-scan")} ${item.recognition_enabled ? "Đã đăng ký" : "Đang tạm khóa"}</span>`
+        : `<span class="method-status missing">Chưa đăng ký</span>`;
+      const fingerprintStatus = item.fingerprint_registered
+        ? `<span class="method-status active">${icon("fingerprint")} ${esc(fingerprintLabel)}</span>`
+        : `<span class="method-status missing">Chưa đăng ký</span>`;
+      const faceActions = item.face_registered
+        ? `<button class="icon-button" data-action="edit" data-id="${esc(item.id)}" aria-label="Sửa hồ sơ">${icon("edit")}</button><button class="icon-button" data-action="toggle" data-id="${esc(item.id)}" aria-label="Bật hoặc khóa khuôn mặt">${icon("target")}</button><button class="icon-button danger" data-action="delete" data-id="${esc(item.id)}" aria-label="Xóa dữ liệu khuôn mặt">${icon("trash")}</button>`
+        : `<button class="icon-button" data-action="add-face" data-id="${esc(item.id)}" aria-label="Thêm khuôn mặt">${icon("user-scan")}</button>`;
+      return `<tr><td><div class="employee-identity">${avatar}<span><strong>${esc(item.name)}</strong><small>${esc(item.id)}</small></span></div></td><td>${esc(item.role)}</td><td>${esc(item.department)}</td><td>${faceStatus}</td><td>${fingerprintStatus}</td><td><span class="status-text ${item.access_enabled ? "success" : "failed"}">${item.access_enabled ? "Được phép" : "Tạm khóa"}</span></td><td><div class="actions"><button class="icon-button" data-action="profile" data-id="${esc(item.id)}" aria-label="Xem hồ sơ">${icon("eye")}</button><button class="icon-button" data-action="add-fingerprint" data-id="${esc(item.id)}" aria-label="Thêm vân tay">${icon("fingerprint")}</button>${faceActions}</div></td></tr>`;
+    }).join("") : `<tr><td class="empty" colspan="7">Không tìm thấy nhân viên</td></tr>`);
     pagination($("#employeePagination"), data, page => { state.page = page; state.stale = true; loadEmployees(); }, "nhân viên");
   } catch (error) { toast(error.message, true); }
 }
@@ -393,6 +456,88 @@ async function loadEmployees(force = false) {
 async function loadHistory(force = false) {
   const state = store.history; if (!force && !state.stale && state.data) return;
   try { const data = await api.history({ query: state.query, status: state.status, page: state.page, pageSize: state.pageSize }); state.data = data; state.page = data.page; state.stale = false; replaceHtml($("#historyRows"), rowsHtml(data.items)); pagination($("#historyPagination"), data, page => { state.page = page; state.stale = true; loadHistory(); }, "bản ghi"); } catch (error) { toast(error.message, true); }
+}
+
+let lastFingerprintManagementSignature = "";
+let pendingFingerprintEnrollmentId = null;
+
+function clearFingerprintEnrollForm() {
+  const form = $("#fingerprintEnrollForm");
+  form.reset();
+  form.querySelectorAll("input").forEach(input => {
+    input.value = "";
+    input.defaultValue = "";
+  });
+}
+
+function renderFingerprintState(door = {}) {
+  const management = door.fingerprint_management || {};
+  const state = management.state || "idle";
+  const commandLabel = management.command === "FINGERPRINT_ENROLL" ? "Đăng ký" : management.command === "FINGERPRINT_DELETE" ? "Xóa" : "Không có";
+  const stateLabels = { sent: "Đã gửi lệnh", started: "Đang thực hiện", finished: "Hoàn tất", failed: "Thất bại", idle: "Sẵn sàng" };
+  const sensorLabels = { sensor_online: "Đang hoạt động", sensor_offline: "Mất kết nối", unknown: "Chưa có trạng thái" };
+  const css = ["sent", "started"].includes(state) ? "fingerprint-command-busy" : state === "finished" ? "fingerprint-command-ok" : state === "failed" ? "fingerprint-command-failed" : "";
+  replaceHtml($("#fingerprintManagementState"), `
+    <div><dt>MQTT</dt><dd>${door.connected ? "Đã kết nối" : "Mất kết nối"}</dd></div>
+    <div><dt>Cảm biến AS608</dt><dd>${esc(sensorLabels[door.fingerprint_sensor_state] || sensorLabels.unknown)}</dd></div>
+    <div><dt>Số ID đã biết</dt><dd>${Number(door.fingerprint_count || 0)}</dd></div>
+    <div><dt>Lệnh gần nhất</dt><dd>${esc(commandLabel)}${management.fingerprint_id ? ` ID #${esc(management.fingerprint_id)}` : ""}</dd></div>
+    <div><dt>Trạng thái</dt><dd class="${css}">${esc(stateLabels[state] || state)}${management.reason ? ` · ${esc(management.reason)}` : ""}</dd></div>`);
+  const busy = ["sent", "started"].includes(state);
+  $("#fingerprintEnrollButton").disabled = busy || !door.connected;
+  const signature = `${management.command_id || ""}:${state}`;
+  if (signature !== lastFingerprintManagementSignature) {
+    lastFingerprintManagementSignature = signature;
+    if (["finished", "failed"].includes(state)) {
+      if (state === "finished" && management.command === "FINGERPRINT_ENROLL" && Number(management.fingerprint_id) === pendingFingerprintEnrollmentId) {
+        clearFingerprintEnrollForm();
+        pendingFingerprintEnrollmentId = null;
+      }
+      store.fingerprints.stale = true;
+      store.employees.stale = true;
+      store.dashboard.stale = true;
+      loadFingerprints(true);
+      toast(state === "finished" ? "ESP32 đã hoàn tất thao tác vân tay." : `Thao tác vân tay thất bại: ${management.reason || "không rõ nguyên nhân"}`, state === "failed");
+    }
+  }
+}
+
+function lockFingerprintAdmin() {
+  store.fingerprints.token = "";
+  store.fingerprints.unlocked = false;
+  store.fingerprints.data = null;
+  sessionStorage.removeItem("facecheckAdminToken");
+  $("#fingerprintAdminToken").value = "";
+  $("#fingerprintUnlock").hidden = false;
+  $("#fingerprintAdmin").hidden = true;
+}
+
+async function unlockFingerprintAdmin(token) {
+  token = String(token || "").trim();
+  if (!token) throw new Error("Hãy nhập mã quản trị.");
+  await api.unlockFingerprintAdmin(token);
+  store.fingerprints.token = token;
+  store.fingerprints.unlocked = true;
+  store.fingerprints.stale = true;
+  sessionStorage.setItem("facecheckAdminToken", token);
+  $("#fingerprintUnlock").hidden = true;
+  $("#fingerprintAdmin").hidden = false;
+  await loadFingerprints(true);
+}
+
+async function loadFingerprints(force = false) {
+  const state = store.fingerprints;
+  if (!state.unlocked || (!force && !state.stale && state.data)) return;
+  try {
+    const data = await api.fingerprints(state.token);
+    state.data = data;
+    state.stale = false;
+    replaceHtml($("#fingerprintRows"), data.items.length ? data.items.map(item => `<tr><td><strong>#${esc(item.fingerprint_id)}</strong></td><td>${esc(item.employee_id || "—")}</td><td>${esc(item.name || `Vân tay #${item.fingerprint_id}`)}</td><td>${item.status === "observed" ? "Phát hiện khi quét" : "Đã quản lý"}</td><td><div class="actions"><button class="icon-button" data-fingerprint-edit="${esc(item.fingerprint_id)}" aria-label="Sửa thông tin ID ${esc(item.fingerprint_id)}">${icon("edit")}</button><button class="icon-button danger" data-fingerprint-delete="${esc(item.fingerprint_id)}" aria-label="Xóa vân tay ID ${esc(item.fingerprint_id)}">${icon("trash")}</button></div></td></tr>`).join("") : `<tr><td class="empty" colspan="5">Chưa có ID vân tay nào trong danh sách quản lý</td></tr>`);
+    renderFingerprintState(store.runtime?.door || {});
+  } catch (error) {
+    if (/mã quản trị/i.test(error.message)) lockFingerprintAdmin();
+    toast(friendlyFingerprintError(error), true);
+  }
 }
 
 const modal = $("#modal");
@@ -424,18 +569,66 @@ modal.addEventListener("keydown", event => {
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
 });
 
+function fillForm(form, values) {
+  Object.entries(values).forEach(([name, value]) => {
+    const field = form.elements.namedItem(name);
+    if (field) field.value = value || "";
+  });
+  form.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+async function openFaceEnrollment(employee = null) {
+  closeModal();
+  const form = $("#enrollmentForm");
+  form.reset();
+  if (employee) fillForm(form, {
+    id: employee.id, name: employee.name,
+    role: employee.role === "Nhân viên" ? "" : employee.role,
+    department: employee.department === "—" ? "" : employee.department,
+  });
+  await navigate("enrollment");
+  form.elements.namedItem(employee ? "role" : "name")?.focus();
+}
+
+async function openFingerprintEnrollment(employee = null) {
+  closeModal();
+  await navigate("fingerprints");
+  const form = $("#fingerprintEnrollForm");
+  fillForm(form, {
+    employee_id: employee?.id || "",
+    name: employee?.name || "",
+  });
+  const used = new Set((store.fingerprints.data?.items || []).map(item => Number(item.fingerprint_id)));
+  const nextId = Array.from({ length: 127 }, (_, index) => index + 1).find(id => !used.has(id));
+  if (nextId) form.elements.namedItem("fingerprint_id").value = nextId;
+  form.elements.namedItem("fingerprint_id")?.focus();
+}
+
+$("#addEmployee").addEventListener("click", () => {
+  openModal(`<h2>Thêm nhân viên</h2><p class="subtitle">Chọn phương thức xác thực đầu tiên. Có thể bổ sung phương thức còn lại sau trong hồ sơ nhân viên.</p><div class="profile-methods"><button class="profile-method" id="addEmployeeFace" type="button"><strong>Đăng ký khuôn mặt</strong><span>Nhập thông tin và quét khuôn mặt tại camera.</span></button><button class="profile-method" id="addEmployeeFingerprint" type="button"><strong>Đăng ký vân tay</strong><span>Nhập thông tin và làm theo hướng dẫn trên thiết bị.</span></button></div>`);
+  $("#addEmployeeFace").addEventListener("click", () => openFaceEnrollment().catch(error => toast(error.message, true)));
+  $("#addEmployeeFingerprint").addEventListener("click", () => openFingerprintEnrollment().catch(error => toast(error.message, true)));
+});
+
 $("#employeeRows").addEventListener("click", async event => {
   const button = event.target.closest("[data-action]"); if (!button) return;
   const employee = store.employees.data.items.find(item => item.id === button.dataset.id); if (!employee) return;
-  if (button.dataset.action === "view") openModal(`<h2>${esc(employee.name)}</h2><p class="subtitle">${esc(employee.id)} · ${esc(employee.role)} · ${esc(employee.department)}</p><img class="preview-image" src="${employee.image_url}" alt="${esc(employee.name)}">`);
+  if (button.dataset.action === "profile") {
+    const faceText = employee.face_registered ? (employee.recognition_enabled ? "Đã đăng ký và đang hoạt động" : "Đã đăng ký nhưng đang tạm khóa") : "Chưa đăng ký";
+    const fingerprintText = employee.fingerprint_registered ? `ID ${employee.fingerprint_ids.map(id => `#${id}`).join(", ")}` : "Chưa đăng ký";
+    openModal(`<h2>${esc(employee.name)}</h2><p class="subtitle">${esc(employee.id)} · ${esc(employee.role)} · ${esc(employee.department)}</p>${employee.image_url ? `<img class="preview-image" src="${esc(employee.image_url)}" alt="${esc(employee.name)}">` : ""}<div class="profile-methods"><div class="profile-method"><strong>Khuôn mặt</strong><span>${esc(faceText)}</span></div><div class="profile-method"><strong>Vân tay</strong><span>${esc(fingerprintText)}</span></div></div><div class="modal-actions"><button class="secondary" id="closeEmployeeProfile">Đóng</button></div>`);
+    $("#closeEmployeeProfile").addEventListener("click", closeModal);
+  }
+  if (button.dataset.action === "add-face") await openFaceEnrollment(employee);
+  if (button.dataset.action === "add-fingerprint") await openFingerprintEnrollment(employee);
   if (button.dataset.action === "edit") {
     openModal(`<h2>Sửa thông tin nhân viên</h2><p class="subtitle">Thông tin mới sẽ được đồng bộ với dữ liệu nhận diện.</p><form id="editForm"><label>Mã nhân viên<input name="id" value="${esc(employee.id)}" required></label><label>Họ và tên<input name="name" value="${esc(employee.name)}" required></label><label>Chức vụ<input name="role" value="${esc(employee.role)}" required></label><label>Phòng ban<input name="department" value="${esc(employee.department)}" required></label><div class="modal-actions"><button type="button" class="secondary" id="cancelEdit">Hủy</button><button class="primary">Lưu thay đổi</button></div></form>`);
-    $("#cancelEdit").addEventListener("click", closeModal); $("#editForm").addEventListener("submit", async e => { e.preventDefault(); try { await api.updateEmployee(employee.id, Object.fromEntries(new FormData(e.target))); closeModal(); store.employees.stale = store.dashboard.stale = true; await loadEmployees(); toast("Đã cập nhật thông tin nhân viên"); } catch (error) { toast(error.message, true); } });
+    $("#cancelEdit").addEventListener("click", closeModal); $("#editForm").addEventListener("submit", async e => { e.preventDefault(); try { await api.updateEmployee(employee.id, Object.fromEntries(new FormData(e.target))); closeModal(); store.employees.stale = store.dashboard.stale = store.fingerprints.stale = true; await loadEmployees(); toast("Đã cập nhật hồ sơ và liên kết sinh trắc học"); } catch (error) { toast(error.message, true); } });
   }
   if (button.dataset.action === "toggle") { try { await api.toggleEmployee(employee.id); store.employees.stale = true; await loadEmployees(); } catch (error) { toast(error.message, true); } }
   if (button.dataset.action === "delete") {
-    openModal(`<h2>Xóa nhân viên?</h2><p class="subtitle">Hồ sơ <strong>${esc(employee.name)}</strong> và dữ liệu khuôn mặt sẽ bị xóa. Thao tác này không thể hoàn tác.</p><div class="modal-actions"><button class="secondary" id="cancelDelete">Hủy</button><button class="primary" id="confirmDelete">Xóa nhân viên</button></div>`);
-    $("#cancelDelete").addEventListener("click", closeModal); $("#confirmDelete").addEventListener("click", async () => { try { await api.deleteEmployee(employee.id); closeModal(); store.employees.stale = store.dashboard.stale = true; await loadEmployees(); toast("Đã xóa nhân viên"); } catch (error) { toast(error.message, true); } });
+    openModal(`<h2>Xóa dữ liệu khuôn mặt?</h2><p class="subtitle">Dữ liệu khuôn mặt của <strong>${esc(employee.name)}</strong> sẽ bị xóa.${employee.fingerprint_registered ? " Vân tay vẫn được giữ và nhân viên vẫn có thể ra vào bằng vân tay." : " Hồ sơ sẽ không còn phương thức xác thực nào."}</p><div class="modal-actions"><button class="secondary" id="cancelDelete">Hủy</button><button class="primary" id="confirmDelete">Xóa khuôn mặt</button></div>`);
+    $("#cancelDelete").addEventListener("click", closeModal); $("#confirmDelete").addEventListener("click", async () => { try { await api.deleteEmployee(employee.id); closeModal(); store.employees.stale = store.dashboard.stale = true; await loadEmployees(); toast("Đã xóa dữ liệu khuôn mặt"); } catch (error) { toast(error.message, true); } });
   }
 });
 
@@ -449,6 +642,78 @@ $("#openLiveCamera").addEventListener("click", () => {
   openModal('<h2>Camera trực tiếp tại kiosk</h2><p class="subtitle">Luồng chỉ hoạt động trong khi cửa sổ này đang mở.</p><div class="admin-live-camera" id="adminLiveCamera"></div>');
   $("#adminLiveCamera").append(cameraSurface);
   syncCameraStream();
+});
+
+$("#fingerprintUnlockForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    await unlockFingerprintAdmin($("#fingerprintAdminToken").value);
+    toast("Đã mở khóa trang quản trị vân tay trong phiên này.");
+  } catch (error) {
+    lockFingerprintAdmin();
+    toast(friendlyFingerprintError(error), true);
+  }
+});
+
+$("#fingerprintLockButton").addEventListener("click", lockFingerprintAdmin);
+$("#refreshFingerprints").addEventListener("click", () => loadFingerprints(true));
+$("#fingerprintEnrollForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const payload = Object.fromEntries(new FormData(event.currentTarget));
+  payload.fingerprint_id = Number(payload.fingerprint_id);
+  try {
+    await api.enrollFingerprint(store.fingerprints.token, payload);
+    pendingFingerprintEnrollmentId = payload.fingerprint_id;
+    clearFingerprintEnrollForm();
+    toast(`Đã gửi lệnh đăng ký ID #${payload.fingerprint_id}. Hãy làm theo hướng dẫn trên OLED.`);
+  } catch (error) {
+    toast(friendlyFingerprintError(error), true);
+  }
+});
+
+$("#fingerprintRows").addEventListener("click", event => {
+  const editButton = event.target.closest("[data-fingerprint-edit]");
+  if (editButton) {
+    const id = Number(editButton.dataset.fingerprintEdit);
+    const item = store.fingerprints.data?.items?.find(row => Number(row.fingerprint_id) === id);
+    if (!item) return;
+    openModal(`<h2>Thông tin vân tay ID #${id}</h2><p class="subtitle">Chỉ cập nhật hồ sơ hiển thị trên server, không thay đổi mẫu trong AS608.</p><form id="fingerprintEditForm"><label>Mã nhân viên<input name="employee_id" maxlength="40" value="${esc(item.employee_id || "")}" placeholder="Ví dụ: NV001"></label><label>Họ và tên<input name="name" maxlength="80" value="${esc(item.name || "")}" required></label><div class="modal-actions"><button type="button" class="secondary" id="cancelFingerprintEdit">Hủy</button><button class="primary">Lưu thông tin</button></div></form>`);
+    $("#cancelFingerprintEdit").addEventListener("click", closeModal);
+    $("#fingerprintEditForm").addEventListener("submit", async submitEvent => {
+      submitEvent.preventDefault();
+      try {
+        await api.updateFingerprint(store.fingerprints.token, id, Object.fromEntries(new FormData(submitEvent.currentTarget)));
+        closeModal();
+        store.employees.stale = true;
+        await loadFingerprints(true);
+        toast(`Đã cập nhật thông tin vân tay ID #${id}.`);
+      } catch (error) { toast(friendlyFingerprintError(error), true); }
+    });
+    return;
+  }
+  const button = event.target.closest("[data-fingerprint-delete]");
+  if (!button) return;
+  const id = Number(button.dataset.fingerprintDelete);
+  const item = store.fingerprints.data?.items?.find(row => Number(row.fingerprint_id) === id);
+  if (!item) return;
+  openModal(`<h2>Xóa vân tay ID #${id}?</h2><p class="subtitle">Mẫu của <strong>${esc(item.name || `ID #${id}`)}</strong> sẽ bị xóa trực tiếp khỏi bộ nhớ AS608 và không thể khôi phục. Nhập lại <strong>${id}</strong> để xác nhận.</p><form id="fingerprintDeleteForm"><label>Xác nhận ID<input id="fingerprintDeleteConfirmation" inputmode="numeric" autocomplete="off" required></label><div class="modal-actions"><button type="button" class="secondary" id="cancelFingerprintDelete">Hủy</button><button class="primary" id="confirmFingerprintDelete" disabled>Xóa vân tay</button></div></form>`);
+  const confirmation = $("#fingerprintDeleteConfirmation");
+  const confirmButton = $("#confirmFingerprintDelete");
+  confirmation.addEventListener("input", () => { confirmButton.disabled = confirmation.value.trim() !== String(id); });
+  $("#cancelFingerprintDelete").addEventListener("click", closeModal);
+  $("#fingerprintDeleteForm").addEventListener("submit", async submitEvent => {
+    submitEvent.preventDefault();
+    if (confirmation.value.trim() !== String(id)) return;
+    confirmButton.disabled = true;
+    try {
+      await api.deleteFingerprint(store.fingerprints.token, id, confirmation.value.trim());
+      closeModal();
+      toast(`Đã gửi lệnh xóa vân tay ID #${id}.`);
+    } catch (error) {
+      confirmButton.disabled = false;
+      toast(friendlyFingerprintError(error), true);
+    }
+  });
 });
 $("#testRecognitionImage").addEventListener("click", () => $("#recognitionImageInput").click());
 $("#recognitionImageInput").addEventListener("change", async event => {
@@ -550,6 +815,13 @@ async function onNavigate(route, previous) {
   if (!kioskView && ["dashboard", "employees", "history"].includes(route) && previous === "enrollment" && store.runtime?.mode === "add_employee") renderStatus(await api.setMode("attendance"));
   if (route === "dashboard") await loadDashboard();
   if (route === "employees") await loadEmployees();
+  if (route === "fingerprints") {
+    if (!store.fingerprints.unlocked && store.fingerprints.token) {
+      try { await unlockFingerprintAdmin(store.fingerprints.token); } catch (_) { lockFingerprintAdmin(); }
+    } else if (store.fingerprints.unlocked) {
+      await loadFingerprints();
+    }
+  }
   if (route === "history") await loadHistory();
 }
 
@@ -557,6 +829,12 @@ const navigate = createRouter(onNavigate, kioskView ? { lockedRoute: "recognitio
 document.addEventListener("visibilitychange", () => {
   syncCameraStream();
 });
-connectStateSocket(renderStatus, connected => { const bar = $("#connectionBar"); bar.classList.toggle("visible", !connected); bar.textContent = connected ? "" : "Mất kết nối với Python Core · Đang thử kết nối lại..."; });
+connectStateSocket(renderStatus, connected => {
+  const bar = $("#connectionBar");
+  bar.classList.toggle("visible", !connected);
+  bar.textContent = connected ? "" : "Mất kết nối với Python Core · Đang thử kết nối lại...";
+  const sideConnection = $("#sideConnection");
+  if (sideConnection) sideConnection.textContent = connected ? "Server đang kết nối" : "Mất kết nối server";
+});
 api.state().then(renderStatus).catch(error => toast(error.message, true));
 navigate(kioskView ? "recognition" : location.hash.slice(1) || "recognition", false).catch(error => toast(error.message, true));

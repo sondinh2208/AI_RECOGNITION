@@ -14,12 +14,21 @@
 namespace {
 constexpr size_t RECENT_COMMAND_COUNT = 8;
 constexpr size_t ACK_QUEUE_LENGTH = 12;
+constexpr size_t EVENT_QUEUE_LENGTH = 16;
 
 struct MQTTAckMessage {
     char commandId[49];
-    char command[12];
+    char command[24];
     char state[12];
     char reason[40];
+};
+
+struct MQTTEventMessage {
+    char eventId[49];
+    char eventType[32];
+    char source[20];
+    int16_t fingerprintId;
+    unsigned long uptimeMs;
 };
 
 WiFiClientSecure tlsClient;
@@ -28,12 +37,15 @@ PubSubClient mqttClient(tlsClient);
 char statusTopic[96];
 char commandTopic[96];
 char ackTopic[96];
+char eventTopic[96];
 char clientId[64];
 char recentCommandIds[RECENT_COMMAND_COUNT][49] = {};
 size_t recentCommandIndex = 0;
 
 QueueHandle_t unlockQueue = nullptr;
+QueueHandle_t fingerprintQueue = nullptr;
 QueueHandle_t ackQueue = nullptr;
+QueueHandle_t eventQueue = nullptr;
 EventGroupHandle_t unlockEventGroup = nullptr;
 EventBits_t unlockEventBit = 0;
 
@@ -111,9 +123,102 @@ void flushQueuedAcks() {
     }
 }
 
+bool publishEvent(const MQTTEventMessage &message) {
+    if (!mqttClient.connected()) return false;
+
+    StaticJsonDocument<384> document;
+    document["schema_version"] = 1;
+    document["device_id"] = DEVICE_ID;
+    document["event_id"] = message.eventId;
+    document["event"] = message.eventType;
+    document["source"] = message.source;
+    document["uptime_ms"] = message.uptimeMs;
+    const time_t now = time(nullptr);
+    if (now > 0) document["occurred_at"] = static_cast<int64_t>(now);
+    if (message.fingerprintId >= 0) {
+        document["fingerprint_id"] = message.fingerprintId;
+    }
+
+    char payload[384];
+    const size_t payloadLength = serializeJson(document, payload, sizeof(payload));
+    const bool sent = mqttClient.publish(
+        eventTopic,
+        reinterpret_cast<const uint8_t *>(payload),
+        payloadLength,
+        false
+    );
+    if (sent) {
+        Serial.printf("[MQTT] Event %s: %s\n", message.eventType, message.eventId);
+    }
+    return sent;
+}
+
+void flushQueuedEvents() {
+    if (!eventQueue || !mqttClient.connected()) return;
+
+    MQTTEventMessage message;
+    while (xQueuePeek(eventQueue, &message, 0) == pdTRUE) {
+        if (!publishEvent(message)) return;
+        xQueueReceive(eventQueue, &message, 0);
+    }
+}
+
 void rejectOpen(const char *commandId, const char *reason) {
     Serial.printf("[MQTT] Tu choi OPEN %s: %s\n", commandId, reason);
     publishAck(commandId, "OPEN", "failed", reason);
+}
+
+void rejectFingerprintCommand(
+    const char *commandId,
+    const char *command,
+    const char *reason
+) {
+    Serial.printf("[MQTT] Tu choi %s %s: %s\n", command, commandId, reason);
+    publishAck(commandId, command, "failed", reason);
+}
+
+bool commandExpiryIsValid(JsonDocument &document, int64_t &expiresAt) {
+    expiresAt = document["expires_at"] | static_cast<int64_t>(0);
+    const int64_t now = static_cast<int64_t>(time(nullptr));
+    return now > 0 && expiresAt >= now &&
+           expiresAt <= now + MQTT_COMMAND_MAX_FUTURE_SECONDS;
+}
+
+void handleFingerprintCommand(
+    JsonDocument &document,
+    const char *commandId,
+    const char *command
+) {
+    if (wasCommandSeen(commandId)) {
+        rejectFingerprintCommand(commandId, command, "duplicate_command");
+        return;
+    }
+    const int fingerprintId = document["fingerprint_id"] | 0;
+    if (fingerprintId < 1 || fingerprintId > 127) {
+        rejectFingerprintCommand(commandId, command, "invalid_fingerprint_id");
+        return;
+    }
+    int64_t expiresAt = 0;
+    if (!commandExpiryIsValid(document, expiresAt)) {
+        rejectFingerprintCommand(commandId, command, "invalid_or_expired_command");
+        return;
+    }
+    if (!fingerprintQueue) {
+        rejectFingerprintCommand(commandId, command, "fingerprint_controller_unavailable");
+        return;
+    }
+
+    FingerprintCommandRequest request = {};
+    strlcpy(request.commandId, commandId, sizeof(request.commandId));
+    strlcpy(request.command, command, sizeof(request.command));
+    request.fingerprintId = static_cast<uint8_t>(fingerprintId);
+    request.expiresAt = expiresAt;
+    if (xQueueSend(fingerprintQueue, &request, 0) != pdTRUE) {
+        rejectFingerprintCommand(commandId, command, "fingerprint_queue_full");
+        return;
+    }
+    rememberCommand(commandId);
+    Serial.printf("[MQTT] Da dua %s ID #%d vao hang doi.\n", command, fingerprintId);
 }
 
 void handleOpenCommand(JsonDocument &document, const char *commandId) {
@@ -198,6 +303,11 @@ void onMQTTMessage(char *topic, byte *payload, unsigned int length) {
     }
     if (strcmp(command, "OPEN") == 0) {
         handleOpenCommand(document, commandId);
+        return;
+    }
+    if (strcmp(command, "FINGERPRINT_ENROLL") == 0 ||
+        strcmp(command, "FINGERPRINT_DELETE") == 0) {
+        handleFingerprintCommand(document, commandId, command);
         return;
     }
 
@@ -294,17 +404,21 @@ void ensureMQTT() {
 
 void initMQTT(
     QueueHandle_t serverUnlockQueue,
+    QueueHandle_t fingerprintCommandQueue,
     EventGroupHandle_t lockEventGroup,
     EventBits_t serverUnlockBit
 ) {
     unlockQueue = serverUnlockQueue;
+    fingerprintQueue = fingerprintCommandQueue;
     unlockEventGroup = lockEventGroup;
     unlockEventBit = serverUnlockBit;
     ackQueue = xQueueCreate(ACK_QUEUE_LENGTH, sizeof(MQTTAckMessage));
+    eventQueue = xQueueCreate(EVENT_QUEUE_LENGTH, sizeof(MQTTEventMessage));
 
     snprintf(statusTopic, sizeof(statusTopic), "smartdoor/v1/%s/status", DEVICE_ID);
     snprintf(commandTopic, sizeof(commandTopic), "smartdoor/v1/%s/command", DEVICE_ID);
     snprintf(ackTopic, sizeof(ackTopic), "smartdoor/v1/%s/ack", DEVICE_ID);
+    snprintf(eventTopic, sizeof(eventTopic), "smartdoor/v1/%s/event", DEVICE_ID);
     snprintf(
         clientId,
         sizeof(clientId),
@@ -321,6 +435,7 @@ void initMQTT(
     mqttClient.setBufferSize(512);
 
     if (!ackQueue) Serial.println(F("[MQTT] LOI: Khong tao duoc ACK queue."));
+    if (!eventQueue) Serial.println(F("[MQTT] LOI: Khong tao duoc event queue."));
     Serial.printf("[MQTT] Client da khoi tao: %s\n", clientId);
 }
 
@@ -347,6 +462,31 @@ bool isMQTTConnected() {
     return mqttClient.connected();
 }
 
+bool queueMQTTEvent(
+    const char *eventType,
+    const char *source,
+    int16_t fingerprintId
+) {
+    if (!eventQueue || !eventType || !source) return false;
+
+    MQTTEventMessage message = {};
+    snprintf(
+        message.eventId,
+        sizeof(message.eventId),
+        "evt-%08lx-%08lx",
+        static_cast<unsigned long>(millis()),
+        static_cast<unsigned long>(esp_random())
+    );
+    strlcpy(message.eventType, eventType, sizeof(message.eventType));
+    strlcpy(message.source, source, sizeof(message.source));
+    message.fingerprintId = fingerprintId;
+    message.uptimeMs = static_cast<unsigned long>(millis());
+
+    if (xQueueSend(eventQueue, &message, 0) == pdTRUE) return true;
+    Serial.printf("[MQTT] Event queue day, mat su kien %s.\n", eventType);
+    return false;
+}
+
 void Task_MQTT(void *pvParameters) {
     (void)pvParameters;
 
@@ -358,6 +498,7 @@ void Task_MQTT(void *pvParameters) {
             if (mqttClient.connected()) {
                 mqttClient.loop();
                 flushQueuedAcks();
+                flushQueuedEvents();
                 if (millis() - lastHeartbeat >= MQTT_HEARTBEAT_INTERVAL_MS) {
                     publishStatus("online");
                     lastHeartbeat = millis();

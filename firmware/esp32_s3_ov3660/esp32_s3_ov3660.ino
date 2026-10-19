@@ -572,6 +572,28 @@ void start_web_servers() {
   }
 }
 
+void stop_web_servers() {
+  if (stream_server != nullptr) {
+    httpd_stop(stream_server);
+    stream_server = nullptr;
+  }
+  if (web_server != nullptr) {
+    httpd_stop(web_server);
+    web_server = nullptr;
+  }
+  stream_server_ready = false;
+  web_server_ready = false;
+  stream_client_active = false;
+  stream_client_count = 0;
+  stream_fps = 0.0f;
+  Serial.println("[SERVER] Da dong socket HTTP/MJPEG cu.");
+}
+
+void restart_web_servers() {
+  stop_web_servers();
+  start_web_servers();
+}
+
 bool start_camera() {
   camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -734,19 +756,8 @@ void loop() {
   static unsigned long last_report = 0;
 #if !CAMERA_USE_SOFT_AP
   static unsigned long last_reconnect_attempt = 0;
-  static unsigned long last_server_probe = 0;
   static bool was_connected = WiFi.status() == WL_CONNECTED;
   bool is_connected = WiFi.status() == WL_CONNECTED;
-  if (is_connected &&
-      static_cast<int32_t>(millis() - server_probe_after) >= 0 &&
-      millis() - last_server_probe >= 6000) {
-    last_server_probe = millis();
-    if (!facecheck_server_reachable(facecheck_server_host())) {
-      Serial.println("[WIFI] Laptop da doi mang; dang tim FaceCheck tren mang con lai.");
-      WiFi.disconnect(false);
-      is_connected = false;
-    }
-  }
   if (is_connected && !was_connected) {
     WiFi.setSleep(false);
     const String ip = WiFi.localIP().toString();
@@ -754,12 +765,13 @@ void loop() {
                   ip.c_str(), WiFi.RSSI());
     start_mdns();
 #if !FACECHECK_AP_ONLY_TEST
-    if (!web_server_ready && !stream_server_ready) {
-      start_web_servers();
-    }
+    restart_web_servers();
 #endif
   } else if (!is_connected && was_connected) {
     Serial.println("[WIFI] Mat ket noi.");
+#if !FACECHECK_AP_ONLY_TEST
+    stop_web_servers();
+#endif
   }
   was_connected = is_connected;
   if (!is_connected &&

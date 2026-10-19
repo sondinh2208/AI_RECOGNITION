@@ -10,9 +10,17 @@ struct ServerUnlockRequest {
     int64_t expiresAt;
 };
 
+struct FingerprintCommandRequest {
+    char commandId[49];
+    char command[24];
+    uint8_t fingerprintId;
+    int64_t expiresAt;
+};
+
 // Khoi tao topic va TLS client. Goi mot lan trong setup().
 void initMQTT(
     QueueHandle_t serverUnlockQueue,
+    QueueHandle_t fingerprintCommandQueue,
     EventGroupHandle_t lockEventGroup,
     EventBits_t serverUnlockBit
 );
@@ -23,6 +31,14 @@ bool queueMQTTAck(
     const char *command,
     const char *state,
     const char *reason = nullptr
+);
+
+// Dua su kien toi gian vao queue; chi Task_MQTT duoc publish len broker.
+// Khong truyen ten hay du lieu mau van tay.
+bool queueMQTTEvent(
+    const char *eventType,
+    const char *source,
+    int16_t fingerprintId = -1
 );
 
 // FreeRTOS task quan ly Wi-Fi, MQTT reconnect va heartbeat.

@@ -38,6 +38,9 @@ constexpr uint32_t kOrange = 0xF79009;
 constexpr uint32_t kMuted = 0x98A2B3;
 constexpr uint32_t kTargetDisplayFps = 5;
 constexpr uint32_t kFrameFetchIntervalMs = 1000 / kTargetDisplayFps;
+// FPS co the giam tam thoi khi laptop dang xu ly AI. Khi do chi khoi tao lai
+// HTTP, khong xoa TFT hay ngat Wi-Fi vi khung hinh cu van con hop le de hien thi.
+constexpr uint32_t kFrameTransportRecoveryMs = 6000;
 constexpr int32_t kAttendanceImageWidth = 480;
 constexpr int32_t kAttendanceImageHeight = 250;
 constexpr int32_t kAttendanceImageX = 0;
@@ -142,6 +145,7 @@ uint32_t maxDrawMs = 0;
 volatile uint32_t droppedFrameCount = 0;
 volatile uint32_t fetchFailureCount = 0;
 volatile uint32_t fetchRetryCount = 0;
+volatile bool wifiTransportChanged = false;
 uint32_t reportedDroppedFrames = 0;
 uint32_t reportedFetchFailures = 0;
 uint32_t reportedFetchRetries = 0;
@@ -380,6 +384,7 @@ bool fetchFrame(uint8_t slotIndex) {
   const int code = frameHttp.GET();
   if (code != HTTP_CODE_OK) {
     frameHttp.end();
+    frameClient.stop();
     frameHttpReady = false;
     xSemaphoreGive(frameHttpMutex);
     return false;
@@ -401,6 +406,7 @@ bool fetchFrame(uint8_t slotIndex) {
   if (stream == nullptr || length <= 0 ||
       static_cast<size_t>(length) > sizeof(slot.jpeg)) {
     frameHttp.end();
+    frameClient.stop();
     frameHttpReady = false;
     xSemaphoreGive(frameHttpMutex);
     return false;
@@ -411,6 +417,7 @@ bool fetchFrame(uint8_t slotIndex) {
   if (received != static_cast<size_t>(length)) {
     // Byte thieu lam HTTP keep-alive lech frame; tao lai socket o lan sau.
     frameHttp.end();
+    frameClient.stop();
     frameHttpReady = false;
     xSemaphoreGive(frameHttpMutex);
     return false;
@@ -422,6 +429,25 @@ bool fetchFrame(uint8_t slotIndex) {
   lastSuccessfulRequest = jpegReceived;
   xSemaphoreGive(frameHttpMutex);
   return true;
+}
+
+void resetFrameTransport() {
+  if (frameHttpMutex != nullptr) {
+    xSemaphoreTake(frameHttpMutex, portMAX_DELAY);
+  }
+  frameHttp.end();
+  frameClient.stop();
+  frameHttpReady = false;
+  if (frameHttpMutex != nullptr) {
+    xSemaphoreGive(frameHttpMutex);
+  }
+}
+
+void onWiFiEvent(WiFiEvent_t event) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED ||
+      event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+    wifiTransportChanged = true;
+  }
 }
 
 void frameFetchTask(void* parameter) {
@@ -557,6 +583,7 @@ void ensureWiFi() {
     xSemaphoreTake(frameHttpMutex, portMAX_DELAY);
   }
   frameHttp.end();
+  frameClient.stop();
   frameHttpReady = false;
   bool connected = connectConfiguredNetwork(
       WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER);
@@ -607,6 +634,9 @@ void setup() {
   xQueueSend(freeFrameQueue, &firstSlot, 0);
   xQueueSend(freeFrameQueue, &secondSlot, 0);
   WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.onEvent(onWiFiEvent);
   ensureWiFi();
   if (!isEnrollmentMode()) {
     drawStatusPanel();
@@ -625,6 +655,23 @@ void setup() {
 }
 
 void loop() {
+  if (wifiTransportChanged) {
+    wifiTransportChanged = false;
+    resetFrameTransport();
+    previousStatusKey = "";
+    frameAreaPrepared = false;
+    if (WiFi.status() == WL_CONNECTED) {
+      selectFaceCheckServer();
+      lastSuccessfulRequest = millis();
+      drawConnectionScreen("Wi-Fi da khoi phuc, dang tai lai");
+      Serial.printf("[RECOVERY] Da tao lai HTTP sau khi Wi-Fi co IP %s\n",
+                    WiFi.localIP().toString().c_str());
+    } else {
+      lastSuccessfulRequest = 0;
+      drawConnectionScreen("Mat Wi-Fi, dang tu ket noi lai");
+      Serial.println("[RECOVERY] Wi-Fi mat ket noi; da huy socket HTTP cu.");
+    }
+  }
   ensureWiFi();
   if (WiFi.status() != WL_CONNECTED) {
     delay(250);
@@ -639,14 +686,15 @@ void loop() {
 
   const uint32_t connectionCheckNow = millis();
   if (lastSuccessfulRequest != 0 &&
-      connectionCheckNow - lastSuccessfulRequest > 6000) {
-    xSemaphoreTake(frameHttpMutex, portMAX_DELAY);
-    frameHttp.end();
-    frameHttpReady = false;
-    xSemaphoreGive(frameHttpMutex);
-    drawConnectionScreen("Mat ket noi FaceCheck");
+      connectionCheckNow - lastSuccessfulRequest > kFrameTransportRecoveryMs) {
+    resetFrameTransport();
+    // Giu nguyen frame cu tren TFT. Mot dot FPS thap/AI cham khong dong nghia
+    // Wi-Fi da mat, nen khong duoc ve man hinh ket noi hay WiFi.disconnect().
+    // Task fetch se tu mo HTTP moi o lan lap ke tiep; neu Wi-Fi mat that thi
+    // onWiFiEvent()/ensureWiFi() van xu ly va hien trang thai ket noi rieng.
     lastSuccessfulRequest = 0;
-    WiFi.disconnect(true);
+    Serial.println(
+        "[RECOVERY] Khong co frame trong 6 giay; tao lai HTTP va giu frame cu.");
   }
   delay(3);
 }

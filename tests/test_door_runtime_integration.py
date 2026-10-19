@@ -54,6 +54,42 @@ class DoorRuntimeIntegrationTests(unittest.TestCase):
 
         self.assertEqual(runtime.snapshot()["door"]["state"], "ready")
 
+    def test_fingerprint_event_is_added_to_common_attendance_history_once(self):
+        runtime = self.make_runtime()
+        runtime.attendance_history = []
+        event = {
+            "event_id": "evt-fingerprint-001",
+            "event": "fingerprint_granted",
+            "source": "fingerprint",
+            "fingerprint_id": 2,
+            "occurred_at": 1_800_000_000,
+        }
+
+        with patch.object(runtime, "_save_attendance_history"):
+            runtime._on_door_event(event)
+            runtime._on_door_event(event)
+
+        self.assertEqual(len(runtime.attendance_history), 1)
+        row = runtime.attendance_history[0]
+        self.assertEqual(row["id"], "VT002")
+        self.assertEqual(row["name"], "Vân tay #2")
+        self.assertEqual(row["status"], "Thành công")
+        self.assertEqual(row["door_event_id"], "evt-fingerprint-001")
+
+    def test_denied_fingerprint_is_added_as_failed_history(self):
+        runtime = self.make_runtime()
+        runtime.attendance_history = []
+
+        with patch.object(runtime, "_save_attendance_history"):
+            runtime._on_door_event({
+                "event_id": "evt-fingerprint-002",
+                "event": "fingerprint_denied",
+                "source": "fingerprint",
+            })
+
+        self.assertEqual(runtime.attendance_history[0]["status"], "Thất bại")
+        self.assertEqual(runtime.attendance_history[0]["source"], "fingerprint")
+
 
 if __name__ == "__main__":
     unittest.main()

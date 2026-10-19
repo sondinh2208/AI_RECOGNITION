@@ -84,6 +84,26 @@ Quy tac an toan:
 Van tay va nut thoat van mo cua cuc bo khi Wi-Fi/MQTT mat ket noi. MQTT khong
 nam tren duong quyet dinh cua chuc nang offline.
 
+## Su kien bo dieu khien gui ve server
+
+Firmware publish cac su kien toi gian tai:
+
+```text
+smartdoor/v1/door-01/event
+```
+
+`event` co the la `fingerprint_granted`, `fingerprint_denied`, `button_open`,
+`sensor_online` hoac `sensor_offline`. Payload chi co `device_id`, `event_id`,
+loai/nguon su kien, uptime, thoi gian va `fingerprint_id` 1-127 khi quet thanh
+cong. Firmware khong gui ten, anh hay template van tay qua MQTT.
+
+Sukien duoc dua vao FreeRTOS queue de tac vu quet van tay va nut bam khong bi
+block boi TLS. Queue RAM giu tam 16 su kien khi MQTT gian doan; luu ben vung
+offline se duoc bo sung o giai doan sau.
+
+Neu AS608 mat giao tiep UART ba lan lien tiep, firmware danh dau cam bien
+offline va tu thu ket noi lai moi 10 giay ma khong can reset toan bo ESP32.
+
 ## Kiem tra heartbeat tu may server
 
 ```powershell

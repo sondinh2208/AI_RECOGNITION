@@ -7,6 +7,7 @@ static HardwareSerial serialAS608(2);
 static Adafruit_Fingerprint finger = Adafruit_Fingerprint(&serialAS608);
 static bool sensorReady = false;
 static volatile bool isEnrolling = false;
+static uint8_t communicationErrors = 0;
 
 bool initFingerprint() {
     // 1. Khởi tạo UART2 với chân TX=17, RX=18 chuẩn ESP32-S3 ở tốc độ 57600 baud
@@ -25,6 +26,7 @@ bool initFingerprint() {
             Serial.println(F("/10!"));
             Serial.println(F("------------------------------------------"));
             sensorReady = true;
+            communicationErrors = 0;
 
             finger.getTemplateCount();
             Serial.print(F("[AS608] So luong van tay trong Flash: "));
@@ -48,10 +50,29 @@ bool isFingerprintConnected() {
     return sensorReady;
 }
 
+bool tryReconnectFingerprint() {
+    if (sensorReady || isEnrolling) return sensorReady;
+    if (!finger.verifyPassword()) return false;
+
+    sensorReady = true;
+    communicationErrors = 0;
+    finger.getTemplateCount();
+    Serial.printf(
+        "[AS608] Da tu ket noi lai. So mau: %u\n",
+        static_cast<unsigned int>(finger.templateCount)
+    );
+    return true;
+}
+
 uint16_t getFingerprintCount() {
     if (!sensorReady) return 0;
     finger.getTemplateCount();
     return finger.templateCount;
+}
+
+bool fingerprintExists(uint8_t id) {
+    if (!sensorReady || id == 0 || id > 127) return false;
+    return finger.loadModel(id) == FINGERPRINT_OK;
 }
 
 int checkFingerprint() {
@@ -62,6 +83,14 @@ int checkFingerprint() {
  
     // 1. Lấy ảnh vân tay từ cảm biến
     uint8_t p = finger.getImage();
+    if (p == FINGERPRINT_PACKETRECIEVEERR) {
+        if (++communicationErrors >= 3) {
+            sensorReady = false;
+            Serial.println(F("[AS608] Mat giao tiep UART; se tu ket noi lai."));
+        }
+        return FP_READ_ERROR;
+    }
+    communicationErrors = 0;
     if (p != FINGERPRINT_OK) {
         return FP_NO_FINGER; // Chưa có ngón tay đặt lên
     }

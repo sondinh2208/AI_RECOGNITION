@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = ROOT / "web_ui"
 runtime = WebFaceCheckRuntime(load_ai=os.getenv("FACECHECK_WEB_SKIP_AI") != "1")
 DISPLAY_TOKEN = os.getenv("FACECHECK_DISPLAY_TOKEN", "")
+ADMIN_TOKEN = os.getenv("FACECHECK_ADMIN_TOKEN", "")
 
 
 def api_error(exc):
@@ -80,6 +81,89 @@ async def display_health(request):
 def _display_authorized(request: Request):
     supplied = request.headers.get("x-facecheck-token", "")
     return bool(DISPLAY_TOKEN) and secrets.compare_digest(supplied, DISPLAY_TOKEN)
+
+
+def _admin_authorized(request: Request):
+    supplied = request.headers.get("x-facecheck-admin-token", "")
+    return bool(ADMIN_TOKEN) and secrets.compare_digest(supplied, ADMIN_TOKEN)
+
+
+def _admin_guard(request: Request):
+    if not ADMIN_TOKEN:
+        return JSONResponse(
+            {"ok": False, "error": "FACECHECK_ADMIN_TOKEN chưa được cấu hình"},
+            status_code=503,
+        )
+    if not _admin_authorized(request):
+        return JSONResponse(
+            {"ok": False, "error": "Mã quản trị không hợp lệ"},
+            status_code=401,
+        )
+    return None
+
+
+async def admin_auth(request: Request):
+    rejected = _admin_guard(request)
+    if rejected:
+        return rejected
+    return JSONResponse({"ok": True})
+
+
+async def fingerprints(request: Request):
+    rejected = _admin_guard(request)
+    if rejected:
+        return rejected
+    return JSONResponse({"ok": True, **runtime.fingerprint_management()})
+
+
+async def fingerprint_enroll(request: Request):
+    rejected = _admin_guard(request)
+    if rejected:
+        return rejected
+    try:
+        payload = await request.json()
+        return JSONResponse(
+            {"ok": True, **runtime.enroll_fingerprint(payload)}, status_code=202
+        )
+    except Exception as exc:
+        return api_error(exc)
+
+
+async def fingerprint_delete(request: Request):
+    rejected = _admin_guard(request)
+    if rejected:
+        return rejected
+    try:
+        fingerprint_id = int(request.path_params["fingerprint_id"])
+        payload = await request.json()
+        confirmation = str(payload.get("confirmation_id", "")).strip()
+        if confirmation != str(fingerprint_id):
+            return JSONResponse(
+                {"ok": False, "error": "Phải nhập lại đúng ID vân tay để xác nhận"},
+                status_code=400,
+            )
+        if runtime.door_service.fingerprint(fingerprint_id) is None:
+            return JSONResponse(
+                {"ok": False, "error": "ID vân tay không có trong danh sách quản lý"},
+                status_code=404,
+            )
+        return JSONResponse(
+            {"ok": True, **runtime.delete_fingerprint(fingerprint_id)}, status_code=202
+        )
+    except Exception as exc:
+        return api_error(exc)
+
+
+async def fingerprint_update(request: Request):
+    rejected = _admin_guard(request)
+    if rejected:
+        return rejected
+    try:
+        fingerprint_id = int(request.path_params["fingerprint_id"])
+        item = runtime.update_fingerprint(fingerprint_id, await request.json())
+        return JSONResponse({"ok": True, "item": item})
+    except Exception as exc:
+        return api_error(exc)
 
 
 async def switch_mode(request: Request):
@@ -204,6 +288,10 @@ async def dashboard(_request):
     return JSONResponse(runtime.dashboard())
 
 
+async def door_events(_request):
+    return JSONResponse(runtime.door_events())
+
+
 async def camera_stream(_request):
     async def frames():
         last_frame_id = -1
@@ -266,6 +354,20 @@ routes = [
     Route("/api/employees/{employee_id:str}", employee_delete, methods=["DELETE"]),
     Route("/api/attendance", history),
     Route("/api/dashboard", dashboard),
+    Route("/api/door/events", door_events),
+    Route("/api/admin/auth", admin_auth, methods=["POST"]),
+    Route("/api/admin/fingerprints", fingerprints),
+    Route("/api/admin/fingerprints/enroll", fingerprint_enroll, methods=["POST"]),
+    Route(
+        "/api/admin/fingerprints/{fingerprint_id:int}",
+        fingerprint_delete,
+        methods=["DELETE"],
+    ),
+    Route(
+        "/api/admin/fingerprints/{fingerprint_id:int}",
+        fingerprint_update,
+        methods=["PUT"],
+    ),
     Route("/api/camera/stream", camera_stream),
     WebSocketRoute("/ws/state", state_socket),
     Mount("/", StaticFiles(directory=WEB_ROOT, html=True), name="web-ui"),

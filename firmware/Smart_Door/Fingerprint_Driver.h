@@ -53,9 +53,15 @@ bool emptyAllFingerprints();
  */
 uint16_t getFingerprintCount();
 
+// Kiem tra mot slot ID co mau hay khong, khong sua/xoa du lieu.
+bool fingerprintExists(uint8_t id);
+
 /**
  * @brief Kiểm tra xem cảm biến vân tay có sẵn sàng hoạt động không
  */
 bool isFingerprintConnected();
+
+// Thu khoi phuc AS608 mot lan, khong block lau.
+bool tryReconnectFingerprint();
 
 #endif // FINGERPRINT_DRIVER_H

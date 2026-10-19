@@ -14,7 +14,11 @@ enum DisplayMsgType {
     DISP_HOME,          // Màn hình chờ quét vân tay
     DISP_SUCCESS,       // Màn hình mở cửa thành công
     DISP_ERROR,         // Màn hình cảnh báo vân tay sai
-    DISP_SENSOR_ERROR   // Màn hình lỗi phần cứng cảm biến
+    DISP_SENSOR_ERROR,  // Màn hình lỗi phần cứng cảm biến
+    DISP_FP_ENROLL,
+    DISP_FP_SAVED,
+    DISP_FP_DELETED,
+    DISP_FP_FAILED
 };
 
 /**
@@ -56,5 +60,8 @@ void showErrorScreen();
  * @brief Hiển thị màn hình báo lỗi phần cứng cảm biến vân tay
  */
 void showSensorErrorScreen();
+
+// Hien thi trang thai thao tac quan ly van tay tu server.
+void showFingerprintManagementScreen(DisplayMsgType type, int id);
 
 #endif // DISPLAY_DRIVER_H

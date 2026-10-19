@@ -1,11 +1,12 @@
 import { store } from "./state.js";
 
 const meta = {
-  dashboard: ["Bảng điều khiển", "Tổng quan hoạt động nhận diện và kiểm soát cửa", "#i-home"],
+  dashboard: ["Tổng quan", "Tổng quan hoạt động của hệ thống quản lý ra vào", "#i-home"],
   enrollment: ["Đăng ký khuôn mặt", "Thêm thông tin nhân viên và khuôn mặt để cấp quyền mở cửa", "#i-user-scan"],
-  recognition: ["Nhận diện mở cửa", "Xác thực khuôn mặt để ghi nhận ra vào và điều khiển cửa", "#i-target"],
-  employees: ["Người đăng ký", "Quản lý danh sách nhân viên đã đăng ký nhận diện khuôn mặt", "#i-users"],
-  history: ["Lịch sử ra vào", "Xem toàn bộ dữ liệu ra vào của nhân sự", "#i-list"],
+  recognition: ["Giám sát cửa", "Theo dõi xác thực, thiết bị và yêu cầu mở khóa theo thời gian thực", "#i-target"],
+  employees: ["Nhân viên", "Quản lý hồ sơ, khuôn mặt, vân tay và quyền ra vào", "#i-users"],
+  fingerprints: ["Quản lý vân tay", "Đăng ký và xóa từng mẫu vân tay trên bộ điều khiển cửa", "#i-fingerprint"],
+  history: ["Nhật ký xác thực", "Tra cứu các lượt xác thực khuôn mặt, vân tay và nút mở cửa", "#i-list"],
 };
 
 export function createRouter(onNavigate, { lockedRoute = null } = {}) {

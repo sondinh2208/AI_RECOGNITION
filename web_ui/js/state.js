@@ -1,10 +1,12 @@
 export const store = {
   route: "recognition",
   runtime: null,
+  accessSignature: "",
   historyVersion: -1,
   employees: { query: "", page: 1, pageSize: 10, data: null, stale: true },
   history: { query: "", status: "", page: 1, pageSize: 10, data: null, stale: true },
   dashboard: { data: null, stale: true },
+  fingerprints: { token: sessionStorage.getItem("facecheckAdminToken") || "", unlocked: false, data: null, stale: true },
   recognitionTestVersion: 0,
   scroll: new Map(),
 };

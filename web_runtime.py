@@ -89,7 +89,12 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._kiosk_query_face_box = None
         self._attendance_cooldowns = {}
         self._is_kiosk_ui_idle = True
-        self.door_service = DoorService.from_environment(on_change=self._publish)
+        self._fingerprint_access_state = None
+        self._fingerprint_access_until = 0.0
+        self.door_service = DoorService.from_environment(
+            on_change=self._publish,
+            on_event=self._on_door_event,
+        )
 
         self.enrollment_running = False
         self.is_face_valid = False
@@ -141,8 +146,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
     def _idle_payload():
         return {
             "state": "idle",
-            "title": "Cửa đang đóng",
-            "message": "Đưa khuôn mặt vào khung để xác thực mở cửa",
+            "title": "Chờ xác thực",
+            "message": "Đưa khuôn mặt vào khung để xác minh quyền truy cập",
             "employee": None,
             "timestamp": None,
             "metrics": None,
@@ -153,6 +158,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             if self._started:
                 return
             self._started = True
+        self._sync_door_events_to_attendance_history()
         self.door_service.start()
         if self._load_ai_requested:
             self._load_ai_models()
@@ -211,6 +217,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                     "device": self.device,
                 },
                 "recognition": dict(self.recognition_state),
+                "access": self._access_snapshot(),
                 "door": self.door_service.snapshot(),
                 "recognition_test": dict(self.recognition_test_result),
                 "enrollment": {
@@ -234,6 +241,80 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 },
                 "history_version": self._attendance_history_version,
             }
+
+    def _access_snapshot(self):
+        """Return one product-facing result for face and fingerprint access."""
+        if (
+            self._fingerprint_access_state is not None
+            and time.monotonic() < self._fingerprint_access_until
+        ):
+            return dict(self._fingerprint_access_state)
+
+        face = dict(self.recognition_state)
+        state = str(face.get("state") or "idle")
+        if state == "idle":
+            face.update({
+                "title": "Chờ xác thực",
+                "message": "Sử dụng khuôn mặt hoặc vân tay để xác minh quyền ra vào",
+            })
+        if state in {"success", "duplicate"}:
+            access_state, access_label = "allowed", "Đã cho phép ra vào"
+        elif state in {"unknown", "ambiguous"}:
+            access_state, access_label = "denied", "Không được phép ra vào"
+        elif state == "error":
+            access_state, access_label = "error", "Không thể xác thực"
+        elif state in {"recognizing", "strict_confirmation", "validating"}:
+            access_state, access_label = "processing", "Đang xác thực..."
+        else:
+            access_state, access_label = "waiting", "Sẵn sàng xác thực"
+        face.update({
+            "method": None if state == "idle" else "face",
+            "method_label": "Khuôn mặt hoặc vân tay" if state == "idle" else "Khuôn mặt",
+            "access_state": access_state,
+            "access_label": access_label,
+        })
+        return face
+
+    def _employee_for_fingerprint(self, registered, fingerprint_id):
+        employee_id = str(registered.get("employee_id") or "").strip()
+        if not employee_id:
+            employee_id = f"VT{fingerprint_id:03d}"
+        profile = None
+        if employee_id:
+            profiles = self.embeddings_cache
+            if profiles is None:
+                profiles = self._read_profiles()
+                self.embeddings_cache = profiles
+            for key, candidate in profiles.items():
+                if str(candidate.get("id") or key) == employee_id:
+                    profile = candidate
+                    break
+        if profile is not None:
+            image = self._profile_image(employee_id, profile)
+            return {
+                "id": employee_id,
+                "name": registered.get("name") or profile.get("name") or "Nhân viên",
+                "role": profile.get("role") or "Nhân viên",
+                "department": profile.get("department") or profile.get("dept") or "—",
+                "image_url": (
+                    self._employee_image_url(employee_id, profile)
+                    if image is not None else None
+                ),
+            }
+        return {
+            "id": employee_id,
+            "name": registered.get("name") or f"Vân tay #{fingerprint_id}",
+            "role": "Nhân viên",
+            "department": "—",
+            "image_url": None,
+        }
+
+    def door_events(self):
+        """Return newest controller events first for the admin API."""
+        return {
+            "device_id": self.door_service.device_id,
+            "items": self.door_service.events(),
+        }
 
     @staticmethod
     def _display_ascii(value):
@@ -511,6 +592,142 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             self._save_attendance_history()
             self._event_version += 1
 
+    @staticmethod
+    def _door_event_time(event):
+        """Convert a controller timestamp to the same local format as face history."""
+        occurred_at = event.get("occurred_at")
+        try:
+            if isinstance(occurred_at, (int, float)) and occurred_at > 0:
+                return datetime.fromtimestamp(occurred_at).strftime("%H:%M:%S %d/%m/%Y")
+            received_at = str(event.get("received_at") or "").strip()
+            if received_at:
+                return datetime.fromisoformat(received_at).astimezone().strftime(
+                    "%H:%M:%S %d/%m/%Y"
+                )
+        except (OSError, OverflowError, ValueError):
+            pass
+        return datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+
+    def _on_door_event(self, event, show_access=True):
+        """Merge physical-door events into the common access history."""
+        event_id = str(event.get("event_id") or "").strip()
+        event_type = str(event.get("event") or "").strip()
+        if not event_id or event_type not in {
+            "fingerprint_granted", "fingerprint_denied", "button_open"
+        }:
+            return
+
+        with self._lock:
+            if any(row.get("door_event_id") == event_id for row in self.attendance_history):
+                return
+
+        common = {
+            "time": self._door_event_time(event),
+            "source": "fingerprint" if event_type.startswith("fingerprint_") else "button",
+            "door_event_id": event_id,
+        }
+        if event_type == "fingerprint_granted":
+            fingerprint_id = int(event.get("fingerprint_id") or 0)
+            registered = self.door_service.fingerprint(fingerprint_id)
+            if not isinstance(registered, dict):
+                registered = {}
+            employee = self._employee_for_fingerprint(registered, fingerprint_id)
+            record = {
+                **common,
+                "name": employee["name"],
+                "id": employee["id"] if employee["id"] != "—" else f"VT{fingerprint_id:03d}",
+                "role": employee["role"],
+                "dept": employee["department"],
+                "status": "Thành công",
+                "fingerprint_id": fingerprint_id,
+            }
+            access = {
+                "state": "success",
+                "title": "Xác thực thành công",
+                "message": "Đã nhận diện bằng cảm biến vân tay",
+                "employee": employee,
+                "timestamp": common["time"],
+                "method": "fingerprint",
+                "method_label": f"Vân tay · ID #{fingerprint_id}",
+                "access_state": "allowed",
+                "access_label": "Đã cho phép ra vào",
+                "metrics": None,
+            }
+        elif event_type == "fingerprint_denied":
+            record = {
+                **common,
+                "name": "Vân tay không xác định",
+                "id": "—",
+                "role": "Vân tay",
+                "dept": "Cửa chính",
+                "status": "Thất bại",
+                "reason": "Vân tay chưa đăng ký",
+            }
+            access = {
+                "state": "unknown",
+                "title": "Không thể xác thực",
+                "message": "Vân tay chưa được đăng ký trong hệ thống",
+                "employee": None,
+                "timestamp": common["time"],
+                "method": "fingerprint",
+                "method_label": "Vân tay",
+                "access_state": "denied",
+                "access_label": "Không được phép ra vào",
+                "metrics": None,
+            }
+        else:
+            record = {
+                **common,
+                "name": "Nút mở cửa bên trong",
+                "id": "—",
+                "role": "Thiết bị",
+                "dept": "Cửa chính",
+                "status": "Thành công",
+            }
+            access = None
+        if show_access and access is not None:
+            with self._lock:
+                self._fingerprint_access_state = access
+                self._fingerprint_access_until = time.monotonic() + 8.0
+        self._add_attendance_record(record)
+
+    def _sync_door_events_to_attendance_history(self):
+        """Backfill MQTT events saved before the unified history was introduced."""
+        events = self.door_service.events()
+        if not isinstance(events, list):
+            return
+        for event in reversed(events):
+            self._on_door_event(event, show_access=False)
+
+    def fingerprint_management(self):
+        return {
+            "items": self.door_service.fingerprints(),
+            "management": self.door_service.snapshot().get("fingerprint_management"),
+        }
+
+    def enroll_fingerprint(self, payload):
+        result = self.door_service.request_fingerprint_enroll(
+            payload.get("fingerprint_id"),
+            employee_id=payload.get("employee_id", ""),
+            name=payload.get("name", ""),
+        )
+        if not result.get("accepted"):
+            raise ValueError(result.get("reason", "fingerprint_enroll_rejected"))
+        return result
+
+    def delete_fingerprint(self, fingerprint_id):
+        result = self.door_service.request_fingerprint_delete(fingerprint_id)
+        if not result.get("accepted"):
+            raise ValueError(result.get("reason", "fingerprint_delete_rejected"))
+        return result
+
+    def update_fingerprint(self, fingerprint_id, payload):
+        return self.door_service.update_fingerprint_identity(
+            fingerprint_id,
+            payload.get("employee_id", ""),
+            payload.get("name", ""),
+        )
+
     def _on_kiosk_recognition_success(self, emp_info, distance):
         now = datetime.now()
         now_display = now.strftime("%H:%M:%S · %d/%m/%Y")
@@ -542,10 +759,10 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             })
         self.recognition_state = {
             "state": "duplicate" if duplicate else "success",
-            "title": "Đã điểm danh trước đó" if duplicate else "Điểm danh thành công",
+            "title": "Đã xác thực gần đây" if duplicate else "Xác thực thành công",
             "message": (
                 f"Lần gần nhất: {previous[1]}" if duplicate
-                else f"Thời gian vào: {now_display}"
+                else f"Thời gian xác thực: {now_display}"
             ),
             "employee": employee, "timestamp": now_display,
             "metrics": {"distance": round(float(distance), 4)},
@@ -898,26 +1115,72 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         if profiles is None:
             profiles = self._read_profiles()
             self.embeddings_cache = profiles
-        all_total = len(profiles)
-        enabled_total = sum(
-            bool(profile.get("recognition_enabled", True))
-            for profile in profiles.values()
-        )
-        query = query.strip().casefold()
+        fingerprints = self.door_service.fingerprints()
+        fingerprint_groups = {}
+        for item in fingerprints:
+            fingerprint_id = int(item.get("fingerprint_id") or 0)
+            employee_id = str(item.get("employee_id") or "").strip()
+            group_key = employee_id.casefold() if employee_id else f"vt{fingerprint_id:03d}"
+            group = fingerprint_groups.setdefault(group_key, {
+                "employee_id": employee_id,
+                "name": str(item.get("name") or f"Vân tay #{fingerprint_id}"),
+                "ids": [],
+            })
+            group["ids"].append(fingerprint_id)
+
         records = []
         for key, profile in profiles.items():
             emp_id = str(profile.get("id") or key)
             name = str(profile.get("name") or "Nhân viên")
-            if query and query not in emp_id.casefold() and query not in name.casefold():
-                continue
+            fingerprint_group = fingerprint_groups.pop(emp_id.casefold(), None)
+            fingerprint_ids = sorted(fingerprint_group["ids"]) if fingerprint_group else []
+            face_enabled = bool(profile.get("recognition_enabled", True))
             records.append({
                 "id": emp_id, "name": name,
                 "role": profile.get("role") or "Nhân viên",
                 "department": profile.get("department") or profile.get("dept") or "Phòng IT",
-                "recognition_enabled": bool(profile.get("recognition_enabled", True)),
+                "recognition_enabled": face_enabled,
+                "face_registered": True,
+                "fingerprint_registered": bool(fingerprint_ids),
+                "fingerprint_ids": fingerprint_ids,
+                "access_enabled": face_enabled or bool(fingerprint_ids),
                 "image_url": self._employee_image_url(emp_id, profile),
                 "timestamp": profile.get("timestamp"),
             })
+
+        # ID chỉ có vân tay vẫn là một hồ sơ ra vào hợp lệ. Nếu chưa được gắn
+        # mã nhân viên, dùng mã VTxxx để người quản trị có thể nhận biết và sửa.
+        for group in fingerprint_groups.values():
+            fingerprint_ids = sorted(group["ids"])
+            emp_id = group["employee_id"] or f"VT{fingerprint_ids[0]:03d}"
+            records.append({
+                "id": emp_id,
+                "name": group["name"],
+                "role": "Nhân viên",
+                "department": "—",
+                "recognition_enabled": False,
+                "face_registered": False,
+                "fingerprint_registered": True,
+                "fingerprint_ids": fingerprint_ids,
+                "access_enabled": True,
+                "image_url": None,
+                "timestamp": None,
+            })
+
+        all_total = len(records)
+        enabled_total = sum(bool(item["access_enabled"]) for item in records)
+        face_total = sum(bool(item["face_registered"]) for item in records)
+        fingerprint_total = sum(bool(item["fingerprint_registered"]) for item in records)
+        both_total = sum(
+            bool(item["face_registered"] and item["fingerprint_registered"])
+            for item in records
+        )
+        query = query.strip().casefold()
+        if query:
+            records = [
+                item for item in records
+                if query in item["id"].casefold() or query in item["name"].casefold()
+            ]
         def alphabetical_key(value):
             normalized = unicodedata.normalize("NFKD", str(value).casefold())
             normalized = normalized.replace("đ", "d")
@@ -927,7 +1190,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
 
         # Ưu tiên hồ sơ đang nhận diện; trong từng nhóm sắp tên A-Z.
         records.sort(key=lambda item: (
-            not item["recognition_enabled"],
+            not item["access_enabled"],
             alphabetical_key(item["name"]),
             alphabetical_key(item["id"]),
         ))
@@ -941,6 +1204,9 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             "total": total,
             "all_total": all_total,
             "enabled_total": enabled_total,
+            "face_total": face_total,
+            "fingerprint_total": fingerprint_total,
+            "both_total": both_total,
             "page": page,
             "page_size": page_size,
             "pages": pages,
@@ -998,6 +1264,16 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             profile.update({"id": new_id, "name": name, "role": role, "department": department, "image_path": str(Path(DATA_FACES_DIR) / filename)})
             profiles[new_id] = profile
             self._write_profiles(profiles)
+        # Giữ liên kết sinh trắc học đồng nhất khi đổi mã hoặc tên nhân viên.
+        # Đây chỉ cập nhật bản ánh xạ trên server; mẫu vân tay trong AS608 không đổi.
+        for fingerprint in self.door_service.fingerprints():
+            linked_id = str(fingerprint.get("employee_id") or "").strip()
+            if not linked_id:
+                linked_id = f"VT{int(fingerprint['fingerprint_id']):03d}"
+            if linked_id.casefold() == emp_id.casefold():
+                self.door_service.update_fingerprint_identity(
+                    int(fingerprint["fingerprint_id"]), new_id, name
+                )
         self._publish()
         return self.list_employees(query=new_id, page=1, page_size=1)["items"][0]
 

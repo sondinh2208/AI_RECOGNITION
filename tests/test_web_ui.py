@@ -16,6 +16,7 @@ import numpy as np
 
 os.environ["FACECHECK_WEB_SKIP_AI"] = "1"
 os.environ["FACECHECK_DISPLAY_TOKEN"] = "test-display-token"
+os.environ["FACECHECK_ADMIN_TOKEN"] = "test-admin-token"
 
 from web_backend.app import app, display_app  # noqa: E402
 from web_runtime import WebFaceCheckRuntime  # noqa: E402
@@ -126,7 +127,7 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/")
         self.assertEqual(response.status_code, 200)
         html = response.text
-        for page in ("dashboard", "enrollment", "recognition", "employees", "history"):
+        for page in ("dashboard", "enrollment", "recognition", "employees", "fingerprints", "history"):
             self.assertIn(f'data-page="{page}"', html)
         self.assertEqual(html.count('id="cameraSurface"'), 1)
         self.assertIn('id="openLiveCamera"', html)
@@ -135,9 +136,14 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('type="module" src="/js/app.js"', html)
         self.assertIn('/css/kiosk.css', html)
         self.assertIn('id="startEnrollmentScan"', html)
+        self.assertIn('id="monitorDoorState"', html)
+        self.assertIn('id="monitorFingerprintState"', html)
+        self.assertIn('id="monitorDoorEvent"', html)
 
     async def test_read_only_api_contracts(self):
         state = (await self.client.get("/api/state")).json()
+        self.assertIn("access", state)
+        self.assertIn("access_label", state["access"])
         self.assertIn(state["recognition"]["state"], {
             "idle", "validating", "recognizing", "strict_confirmation",
             "success", "duplicate", "ambiguous", "unknown", "error",
@@ -147,6 +153,11 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sample_target", state["enrollment"])
         self.assertIn("brightness", state["camera"])
         self.assertIn("light_ok", state["camera"])
+        self.assertIn("fingerprint_sensor_state", state["door"])
+
+        door_events = (await self.client.get("/api/door/events")).json()
+        self.assertEqual(door_events["device_id"], "door-01")
+        self.assertIsInstance(door_events["items"], list)
 
         forbidden = await self.display_client.get("/frame.jpg")
         self.assertEqual(forbidden.status_code, 403)
@@ -161,15 +172,73 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(employees["items"]), 2)
         self.assertIn("enabled_total", employees)
         for employee in employees["items"]:
-            self.assertIn("?v=", employee["image_url"])
-            image_response = await self.client.get(employee["image_url"])
-            if image_response.status_code == 200:
-                self.assertIn("no-store", image_response.headers["cache-control"])
+            if employee["image_url"]:
+                self.assertIn("?v=", employee["image_url"])
+                image_response = await self.client.get(employee["image_url"])
+                if image_response.status_code == 200:
+                    self.assertIn("no-store", image_response.headers["cache-control"])
+            else:
+                self.assertFalse(employee["face_registered"])
 
         history = (await self.client.get(
             "/api/attendance", params={"page": 1, "page_size": 5}
         )).json()
         self.assertLessEqual(len(history["items"]), 5)
+
+    async def test_fingerprint_admin_api_requires_token(self):
+        unauthorized = await self.client.get("/api/admin/fingerprints")
+        self.assertEqual(unauthorized.status_code, 401)
+
+        authorized = await self.client.get(
+            "/api/admin/fingerprints",
+            headers={"x-facecheck-admin-token": "test-admin-token"},
+        )
+        self.assertEqual(authorized.status_code, 200)
+        self.assertIn("items", authorized.json())
+
+    async def test_fingerprint_delete_requires_matching_confirmation_id(self):
+        headers = {
+            "x-facecheck-admin-token": "test-admin-token",
+            "content-type": "application/json",
+        }
+        with patch(
+            "web_backend.app.runtime.door_service.fingerprint",
+            return_value={"fingerprint_id": 12},
+        ), patch(
+            "web_backend.app.runtime.delete_fingerprint",
+            return_value={"accepted": True, "command_id": "fp-test"},
+        ) as delete:
+            rejected = await self.client.request(
+                "DELETE", "/api/admin/fingerprints/12",
+                headers=headers, json={"confirmation_id": "11"},
+            )
+            accepted = await self.client.request(
+                "DELETE", "/api/admin/fingerprints/12",
+                headers=headers, json={"confirmation_id": "12"},
+            )
+
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(accepted.status_code, 202)
+        delete.assert_called_once_with(12)
+
+    async def test_fingerprint_identity_update_requires_admin_token(self):
+        payload = {"employee_id": "NV002", "name": "Nguyen Van B"}
+        unauthorized = await self.client.put(
+            "/api/admin/fingerprints/2", json=payload
+        )
+        self.assertEqual(unauthorized.status_code, 401)
+
+        with patch(
+            "web_backend.app.runtime.update_fingerprint",
+            return_value={"fingerprint_id": 2, **payload},
+        ) as update:
+            authorized = await self.client.put(
+                "/api/admin/fingerprints/2",
+                headers={"x-facecheck-admin-token": "test-admin-token"},
+                json=payload,
+            )
+        self.assertEqual(authorized.status_code, 200)
+        update.assert_called_once_with(2, payload)
 
     async def test_frontend_contains_no_ai_decision_parameters(self):
         response = await self.client.get("/js/app.js")
@@ -190,8 +259,104 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    async def test_recent_history_does_not_mark_full_history_cache_fresh(self):
+        source = (await self.client.get("/js/app.js")).text
+        start = source.index("async function loadRecent()")
+        end = source.index("\n}\n", start) + 2
+        load_recent = source[start:end]
+        self.assertNotIn("store.history.stale = false", load_recent)
+
+    async def test_fingerprint_enrollment_form_is_cleared_after_finished_ack(self):
+        html = (await self.client.get("/")).text
+        source = (await self.client.get("/js/app.js")).text
+        self.assertIn('id="fingerprintEnrollForm" autocomplete="off"', html)
+        self.assertIn("function clearFingerprintEnrollForm()", source)
+        self.assertIn('management.command === "FINGERPRINT_ENROLL"', source)
+        self.assertIn("clearFingerprintEnrollForm();", source)
+
+    async def test_ui_language_matches_access_management_product(self):
+        html = (await self.client.get("/")).text
+        router = (await self.client.get("/js/router.js")).text
+        source = (await self.client.get("/js/app.js")).text
+
+        self.assertIn(
+            "Hệ thống quản lý ra vào tích hợp nhận diện khuôn mặt và cảm biến vân tay",
+            html,
+        )
+        self.assertIn(">Giám sát cửa<", html)
+        self.assertIn(">Đăng ký khuôn mặt<", html)
+        self.assertIn(">Nhật ký xác thực<", html)
+        self.assertIn('recognition: ["Giám sát cửa"', router)
+        self.assertIn('$("#testRecognitionImage").hidden = !debugView', source)
+        self.assertNotIn("Cửa đang đóng", html)
+        self.assertNotIn("Đã mở cửa", html)
+
+    async def test_idle_state_does_not_claim_physical_door_position(self):
+        state = (await self.client.get("/api/state")).json()
+        self.assertEqual(state["recognition"]["title"], "Chờ xác thực")
+        self.assertNotIn("đóng", state["recognition"]["title"].casefold())
+
 
 class RuntimeLifecycleTests(unittest.TestCase):
+    def test_access_state_waits_for_face_or_fingerprint(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+
+        access = runtime.snapshot()["access"]
+
+        self.assertEqual(access["state"], "idle")
+        self.assertEqual(access["method_label"], "Khuôn mặt hoặc vân tay")
+        self.assertEqual(access["access_label"], "Sẵn sàng xác thực")
+
+    def test_fingerprint_granted_becomes_shared_access_result(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.embeddings_cache = {
+            "NV001": {
+                "id": "NV001", "name": "Đinh Sơn", "role": "Kỹ sư",
+                "department": "AI",
+            }
+        }
+        runtime.door_service.fingerprint = Mock(return_value={
+            "fingerprint_id": 2, "employee_id": "NV001", "name": "Đinh Sơn",
+        })
+        runtime._add_attendance_record = Mock()
+
+        runtime._on_door_event({
+            "event_id": "fp-granted-1", "event": "fingerprint_granted",
+            "fingerprint_id": 2,
+        })
+        access = runtime.snapshot()["access"]
+
+        self.assertEqual(access["state"], "success")
+        self.assertEqual(access["method"], "fingerprint")
+        self.assertEqual(access["method_label"], "Vân tay · ID #2")
+        self.assertEqual(access["access_label"], "Đã cho phép ra vào")
+        self.assertEqual(access["employee"]["id"], "NV001")
+        self.assertEqual(access["employee"]["role"], "Kỹ sư")
+
+    def test_fingerprint_denied_never_grants_access(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime._add_attendance_record = Mock()
+
+        runtime._on_door_event({
+            "event_id": "fp-denied-1", "event": "fingerprint_denied",
+        })
+        access = runtime.snapshot()["access"]
+
+        self.assertEqual(access["state"], "unknown")
+        self.assertEqual(access["method"], "fingerprint")
+        self.assertEqual(access["access_label"], "Không được phép ra vào")
+        self.assertIsNone(access["employee"])
+
+    def test_expired_fingerprint_result_returns_to_face_state(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime._fingerprint_access_state = {"state": "success"}
+        runtime._fingerprint_access_until = 0.0
+
+        access = runtime.snapshot()["access"]
+
+        self.assertEqual(access["state"], "idle")
+        self.assertEqual(access["method_label"], "Khuôn mặt hoặc vân tay")
+
     def test_employee_list_prioritizes_enabled_then_sorts_name_a_to_z(self):
         runtime = WebFaceCheckRuntime(load_ai=False)
         runtime.embeddings_cache = {
@@ -207,6 +372,42 @@ class RuntimeLifecycleTests(unittest.TestCase):
             [(item["name"], item["recognition_enabled"]) for item in data["items"]],
             [("Ánh", True), ("Bình", True), ("An", False), ("Đặng An", False)],
         )
+
+    def test_employee_list_merges_face_and_fingerprint_credentials(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.embeddings_cache = {
+            "NV001": {
+                "id": "NV001", "name": "Đinh Sơn", "role": "Kỹ sư",
+                "department": "AI", "recognition_enabled": True,
+            }
+        }
+        runtime.door_service.fingerprints = Mock(return_value=[
+            {"fingerprint_id": 2, "employee_id": "NV001", "name": "Đinh Sơn"},
+        ])
+
+        data = runtime.list_employees(page=1, page_size=10)
+
+        self.assertEqual(data["all_total"], 1)
+        self.assertEqual(data["face_total"], 1)
+        self.assertEqual(data["fingerprint_total"], 1)
+        self.assertEqual(data["both_total"], 1)
+        self.assertTrue(data["items"][0]["face_registered"])
+        self.assertEqual(data["items"][0]["fingerprint_ids"], [2])
+
+    def test_employee_list_includes_fingerprint_only_identity(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.embeddings_cache = {}
+        runtime.door_service.fingerprints = Mock(return_value=[
+            {"fingerprint_id": 7, "employee_id": "NV007", "name": "Nguyễn Văn A"},
+        ])
+
+        data = runtime.list_employees(page=1, page_size=10)
+
+        self.assertEqual(data["all_total"], 1)
+        self.assertEqual(data["items"][0]["id"], "NV007")
+        self.assertFalse(data["items"][0]["face_registered"])
+        self.assertTrue(data["items"][0]["fingerprint_registered"])
+        self.assertTrue(data["items"][0]["access_enabled"])
 
     def test_one_hundred_employees_use_ten_pages_at_ten_per_page(self):
         runtime = WebFaceCheckRuntime(load_ai=False)

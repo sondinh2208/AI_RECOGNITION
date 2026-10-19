@@ -126,3 +126,25 @@ void showSensorErrorScreen() {
     display.println(F("Kiem tra day UART"));
     display.display();
 }
+
+void showFingerprintManagementScreen(DisplayMsgType type, int id) {
+    if (!displayReady) return;
+
+    display.clearDisplay();
+    display.drawRoundRect(0, 0, 128, 64, 4, SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(18, 8);
+    if (type == DISP_FP_ENROLL) display.println(F("DANG KY VAN TAY"));
+    else if (type == DISP_FP_SAVED) display.println(F("DA LUU VAN TAY"));
+    else if (type == DISP_FP_DELETED) display.println(F("DA XOA VAN TAY"));
+    else display.println(F("THAO TAC THAT BAI"));
+    display.drawFastHLine(8, 20, 112, SSD1306_WHITE);
+    display.setCursor(38, 28);
+    display.print(F("ID #"));
+    display.println(id);
+    display.setCursor(12, 45);
+    if (type == DISP_FP_ENROLL) display.println(F("DAT-NHAC-DAT LAI"));
+    else if (type == DISP_FP_FAILED) display.println(F("VUI LONG THU LAI"));
+    else display.println(F("HOAN TAT"));
+    display.display();
+}
