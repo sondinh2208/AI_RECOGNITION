@@ -38,6 +38,9 @@ constexpr uint32_t kOrange = 0xF79009;
 constexpr uint32_t kMuted = 0x98A2B3;
 constexpr uint32_t kTargetDisplayFps = 5;
 constexpr uint32_t kFrameFetchIntervalMs = 1000 / kTargetDisplayFps;
+constexpr uint16_t kFrameConnectTimeoutMs = 300;
+constexpr uint16_t kFrameReadTimeoutMs = 350;
+constexpr UBaseType_t kFrameFetchTaskPriority = 2;
 // FPS co the giam tam thoi khi laptop dang xu ly AI. Khi do chi khoi tao lai
 // HTTP, khong xoa TFT hay ngat Wi-Fi vi khung hinh cu van con hop le de hien thi.
 constexpr uint32_t kFrameTransportRecoveryMs = 6000;
@@ -145,10 +148,23 @@ uint32_t maxDrawMs = 0;
 volatile uint32_t droppedFrameCount = 0;
 volatile uint32_t fetchFailureCount = 0;
 volatile uint32_t fetchRetryCount = 0;
+volatile uint32_t fetchLockErrorCount = 0;
+volatile uint32_t fetchWifiErrorCount = 0;
+volatile uint32_t fetchBeginErrorCount = 0;
+volatile uint32_t fetchHttpErrorCount = 0;
+volatile uint32_t fetchLengthErrorCount = 0;
+volatile uint32_t fetchReadErrorCount = 0;
+volatile int lastFetchHttpCode = 0;
 volatile bool wifiTransportChanged = false;
 uint32_t reportedDroppedFrames = 0;
 uint32_t reportedFetchFailures = 0;
 uint32_t reportedFetchRetries = 0;
+uint32_t reportedFetchLockErrors = 0;
+uint32_t reportedFetchWifiErrors = 0;
+uint32_t reportedFetchBeginErrors = 0;
+uint32_t reportedFetchHttpErrors = 0;
+uint32_t reportedFetchLengthErrors = 0;
+uint32_t reportedFetchReadErrors = 0;
 
 // Backend gioi han JPEG TFT duoi 16 KB. Hai slot 20 KB giu nguyen chat luong
 // nhung tong RAM buffer van bang mot slot 40 KB cua firmware cu.
@@ -350,9 +366,11 @@ void copyHeader(char* destination, size_t capacity, const String& value) {
 bool fetchFrame(uint8_t slotIndex) {
   if (frameHttpMutex == nullptr ||
       xSemaphoreTake(frameHttpMutex, pdMS_TO_TICKS(1500)) != pdTRUE) {
+    ++fetchLockErrorCount;
     return false;
   }
   if (WiFi.status() != WL_CONNECTED) {
+    ++fetchWifiErrorCount;
     xSemaphoreGive(frameHttpMutex);
     return false;
   }
@@ -360,13 +378,14 @@ bool fetchFrame(uint8_t slotIndex) {
   FrameSlot& slot = s_frameSlots[slotIndex];
   const uint32_t requestStarted = millis();
   if (!frameHttpReady) {
-    // LAN binh thuong chi 50-70 ms. Khong de mot request hong khoa pipeline
-    // 1.2 giay va lam mat 5-6 frame lien tiep.
-    frameHttp.setConnectTimeout(150);
-    frameHttp.setTimeout(150);
+    // LAN binh thuong chi 30-70 ms, nhung drawJpg chiem khoang 85 ms tren
+    // Core 1 va Wi-Fi co the dao dong ngan. 150 ms tao timeout gia; 300/350 ms
+    // van phuc hoi nhanh nhung du khoang du phong cho mot lan truyen cham.
+    frameHttp.setConnectTimeout(kFrameConnectTimeoutMs);
+    frameHttp.setTimeout(kFrameReadTimeoutMs);
     frameHttp.setReuse(true);
     frameClient.setNoDelay(true);
-    frameClient.setTimeout(150);
+    frameClient.setTimeout(kFrameReadTimeoutMs);
     static const char* headerKeys[] = {
         "X-FaceCheck-Mode", "X-FaceCheck-State", "X-FaceCheck-Title",
         "X-FaceCheck-Name", "X-FaceCheck-Employee", "X-FaceCheck-Fps",
@@ -374,6 +393,7 @@ bool fetchFrame(uint8_t slotIndex) {
         "X-FaceCheck-Sample-Target"};
     frameHttp.collectHeaders(headerKeys, sizeof(headerKeys) / sizeof(headerKeys[0]));
     if (!frameHttp.begin(frameClient, facecheckServer + "/frame.jpg")) {
+      ++fetchBeginErrorCount;
       xSemaphoreGive(frameHttpMutex);
       return false;
     }
@@ -383,6 +403,8 @@ bool fetchFrame(uint8_t slotIndex) {
   frameHttp.addHeader("X-FaceCheck-Token", FACECHECK_DISPLAY_TOKEN);
   const int code = frameHttp.GET();
   if (code != HTTP_CODE_OK) {
+    ++fetchHttpErrorCount;
+    lastFetchHttpCode = code;
     frameHttp.end();
     frameClient.stop();
     frameHttpReady = false;
@@ -405,6 +427,7 @@ bool fetchFrame(uint8_t slotIndex) {
   const uint32_t headersReceived = millis();
   if (stream == nullptr || length <= 0 ||
       static_cast<size_t>(length) > sizeof(slot.jpeg)) {
+    ++fetchLengthErrorCount;
     frameHttp.end();
     frameClient.stop();
     frameHttpReady = false;
@@ -412,9 +435,33 @@ bool fetchFrame(uint8_t slotIndex) {
     return false;
   }
 
-  const size_t received = stream->readBytes(slot.jpeg, length);
+  // Khong dung mot lenh readBytes() cho toan bo JPEG. Tren ESP32, TCP co the
+  // chia phan duoi cua anh sang segment ke tiep; readBytes() thinh thoang tra
+  // ve som lam mat frame du HTTP va Wi-Fi van con ket noi. Doc tung phan va
+  // chi tinh timeout khi khong co byte moi giup giu nguyen ket noi keep-alive.
+  size_t received = 0;
+  uint32_t lastReadProgress = millis();
+  while (received < static_cast<size_t>(length)) {
+    const int available = stream->available();
+    if (available > 0) {
+      const size_t remaining = static_cast<size_t>(length) - received;
+      const size_t chunkSize = min(remaining, static_cast<size_t>(available));
+      const int chunkRead = stream->read(slot.jpeg + received, chunkSize);
+      if (chunkRead > 0) {
+        received += static_cast<size_t>(chunkRead);
+        lastReadProgress = millis();
+        continue;
+      }
+    }
+    if (!stream->connected() ||
+        millis() - lastReadProgress >= kFrameReadTimeoutMs) {
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
   const uint32_t jpegReceived = millis();
   if (received != static_cast<size_t>(length)) {
+    ++fetchReadErrorCount;
     // Byte thieu lam HTTP keep-alive lech frame; tao lai socket o lan sau.
     frameHttp.end();
     frameClient.stop();
@@ -548,9 +595,15 @@ bool drawFrame(uint8_t slotIndex) {
       const uint32_t dropped = droppedFrameCount - reportedDroppedFrames;
       const uint32_t failures = fetchFailureCount - reportedFetchFailures;
       const uint32_t retries = fetchRetryCount - reportedFetchRetries;
+      const uint32_t lockErrors = fetchLockErrorCount - reportedFetchLockErrors;
+      const uint32_t wifiErrors = fetchWifiErrorCount - reportedFetchWifiErrors;
+      const uint32_t beginErrors = fetchBeginErrorCount - reportedFetchBeginErrors;
+      const uint32_t httpErrors = fetchHttpErrorCount - reportedFetchHttpErrors;
+      const uint32_t lengthErrors = fetchLengthErrorCount - reportedFetchLengthErrors;
+      const uint32_t readErrors = fetchReadErrorCount - reportedFetchReadErrors;
       Serial.printf("[DISPLAY] FPS=%.1f | HTTP=%lu/%lu ms | READ=%lu/%lu ms | "
                     "DRAW=%lu/%lu ms | DROP=%lu | RETRY=%lu | FAIL=%lu | "
-                    "RSSI=%d | JPEG=%u B\n",
+                    "ERR=%lu/%lu/%lu/%lu/%lu/%lu(%d) | RSSI=%d | JPEG=%u B\n",
                     renderedFps,
                     totalHeaderMs / renderedFrameCount,
                     maxHeaderMs,
@@ -558,11 +611,19 @@ bool drawFrame(uint8_t slotIndex) {
                     maxReadMs,
                     totalDrawMs / renderedFrameCount,
                     maxDrawMs,
-                    dropped, retries, failures, WiFi.RSSI(),
+                    dropped, retries, failures,
+                    lockErrors, wifiErrors, beginErrors, httpErrors,
+                    lengthErrors, readErrors, lastFetchHttpCode, WiFi.RSSI(),
                     static_cast<unsigned int>(slot.length));
       reportedDroppedFrames = droppedFrameCount;
       reportedFetchFailures = fetchFailureCount;
       reportedFetchRetries = fetchRetryCount;
+      reportedFetchLockErrors = fetchLockErrorCount;
+      reportedFetchWifiErrors = fetchWifiErrorCount;
+      reportedFetchBeginErrors = fetchBeginErrorCount;
+      reportedFetchHttpErrors = fetchHttpErrorCount;
+      reportedFetchLengthErrors = fetchLengthErrorCount;
+      reportedFetchReadErrors = fetchReadErrorCount;
       renderedFrameCount = 0;
       totalHeaderMs = 0;
       totalReadMs = 0;
@@ -644,7 +705,10 @@ void setup() {
   const BaseType_t taskCreated = xTaskCreatePinnedToCore(
       // Wi-Fi/TCP cua ESP-IDF da chay tren Core 0. Dat HTTPClient len Core 0
       // co the khoa IDLE0 khi socket gap loi, nen pipeline ung dung o Core 1.
-      frameFetchTask, "tft_fetch", 6144, nullptr, 1,
+      // Uu tien 2 de viec doc TCP khong bi drawJpg (loopTask priority 1)
+      // giu Core 1 qua lau. Task nay phan lon thoi gian block/delay nen khong
+      // lam doi cac task he thong Wi-Fi tren Core 0.
+      frameFetchTask, "tft_fetch", 6144, nullptr, kFrameFetchTaskPriority,
       &frameFetchTaskHandle, 1);
   if (taskCreated != pdPASS) {
     frameFetchTaskHandle = nullptr;
