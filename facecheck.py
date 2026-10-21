@@ -32,8 +32,6 @@ ROOT = Path(__file__).resolve().parent
 ADMIN_HEALTH_URL = "http://127.0.0.1:8765/api/health"
 USB_HEALTH_URL = "http://127.0.0.1:8766/health"
 USB_STREAM_URL = "http://127.0.0.1:8766/stream"
-WS_CAMERA_HEALTH_URL = "http://127.0.0.1:8769/health"
-WS_CAMERA_STREAM_URL = "http://127.0.0.1:8769/stream"
 DEFAULT_CAMERA_HOST = "facecheck-cam.local"
 MINIMUM_DISPLAY_FPS = 5.0
 DISPLAY_PORT = 8767
@@ -247,38 +245,6 @@ def start_usb_bridge(port: str | None = None) -> subprocess.Popen | None:
         time.sleep(0.5)
     bridge.terminate()
     raise RuntimeError("Không nhận được camera USB sau 15 giây.")
-
-
-def start_wifi_bridge(environment: dict[str, str]) -> subprocess.Popen | None:
-    status = service_health(WS_CAMERA_HEALTH_URL)
-    if status and status.get("service") == "FaceCheck WebSocket Camera":
-        print("[WS-CAMERA] Tai su dung cau WebSocket dang chay.")
-        return None
-
-    token = environment.get("FACECHECK_CAMERA_TOKEN", "").strip()
-    if not token:
-        raise RuntimeError("FACECHECK_CAMERA_TOKEN chua duoc cau hinh trong .env")
-    command = [sys.executable, "-u", str(ROOT / "tools" / "ws_camera_bridge.py")]
-    bridge = subprocess.Popen(command, cwd=ROOT, env=environment)
-    for _ in range(30):
-        if bridge.poll() is not None:
-            raise RuntimeError("Cau WebSocket camera da dung bat thuong.")
-        status = service_health(WS_CAMERA_HEALTH_URL)
-        if status and status.get("service") == "FaceCheck WebSocket Camera":
-            return bridge
-        time.sleep(0.2)
-    bridge.terminate()
-    raise RuntimeError("Khong mo duoc WebSocket camera server tai cong 8768.")
-
-
-def wait_for_wifi_frames(timeout: float = 30.0) -> dict | None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        status = service_health(WS_CAMERA_HEALTH_URL)
-        if status and status.get("ok"):
-            return status
-        time.sleep(0.25)
-    return None
 
 
 def configure_wifi_camera(

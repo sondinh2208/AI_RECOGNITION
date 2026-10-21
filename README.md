@@ -283,9 +283,6 @@ FACECHECK_CAMERA_FLIP=1
 # Địa chỉ LAN của laptop để TFT truy cập, ví dụ 192.168.1.11
 FACECHECK_DISPLAY_HOST=192.168.1.11
 FACECHECK_DISPLAY_TOKEN=THAY_BANG_TOKEN_DAI_NGAU_NHIEN
-# Dùng cho WebSocket camera bridge thử nghiệm
-FACECHECK_CAMERA_TOKEN=THAY_BANG_TOKEN_CAMERA_KHAC
-
 # Điều khiển cửa ESP32-S3 qua HiveMQ Cloud
 MQTT_HOST=THAY_BANG_HOST_HIVEMQ
 MQTT_PORT=8883
@@ -405,8 +402,6 @@ python facecheck.py wifi --simulate-display
 - `127.0.0.1:8765`: backend, Admin UI, Kiosk UI, REST, WebSocket state và camera stream. Chỉ truy cập cục bộ.
 - `0.0.0.0:8767`: API ảnh/trạng thái chỉ đọc cho TFT. Yêu cầu header `X-FaceCheck-Token` và nên chỉ cho phép trong LAN tin cậy.
 - `127.0.0.1:8766`: USB camera bridge khi chạy mode `usb`.
-- `0.0.0.0:8768`: đầu vào WebSocket của camera bridge thử nghiệm.
-- `127.0.0.1:8769`: MJPEG đầu ra nội bộ của WebSocket/MQTT camera bridge.
 - `<ESP32-IP>:80`: trang chẩn đoán, `/health`, `/capture` của camera Wi-Fi.
 - `<ESP32-IP>:81`: MJPEG `/stream` của camera Wi-Fi.
 
@@ -479,7 +474,7 @@ Server chỉ phát một lệnh tại một thời điểm. Sau khi hoàn tất,
 4. Theo dõi serial ở 115200 baud.
 5. Kiểm tra `/health`, `/capture` và stream cổng `81`.
 
-Firmware hiện ưu tiên mô hình laptop kéo MJPEG trực tiếp; code WebSocket push vẫn còn để thử nghiệm nhưng `kWebSocketPushEnabled = false`.
+Firmware dùng mô hình laptop kéo MJPEG trực tiếp qua cổng 81.
 
 ### Camera USB — `firmware/esp32_s3_ov3660_usb`
 
@@ -509,8 +504,6 @@ Mỗi thư mục firmware có README riêng với hướng dẫn phần cứng c
 ## 17. Công cụ hỗ trợ
 
 - `tools/usb_camera_bridge.py`: serial JPEG → MJPEG local cho mode USB.
-- `tools/ws_camera_bridge.py`: nhận binary JPEG từ ESP32 qua WebSocket có token → MJPEG local.
-- `tools/mqtt_camera_bridge.py`: MQTT JPEG → MJPEG local; cần cài thêm client MQTT tương ứng nếu sử dụng.
 - `tools/mqtt_door_monitor.py`: theo dõi heartbeat/status của bộ điều khiển cửa.
 - `tools/mqtt_door_ping.py`: kiểm tra MQTT hai chiều mà không kích relay.
 - `tools/mqtt_door_open.py`: gửi `OPEN` thủ công, bắt buộc có `--confirm-open`.
@@ -546,7 +539,7 @@ python -m unittest discover -s tests -v
 
 Bộ test hiện kiểm tra các nhóm chính:
 
-- camera capture/latest frame và bridge WebSocket;
+- camera capture/latest frame;
 - launcher, dò camera Wi-Fi và chọn nguồn camera;
 - API/UI smoke test và vòng đời single-instance;
 - chính sách nhận diện nhiều frame, centroid và chống spike nhiễu;

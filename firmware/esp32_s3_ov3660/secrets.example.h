@@ -13,5 +13,3 @@
 
 // IPv4 cua may tinh chay facecheck.py tren cung mang LAN.
 #define FACECHECK_SERVER_HOST "192.168.1.11"
-#define FACECHECK_WS_PORT 8768
-#define FACECHECK_CAMERA_TOKEN "TAO_TOKEN_NGAU_NHIEN_O_DAY"

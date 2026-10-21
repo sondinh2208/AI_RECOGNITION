@@ -15,6 +15,7 @@ logs/
 *.log
 
 # Local browser/build artifacts
+artifacts/*.zip
 /.codex-build/
 /.codex-output/
 /.codex-history-inspect/
@@ -31,6 +32,7 @@ models/
 .vscode/
 .idea/
 .pio/
+compile_commands.json
 *.swp
 *.swo
 
