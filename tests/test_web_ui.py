@@ -16,7 +16,6 @@ import numpy as np
 
 os.environ["FACECHECK_WEB_SKIP_AI"] = "1"
 os.environ["FACECHECK_DISPLAY_TOKEN"] = "test-display-token"
-os.environ["FACECHECK_ADMIN_TOKEN"] = "test-admin-token"
 
 from web_backend.app import app, display_app  # noqa: E402
 from web_runtime import WebFaceCheckRuntime  # noqa: E402
@@ -138,7 +137,11 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="startEnrollmentScan"', html)
         self.assertIn('id="monitorDoorState"', html)
         self.assertIn('id="monitorFingerprintState"', html)
-        self.assertIn('id="monitorDoorEvent"', html)
+        self.assertNotIn('id="monitorDoorEvent"', html)
+        self.assertNotIn("Camera trực tiếp đang hiển thị tại kiosk", html)
+        self.assertNotIn("Sự kiện bộ điều khiển gần nhất", html)
+        self.assertIn('class="fingerprint-guide"', html)
+        self.assertIn('id="fingerprintPagination"', html)
 
     async def test_read_only_api_contracts(self):
         state = (await self.client.get("/api/state")).json()
@@ -185,22 +188,13 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         )).json()
         self.assertLessEqual(len(history["items"]), 5)
 
-    async def test_fingerprint_admin_api_requires_token(self):
-        unauthorized = await self.client.get("/api/admin/fingerprints")
-        self.assertEqual(unauthorized.status_code, 401)
-
-        authorized = await self.client.get(
-            "/api/admin/fingerprints",
-            headers={"x-facecheck-admin-token": "test-admin-token"},
-        )
-        self.assertEqual(authorized.status_code, 200)
-        self.assertIn("items", authorized.json())
+    async def test_fingerprint_management_is_available_on_local_admin_server(self):
+        response = await self.client.get("/api/admin/fingerprints")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("items", response.json())
 
     async def test_fingerprint_delete_requires_matching_confirmation_id(self):
-        headers = {
-            "x-facecheck-admin-token": "test-admin-token",
-            "content-type": "application/json",
-        }
+        headers = {"content-type": "application/json"}
         with patch(
             "web_backend.app.runtime.door_service.fingerprint",
             return_value={"fingerprint_id": 12},
@@ -221,23 +215,17 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(accepted.status_code, 202)
         delete.assert_called_once_with(12)
 
-    async def test_fingerprint_identity_update_requires_admin_token(self):
+    async def test_fingerprint_identity_update_is_available_locally(self):
         payload = {"employee_id": "NV002", "name": "Nguyen Van B"}
-        unauthorized = await self.client.put(
-            "/api/admin/fingerprints/2", json=payload
-        )
-        self.assertEqual(unauthorized.status_code, 401)
-
         with patch(
             "web_backend.app.runtime.update_fingerprint",
             return_value={"fingerprint_id": 2, **payload},
         ) as update:
-            authorized = await self.client.put(
+            response = await self.client.put(
                 "/api/admin/fingerprints/2",
-                headers={"x-facecheck-admin-token": "test-admin-token"},
                 json=payload,
             )
-        self.assertEqual(authorized.status_code, 200)
+        self.assertEqual(response.status_code, 200)
         update.assert_called_once_with(2, payload)
 
     async def test_frontend_contains_no_ai_decision_parameters(self):
@@ -252,7 +240,8 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
             source,
         )
         self.assertNotIn('else if (!simulatedAdminView', source)
-        self.assertIn('$("#enrollmentForm").reset()', source)
+        self.assertIn("function clearFaceEnrollmentForm()", source)
+        self.assertIn("form.reset()", source)
         for forbidden in (
             "ARCFACE_THRESHOLD", "ARCFACE_TOP2_MARGIN",
             "ARCFACE_UNCERTAIN_THRESHOLD", "classify_recognition_score",
@@ -273,6 +262,15 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("function clearFingerprintEnrollForm()", source)
         self.assertIn('management.command === "FINGERPRINT_ENROLL"', source)
         self.assertIn("clearFingerprintEnrollForm();", source)
+
+    async def test_fingerprint_ack_refreshes_data_from_every_admin_page(self):
+        source = (await self.client.get("/js/app.js")).text
+        self.assertIn(
+            'if (!kioskView) renderFingerprintState(state.door || {});', source,
+        )
+        self.assertNotIn(
+            'if (store.route === "fingerprints") renderFingerprintState', source,
+        )
 
     async def test_ui_language_matches_access_management_product(self):
         html = (await self.client.get("/")).text
@@ -359,6 +357,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
 
     def test_employee_list_prioritizes_enabled_then_sorts_name_a_to_z(self):
         runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.door_service.fingerprints = Mock(return_value=[])
         runtime.embeddings_cache = {
             "NV004": {"id": "NV004", "name": "Đặng An", "recognition_enabled": False},
             "NV003": {"id": "NV003", "name": "Bình", "recognition_enabled": True},
@@ -372,6 +371,22 @@ class RuntimeLifecycleTests(unittest.TestCase):
             [(item["name"], item["recognition_enabled"]) for item in data["items"]],
             [("Ánh", True), ("Bình", True), ("An", False), ("Đặng An", False)],
         )
+
+    def test_employee_list_excludes_benchmark_profiles(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.embeddings_cache = {
+            "NV001": {"id": "NV001", "name": "Đinh Sơn"},
+            "LFW001": {
+                "id": "LFW001", "name": "Benchmark",
+                "source": "LFW benchmark", "recognition_enabled": False,
+            },
+        }
+        runtime.door_service.fingerprints = Mock(return_value=[])
+
+        data = runtime.list_employees(page=1, page_size=10)
+
+        self.assertEqual(data["all_total"], 1)
+        self.assertEqual(data["items"][0]["id"], "NV001")
 
     def test_employee_list_merges_face_and_fingerprint_credentials(self):
         runtime = WebFaceCheckRuntime(load_ai=False)
@@ -398,7 +413,11 @@ class RuntimeLifecycleTests(unittest.TestCase):
         runtime = WebFaceCheckRuntime(load_ai=False)
         runtime.embeddings_cache = {}
         runtime.door_service.fingerprints = Mock(return_value=[
-            {"fingerprint_id": 7, "employee_id": "NV007", "name": "Nguyễn Văn A"},
+            {
+                "fingerprint_id": 7, "employee_id": "NV007",
+                "name": "Nguyễn Văn A", "role": "Kỹ sư",
+                "department": "Phòng AI",
+            },
         ])
 
         data = runtime.list_employees(page=1, page_size=10)
@@ -408,9 +427,91 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertFalse(data["items"][0]["face_registered"])
         self.assertTrue(data["items"][0]["fingerprint_registered"])
         self.assertTrue(data["items"][0]["access_enabled"])
+        self.assertEqual(data["items"][0]["role"], "Kỹ sư")
+        self.assertEqual(data["items"][0]["department"], "Phòng AI")
+
+    def test_new_fingerprint_profile_does_not_silently_reuse_existing_employee_id(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.embeddings_cache = {
+            "NV001": {
+                "id": "NV001", "name": "Nguyễn Văn A", "role": "Kỹ sư",
+                "department": "Phòng AI", "recognition_enabled": True,
+            }
+        }
+        runtime.door_service.fingerprints = Mock(return_value=[])
+
+        with self.assertRaisesRegex(ValueError, "employee_id_exists_select_profile"):
+            runtime.enroll_fingerprint({
+                "fingerprint_id": 2,
+                "existing_employee_id": "",
+                "employee_id": "NV001",
+                "name": "Người khác",
+                "role": "Nhân viên",
+                "department": "Phòng IT",
+            })
+
+    def test_selected_fingerprint_profile_uses_canonical_employee_information(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.embeddings_cache = {
+            "NV001": {
+                "id": "NV001", "name": "Nguyễn Văn A", "role": "Kỹ sư",
+                "department": "Phòng AI", "recognition_enabled": True,
+            }
+        }
+        runtime.door_service.fingerprints = Mock(return_value=[])
+        runtime.door_service.request_fingerprint_enroll = Mock(
+            return_value={"accepted": True, "command_id": "fp-test"},
+        )
+
+        runtime.enroll_fingerprint({
+            "fingerprint_id": 2,
+            "existing_employee_id": "NV001",
+            "employee_id": "NV001",
+            "name": "Thông tin nhập sai",
+            "role": "Sai",
+            "department": "Sai",
+        })
+
+        runtime.door_service.request_fingerprint_enroll.assert_called_once_with(
+            2,
+            employee_id="NV001",
+            name="Nguyễn Văn A",
+            role="Kỹ sư",
+            department="Phòng AI",
+        )
+
+    def test_fingerprint_only_employee_profile_can_be_updated(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.embeddings_cache = {}
+        registry = [{
+            "fingerprint_id": 7, "employee_id": "NV007",
+            "name": "Nguyễn Văn A", "role": "Nhân viên",
+            "department": "—",
+        }]
+        runtime.door_service.fingerprints = Mock(side_effect=lambda: [dict(item) for item in registry])
+
+        def update_identity(fingerprint_id, employee_id, name, role, department):
+            registry[0].update({
+                "fingerprint_id": fingerprint_id, "employee_id": employee_id,
+                "name": name, "role": role, "department": department,
+            })
+            return dict(registry[0])
+
+        runtime.door_service.update_fingerprint_identity = Mock(side_effect=update_identity)
+        updated = runtime.update_employee("NV007", {
+            "id": "NV007", "name": "Nguyễn Văn A",
+            "role": "Kỹ sư", "department": "Phòng AI",
+        })
+
+        self.assertEqual(updated["role"], "Kỹ sư")
+        self.assertEqual(updated["department"], "Phòng AI")
+        runtime.door_service.update_fingerprint_identity.assert_called_once_with(
+            7, "NV007", "Nguyễn Văn A", "Kỹ sư", "Phòng AI"
+        )
 
     def test_one_hundred_employees_use_ten_pages_at_ten_per_page(self):
         runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.door_service.fingerprints = Mock(return_value=[])
         runtime.embeddings_cache = {
             f"NV{index:03d}": {
                 "id": f"NV{index:03d}",
@@ -456,6 +557,20 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertTrue(runtime._enrollment_scan_armed)
         self.assertTrue(state["enrollment"]["scan_armed"])
         reset_scan.assert_called_once()
+
+    def test_cancel_enrollment_scan_keeps_form_mode_and_disarms_camera(self):
+        runtime = WebFaceCheckRuntime(load_ai=False)
+        runtime.current_page = "add_employee"
+        runtime._enrollment_scan_armed = True
+        runtime.enrollment_face_samples.append(np.zeros((2, 2, 3), dtype=np.uint8))
+
+        state = runtime.cancel_enrollment_scan()
+
+        self.assertEqual(runtime.current_page, "add_employee")
+        self.assertFalse(runtime._enrollment_scan_armed)
+        self.assertFalse(state["enrollment"]["scan_armed"])
+        self.assertEqual(state["enrollment"]["title"], "Đã hủy quét khuôn mặt")
+        self.assertEqual(len(runtime.enrollment_face_samples), 0)
 
     def test_continuous_enrollment_returns_to_attendance_after_timeout(self):
         runtime = WebFaceCheckRuntime(load_ai=False)

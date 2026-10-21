@@ -22,7 +22,6 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = ROOT / "web_ui"
 runtime = WebFaceCheckRuntime(load_ai=os.getenv("FACECHECK_WEB_SKIP_AI") != "1")
 DISPLAY_TOKEN = os.getenv("FACECHECK_DISPLAY_TOKEN", "")
-ADMIN_TOKEN = os.getenv("FACECHECK_ADMIN_TOKEN", "")
 
 
 def api_error(exc):
@@ -83,43 +82,11 @@ def _display_authorized(request: Request):
     return bool(DISPLAY_TOKEN) and secrets.compare_digest(supplied, DISPLAY_TOKEN)
 
 
-def _admin_authorized(request: Request):
-    supplied = request.headers.get("x-facecheck-admin-token", "")
-    return bool(ADMIN_TOKEN) and secrets.compare_digest(supplied, ADMIN_TOKEN)
-
-
-def _admin_guard(request: Request):
-    if not ADMIN_TOKEN:
-        return JSONResponse(
-            {"ok": False, "error": "FACECHECK_ADMIN_TOKEN chưa được cấu hình"},
-            status_code=503,
-        )
-    if not _admin_authorized(request):
-        return JSONResponse(
-            {"ok": False, "error": "Mã quản trị không hợp lệ"},
-            status_code=401,
-        )
-    return None
-
-
-async def admin_auth(request: Request):
-    rejected = _admin_guard(request)
-    if rejected:
-        return rejected
-    return JSONResponse({"ok": True})
-
-
-async def fingerprints(request: Request):
-    rejected = _admin_guard(request)
-    if rejected:
-        return rejected
+async def fingerprints(_request: Request):
     return JSONResponse({"ok": True, **runtime.fingerprint_management()})
 
 
 async def fingerprint_enroll(request: Request):
-    rejected = _admin_guard(request)
-    if rejected:
-        return rejected
     try:
         payload = await request.json()
         return JSONResponse(
@@ -130,9 +97,6 @@ async def fingerprint_enroll(request: Request):
 
 
 async def fingerprint_delete(request: Request):
-    rejected = _admin_guard(request)
-    if rejected:
-        return rejected
     try:
         fingerprint_id = int(request.path_params["fingerprint_id"])
         payload = await request.json()
@@ -155,9 +119,6 @@ async def fingerprint_delete(request: Request):
 
 
 async def fingerprint_update(request: Request):
-    rejected = _admin_guard(request)
-    if rejected:
-        return rejected
     try:
         fingerprint_id = int(request.path_params["fingerprint_id"])
         item = runtime.update_fingerprint(fingerprint_id, await request.json())
@@ -206,6 +167,13 @@ async def enrollment_reset(_request):
 async def enrollment_start(_request):
     try:
         return JSONResponse(runtime.start_enrollment_scan())
+    except Exception as exc:
+        return api_error(exc)
+
+
+async def enrollment_cancel_scan(_request):
+    try:
+        return JSONResponse(runtime.cancel_enrollment_scan())
     except Exception as exc:
         return api_error(exc)
 
@@ -345,6 +313,7 @@ routes = [
     Route("/api/enrollment/save", enrollment_save, methods=["POST"]),
     Route("/api/enrollment/reset", enrollment_reset, methods=["POST"]),
     Route("/api/enrollment/start", enrollment_start, methods=["POST"]),
+    Route("/api/enrollment/cancel-scan", enrollment_cancel_scan, methods=["POST"]),
     Route("/api/enrollment/activity", enrollment_activity, methods=["POST"]),
     Route("/api/enrollment/finish", enrollment_finish, methods=["POST"]),
     Route("/api/employees", employees),
@@ -355,7 +324,6 @@ routes = [
     Route("/api/attendance", history),
     Route("/api/dashboard", dashboard),
     Route("/api/door/events", door_events),
-    Route("/api/admin/auth", admin_auth, methods=["POST"]),
     Route("/api/admin/fingerprints", fingerprints),
     Route("/api/admin/fingerprints/enroll", fingerprint_enroll, methods=["POST"]),
     Route(

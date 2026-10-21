@@ -149,10 +149,15 @@ void Task_Fingerprint(void *pvParameters) {
                 const bool succeeded = enroll
                     ? enrollFingerprint(managementRequest.fingerprintId)
                     : deleteFingerprint(managementRequest.fingerprintId);
+                const char* failureReason = "sensor_operation_failed";
+                if (!succeeded && enroll) {
+                    const char* enrollError = getLastFingerprintEnrollError();
+                    if (enrollError != nullptr) failureReason = enrollError;
+                }
                 queueMQTTAck(
                     managementRequest.commandId, managementRequest.command,
                     succeeded ? "finished" : "failed",
-                    succeeded ? nullptr : "sensor_operation_failed"
+                    succeeded ? nullptr : failureReason
                 );
                 if (succeeded) {
                     queueMQTTEvent(

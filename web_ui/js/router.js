@@ -5,7 +5,7 @@ const meta = {
   enrollment: ["Đăng ký khuôn mặt", "Thêm thông tin nhân viên và khuôn mặt để cấp quyền mở cửa", "#i-user-scan"],
   recognition: ["Giám sát cửa", "Theo dõi xác thực, thiết bị và yêu cầu mở khóa theo thời gian thực", "#i-target"],
   employees: ["Nhân viên", "Quản lý hồ sơ, khuôn mặt, vân tay và quyền ra vào", "#i-users"],
-  fingerprints: ["Quản lý vân tay", "Đăng ký và xóa từng mẫu vân tay trên bộ điều khiển cửa", "#i-fingerprint"],
+  fingerprints: ["Đăng ký vân tay", "Thêm vân tay vào hồ sơ nhân viên để sử dụng khi xác thực", "#i-fingerprint"],
   history: ["Nhật ký xác thực", "Tra cứu các lượt xác thực khuôn mặt, vân tay và nút mở cửa", "#i-list"],
 };
 

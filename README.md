@@ -283,9 +283,6 @@ FACECHECK_CAMERA_FLIP=1
 # Địa chỉ LAN của laptop để TFT truy cập, ví dụ 192.168.1.11
 FACECHECK_DISPLAY_HOST=192.168.1.11
 FACECHECK_DISPLAY_TOKEN=THAY_BANG_TOKEN_DAI_NGAU_NHIEN
-FACECHECK_ADMIN_TOKEN=THAY_BANG_TOKEN_QUAN_TRI_DAI_NGAU_NHIEN
-FACECHECK_ADMIN_TOKEN=THAY_BANG_TOKEN_QUAN_TRI_DAI_NGAU_NHIEN
-
 # Dùng cho WebSocket camera bridge thử nghiệm
 FACECHECK_CAMERA_TOKEN=THAY_BANG_TOKEN_CAMERA_KHAC
 
@@ -315,8 +312,7 @@ Các biến runtime đáng chú ý:
 - `FACECHECK_DRAW_DEBUG_BOXES=1`: vẽ bounding box khi chẩn đoán detector.
 - `FACECHECK_DISPLAY_HOST`: IP laptop được in cho màn hình TFT.
 - `FACECHECK_DISPLAY_TOKEN`: token bắt buộc cho API TFT ở cổng `8767`.
-- `FACECHECK_ADMIN_TOKEN`: mã mở khóa API quản lý vân tay. API này chỉ nằm trên dịch vụ quản trị localhost `127.0.0.1:8765`; giao diện chỉ giữ mã trong `sessionStorage` của tab hiện tại.
-- `FACECHECK_ADMIN_TOKEN`: mã mở khóa API quản lý vân tay. API này chỉ nằm trên dịch vụ quản trị localhost `127.0.0.1:8765`; giao diện chỉ giữ mã trong `sessionStorage` của tab hiện tại.
+- Quản lý vân tay dùng trực tiếp trên dịch vụ quản trị localhost `127.0.0.1:8765`, không yêu cầu mã mở khóa riêng. Không công khai cổng quản trị ra LAN khi chưa bổ sung đăng nhập toàn hệ thống.
 - `FACECHECK_DOOR_ENABLED`: `1` để tự mở cửa sau nhận diện thành công; đặt `0` để tắt mà không xóa thông tin broker.
 - `FACECHECK_DOOR_OPEN_DURATION_MS`: thời gian giữ relay, firmware giới hạn trong 500–10000 ms.
 - `FACECHECK_DOOR_COOLDOWN_SECONDS`: thời gian nghỉ toàn cửa sau ACK `finished`, mặc định 8 giây.

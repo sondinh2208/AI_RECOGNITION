@@ -636,12 +636,14 @@ bool start_camera() {
     // Bo camera vat ly dang lap nguoc nen giu lat doc. Khong lat ngang de
     // chuyen dong trai/phai hien dung, tranh hinh anh nhu trong guong.
     sensor->set_vflip(sensor, 1);
-    sensor->set_hmirror(sensor, 0);
+    sensor->set_hmirror(sensor, 1);
     sensor->set_sharpness(sensor, 1);
-    sensor->set_contrast(sensor, 0);
+    sensor->set_contrast(sensor, 1);
     if (sensor->id.PID == OV3660_PID) {
+      // Can bang anh trong moi truong nguoc sang ma khong doi FPS hay tai mang.
       sensor->set_brightness(sensor, 1);
-      sensor->set_saturation(sensor, -1);
+      sensor->set_ae_level(sensor, 2);
+      sensor->set_saturation(sensor, 0);
     }
   }
   return true;

@@ -7,10 +7,6 @@ async function request(url, options = {}) {
   return data;
 }
 
-function adminHeaders(token, extra = {}) {
-  return { ...extra, "X-FaceCheck-Admin-Token": token };
-}
-
 export const api = {
   state: () => request("/api/state"),
   setMode: (mode) => request("/api/mode", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ mode }) }),
@@ -34,13 +30,13 @@ export const api = {
   saveEnrollment: (payload) => request("/api/enrollment/save", { method: "POST", headers: jsonHeaders, body: JSON.stringify(payload) }),
   resetEnrollment: () => request("/api/enrollment/reset", { method: "POST" }),
   startEnrollmentScan: () => request("/api/enrollment/start", { method: "POST" }),
+  cancelEnrollmentScan: () => request("/api/enrollment/cancel-scan", { method: "POST" }),
   noteEnrollmentActivity: () => request("/api/enrollment/activity", { method: "POST" }),
   finishEnrollmentSession: () => request("/api/enrollment/finish", { method: "POST" }),
-  unlockFingerprintAdmin: (token) => request("/api/admin/auth", { method: "POST", headers: adminHeaders(token) }),
-  fingerprints: (token) => request("/api/admin/fingerprints", { headers: adminHeaders(token) }),
-  enrollFingerprint: (token, payload) => request("/api/admin/fingerprints/enroll", { method: "POST", headers: adminHeaders(token, jsonHeaders), body: JSON.stringify(payload) }),
-  updateFingerprint: (token, id, payload) => request(`/api/admin/fingerprints/${encodeURIComponent(id)}`, { method: "PUT", headers: adminHeaders(token, jsonHeaders), body: JSON.stringify(payload) }),
-  deleteFingerprint: (token, id, confirmationId) => request(`/api/admin/fingerprints/${encodeURIComponent(id)}`, { method: "DELETE", headers: adminHeaders(token, jsonHeaders), body: JSON.stringify({ confirmation_id: confirmationId }) }),
+  fingerprints: () => request("/api/admin/fingerprints"),
+  enrollFingerprint: (payload) => request("/api/admin/fingerprints/enroll", { method: "POST", headers: jsonHeaders, body: JSON.stringify(payload) }),
+  updateFingerprint: (id, payload) => request(`/api/admin/fingerprints/${encodeURIComponent(id)}`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(payload) }),
+  deleteFingerprint: (id, confirmationId) => request(`/api/admin/fingerprints/${encodeURIComponent(id)}`, { method: "DELETE", headers: jsonHeaders, body: JSON.stringify({ confirmation_id: confirmationId }) }),
 };
 
 export function connectStateSocket(onState, onConnection) {

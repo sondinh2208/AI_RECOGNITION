@@ -153,7 +153,9 @@ class DoorServiceTests(unittest.TestCase):
 
     def test_fingerprint_enroll_is_short_lived_and_updates_registry_after_ack(self):
         self.connect()
-        result = self.service.request_fingerprint_enroll(12, "NV012", "Nguyen Van A")
+        result = self.service.request_fingerprint_enroll(
+            12, "NV012", "Nguyen Van A", "Ky su", "Phong AI"
+        )
 
         self.assertTrue(result["accepted"])
         topic, raw_payload, qos, retain = self.client.published[-1]
@@ -170,6 +172,8 @@ class DoorServiceTests(unittest.TestCase):
         self.management_ack(result["command_id"], "FINGERPRINT_ENROLL", "started")
         self.management_ack(result["command_id"], "FINGERPRINT_ENROLL", "finished")
         self.assertEqual(self.service.fingerprint(12)["employee_id"], "NV012")
+        self.assertEqual(self.service.fingerprint(12)["role"], "Ky su")
+        self.assertEqual(self.service.fingerprint(12)["department"], "Phong AI")
 
     def test_fingerprint_delete_requires_known_registry_id(self):
         self.connect()

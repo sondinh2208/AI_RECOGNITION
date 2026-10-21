@@ -362,6 +362,8 @@ class DoorService:
                             "fingerprint_id": pending["fingerprint_id"],
                             "employee_id": pending.get("employee_id", ""),
                             "name": pending.get("name", ""),
+                            "role": pending.get("role", ""),
+                            "department": pending.get("department", ""),
                             "status": "active",
                             "registered_at": datetime.now(timezone.utc).isoformat(),
                         }
@@ -370,6 +372,27 @@ class DoorService:
                     self._save_fingerprint_registry()
                     self.pending_management = None
                 elif state == "failed":
+                    # The fingerprint sensor is the source of truth for slots.
+                    # If enrollment discovers an occupied slot missing from the
+                    # server registry, restore it as unassigned. This exposes the
+                    # orphaned slot in the UI so it can be deleted explicitly.
+                    reason = str(payload.get("reason") or "")
+                    key = str(pending["fingerprint_id"])
+                    if (
+                        pending["command"] == "FINGERPRINT_ENROLL"
+                        and reason == "fingerprint_id_exists"
+                        and key not in self.fingerprint_registry
+                    ):
+                        self.fingerprint_registry[key] = {
+                            "fingerprint_id": pending["fingerprint_id"],
+                            "employee_id": "",
+                            "name": f"Vân tay #{pending['fingerprint_id']}",
+                            "role": "",
+                            "department": "",
+                            "status": "observed",
+                            "first_seen_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        self._save_fingerprint_registry()
                     self.pending_management = None
                 changed = True
             elif self.pending and command_id == self.pending["command_id"]:
@@ -485,7 +508,8 @@ class DoorService:
             return dict(item) if item else None
 
     def update_fingerprint_identity(
-        self, fingerprint_id: int, employee_id: str, name: str
+        self, fingerprint_id: int, employee_id: str, name: str,
+        role: str | None = None, department: str | None = None,
     ) -> dict:
         fingerprint_id = int(fingerprint_id)
         if not 1 <= fingerprint_id <= 127:
@@ -504,6 +528,8 @@ class DoorService:
                 "fingerprint_id": fingerprint_id,
                 "employee_id": employee_id,
                 "name": name,
+                "role": str(current.get("role", "") if role is None else role).strip()[:80],
+                "department": str(current.get("department", "") if department is None else department).strip()[:80],
                 "status": "active",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -519,6 +545,8 @@ class DoorService:
         *,
         employee_id: str = "",
         name: str = "",
+        role: str = "",
+        department: str = "",
     ) -> dict:
         try:
             fingerprint_id = int(fingerprint_id)
@@ -567,6 +595,8 @@ class DoorService:
                 "fingerprint_id": fingerprint_id,
                 "employee_id": str(employee_id).strip()[:40],
                 "name": str(name).strip()[:80],
+                "role": str(role).strip()[:80],
+                "department": str(department).strip()[:80],
                 "state": "sent",
                 "sent_at": self._monotonic(),
                 "deadline": self._monotonic() + self.management_timeout_seconds,
@@ -576,13 +606,16 @@ class DoorService:
         return {"accepted": True, "command_id": command_id}
 
     def request_fingerprint_enroll(
-        self, fingerprint_id: int, employee_id: str = "", name: str = ""
+        self, fingerprint_id: int, employee_id: str = "", name: str = "",
+        role: str = "", department: str = "",
     ) -> dict:
         return self._request_fingerprint_management(
             "FINGERPRINT_ENROLL",
             fingerprint_id,
             employee_id=employee_id,
             name=name,
+            role=role,
+            department=department,
         )
 
     def request_fingerprint_delete(self, fingerprint_id: int) -> dict:

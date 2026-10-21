@@ -51,12 +51,12 @@
         <button data-route="enrollment"><svg><use href="#i-user-scan"/></svg><span>Đăng ký khuôn mặt</span></button>
         <button data-route="recognition" class="active"><svg><use href="#i-target"/></svg><span>Giám sát cửa</span></button>
         <button data-route="employees"><svg><use href="#i-users"/></svg><span>Nhân viên</span></button>
-        <button data-route="fingerprints"><svg><use href="#i-fingerprint"/></svg><span>Quản lý vân tay</span></button>
+        <button data-route="fingerprints"><svg><use href="#i-fingerprint"/></svg><span>Đăng ký vân tay</span></button>
         <button data-route="history"><svg><use href="#i-list"/></svg><span>Nhật ký xác thực</span></button>
       </nav>
       <div class="system-card">
         <div class="system-heading"><span class="system-icon"><svg><use href="#i-shield"/></svg></span><span><strong>Trạng thái vận hành</strong><small id="sideConnection">Đang kiểm tra kết nối...</small></span></div>
-        <dl><div><dt>Camera</dt><dd><i></i><span id="sideCamera">Đang kiểm tra...</span></dd></div><div><dt>Xử lý AI</dt><dd><i></i><span id="sideDevice">Đang kiểm tra...</span></dd></div><div><dt>ESP32 cửa</dt><dd><i></i><span id="sideDoor">Đang kiểm tra...</span></dd></div></dl>
+        <dl><div><dt>Camera</dt><dd><i></i><span id="sideCamera">Đang kiểm tra...</span></dd></div><div><dt>Nhận diện khuôn mặt</dt><dd><i></i><span id="sideDevice">Đang kiểm tra...</span></dd></div><div><dt>Bộ điều khiển cửa</dt><dd><i></i><span id="sideDoor">Đang kiểm tra...</span></dd></div></dl>
       </div>
       <span class="version">v1.0.0</span>
     </aside>
@@ -110,13 +110,15 @@
                 <span><i></i><strong>Phiên đăng ký đang mở</strong><small id="enrollmentSessionStatus">Tự động kết thúc sau <b id="enrollmentIdleCountdown">15</b> giây</small></span>
                 <button id="finishEnrollmentSession" type="button">Kết thúc phiên</button>
               </div>
-              <div class="form-intro"><h2>Thông tin nhân viên</h2><p>Nhập thông tin nhân viên để lưu cùng với khuôn mặt.</p></div>
+              <div class="form-intro"><h2>Thông tin nhân viên</h2><p>Thông tin hồ sơ được dùng chung cho khuôn mặt, vân tay và lịch sử ra vào.</p></div>
               <form id="enrollmentForm">
+                <label class="existing-profile-selector">Chọn hồ sơ đã có<select name="existing_employee_id" id="faceEmployeeSelect"><option value="">Nhân viên mới — nhập thông tin bên dưới</option></select></label>
                 <label>Họ và tên nhân viên<span class="field-control"><svg><use href="#i-users"/></svg><input name="name" placeholder="Nguyễn Văn A" autocomplete="name" required></span></label>
                 <label>Mã nhân viên<span class="field-control"><svg><use href="#i-list"/></svg><input name="id" placeholder="NV001" autocomplete="off" required></span></label>
                 <label>Chức vụ<span class="field-control"><svg><use href="#i-briefcase"/></svg><input name="role" placeholder="Kỹ sư phần mềm" required></span></label>
                 <label>Phòng ban<span class="field-control"><svg><use href="#i-building"/></svg><input name="department" placeholder="Phòng IT" required></span></label>
                 <button class="primary wide enrollment-start" id="startEnrollmentScan" type="button" disabled><svg><use href="#i-user-scan"/></svg><span>Bắt đầu quét tại kiosk</span></button>
+                <button class="secondary wide enrollment-cancel-scan" id="cancelEnrollmentScan" type="button" hidden><svg><use href="#i-x"/></svg><span>Hủy quét khuôn mặt</span></button>
                 <button class="primary wide enrollment-save" id="saveEnrollment" disabled><svg><use href="#i-save"/></svg><span>Lưu khuôn mặt</span></button>
               </form>
               <aside class="scan-notes">
@@ -160,8 +162,6 @@
               <div class="monitor-status-item"><span><svg><use href="#i-monitor"/></svg></span><div><small>Bộ điều khiển cửa</small><strong id="monitorDoorState">Đang kiểm tra...</strong></div></div>
               <div class="monitor-status-item"><span><svg><use href="#i-target"/></svg></span><div><small>Cảm biến vân tay</small><strong id="monitorFingerprintState">Chưa có trạng thái</strong></div></div>
             </div>
-            <div class="monitor-guidance"><strong>Camera trực tiếp đang hiển thị tại kiosk</strong><span>Chỉ mở luồng trên máy quản trị khi cần kiểm tra vị trí hoặc chẩn đoán sự cố.</span></div>
-            <div class="monitor-guidance"><strong>Sự kiện bộ điều khiển gần nhất</strong><span id="monitorDoorEvent">Chưa nhận sự kiện từ ESP32.</span></div>
             <button class="secondary wide monitor-live-button" id="openLiveCamera" type="button"><svg><use href="#i-camera"/></svg>Xem camera trực tiếp</button>
           </article>
           <article class="card result-panel" id="recognitionResult"><div class="result-header"><span class="result-icon"><svg><use href="#i-target"/></svg></span><span><h2>Chờ xác thực</h2><p>Sử dụng khuôn mặt hoặc vân tay để xác minh quyền ra vào</p></span></div><div class="employee-summary"><div class="avatar placeholder"><svg><use href="#i-users"/></svg></div><div><h3>Chưa có lượt xác thực</h3><p>Mã NV: <b>---</b></p><p>Chức vụ: ---</p><p>Phòng ban: ---</p></div></div><div class="result-notice"><strong>Sẵn sàng tiếp nhận xác thực</strong><span>Phương thức: Khuôn mặt hoặc vân tay</span></div><div class="result-time"><svg><use href="#i-clock"/></svg><span><small>Thời gian xác thực</small><b>Chờ xác thực...</b></span></div><div class="result-actions"><input id="recognitionImageInput" type="file" accept="image/jpeg,image/png,image/bmp,image/webp" hidden><button class="secondary wide" id="testRecognitionImage">Công cụ kiểm thử ảnh</button><div class="status-action waiting" role="status">Quyền ra vào: Sẵn sàng xác thực</div><button class="secondary wide" id="retryRecognition" hidden>Thử lại</button></div></article>
@@ -176,33 +176,51 @@
       </section>
 
       <section class="page" data-page="fingerprints">
-        <article class="card fingerprint-unlock" id="fingerprintUnlock">
-          <span class="fingerprint-unlock-icon"><svg><use href="#i-fingerprint"/></svg></span>
-          <div><h2>Mở khóa chức năng quản trị vân tay</h2><p>Mục này chỉ hoạt động trên máy chủ localhost. Nhập <code>FACECHECK_ADMIN_TOKEN</code> trong file <code>.env</code>.</p></div>
-          <form id="fingerprintUnlockForm"><input id="fingerprintAdminToken" type="password" autocomplete="current-password" placeholder="Mã quản trị" required><button class="primary">Mở khóa</button></form>
-        </article>
-
-        <div class="fingerprint-admin-grid" id="fingerprintAdmin" hidden>
+        <div class="fingerprint-admin-grid" id="fingerprintAdmin">
           <article class="card fingerprint-enroll-card">
             <div class="card-title"><span><svg><use href="#i-user-add"/></svg> Đăng ký vân tay mới</span></div>
             <form id="fingerprintEnrollForm" autocomplete="off">
-              <label>ID vân tay (1–127)<input name="fingerprint_id" type="number" min="1" max="127" autocomplete="off" required></label>
-              <label>Mã nhân viên<input name="employee_id" maxlength="40" autocomplete="off" placeholder="Ví dụ: NV001"></label>
+              <p id="fingerprintProfileHint">Chọn nhân viên hiện có hoặc nhập đầy đủ thông tin để tạo một hồ sơ mới.</p>
+              <label class="existing-profile-selector">Chọn hồ sơ đã có<select name="existing_employee_id" id="fingerprintEmployeeSelect"><option value="">Nhân viên mới — nhập thông tin bên dưới</option></select></label>
+              <label>Mã vân tay<input name="fingerprint_id" type="number" min="1" max="127" autocomplete="off" placeholder="Từ 1 đến 127" required></label>
+              <label>Mã nhân viên<input name="employee_id" list="fingerprintEmployeeOptions" maxlength="40" autocomplete="off" placeholder="Ví dụ: NV001" required><datalist id="fingerprintEmployeeOptions"></datalist></label>
               <label>Họ và tên<input name="name" maxlength="80" autocomplete="off" placeholder="Người sở hữu vân tay" required></label>
-              <p>ESP32 sẽ yêu cầu đặt cùng một ngón tay hai lần. Không rút nguồn trong quá trình đăng ký.</p>
-              <button class="primary" id="fingerprintEnrollButton">Bắt đầu đăng ký</button>
+              <label>Chức vụ<input name="role" maxlength="80" autocomplete="organization-title" placeholder="Ví dụ: Kỹ sư phần mềm" required></label>
+              <label>Phòng ban<input name="department" maxlength="80" autocomplete="organization" placeholder="Ví dụ: Phòng IT" required></label>
+              <p>Đặt cùng một ngón tay hai lần theo hướng dẫn trên màn hình thiết bị. Giữ thiết bị hoạt động trong suốt quá trình đăng ký.</p>
+              <div class="fingerprint-form-actions">
+                <button class="secondary" id="cancelFingerprintEnrollment" type="button">Hủy đăng ký</button>
+                <button class="primary" id="fingerprintEnrollButton">Bắt đầu đăng ký</button>
+              </div>
             </form>
           </article>
           <article class="card fingerprint-state-card">
-            <div class="card-title"><span><svg><use href="#i-monitor"/></svg> Trạng thái điều khiển</span></div>
-            <dl id="fingerprintManagementState"><div><dt>MQTT</dt><dd>Đang kiểm tra...</dd></div></dl>
-            <button class="secondary" id="fingerprintLockButton" type="button">Khóa trang quản trị</button>
-          </article>
-          <article class="card table-card fingerprint-list-card">
-            <div class="card-title"><span><svg><use href="#i-fingerprint"/></svg> Danh sách vân tay đã biết</span><button class="link" id="refreshFingerprints" type="button">Làm mới</button></div>
-            <div class="table-wrap"><table><thead><tr><th>ID vân tay</th><th>Mã nhân viên</th><th>Họ và tên</th><th>Nguồn dữ liệu</th><th>Hành động</th></tr></thead><tbody id="fingerprintRows"></tbody></table></div>
+            <div class="card-title"><span><svg><use href="#i-monitor"/></svg> Tình trạng hệ thống vân tay</span></div>
+            <dl id="fingerprintManagementState"><div><dt>Kết nối thiết bị</dt><dd>Đang kiểm tra...</dd></div></dl>
+            <aside class="fingerprint-guide">
+              <h3>Hướng dẫn đăng ký</h3>
+              <ol>
+                <li><span>1</span><p><strong>Chọn hồ sơ nhân viên</strong><small>Nhập mã nhân viên để tự động điền thông tin đã có.</small></p></li>
+                <li><span>2</span><p><strong>Bắt đầu đăng ký</strong><small>Kiểm tra thông tin rồi nhấn nút đăng ký.</small></p></li>
+                <li><span>3</span><p><strong>Quét cùng một ngón tay</strong><small>Đặt ngón tay hai lần theo hướng dẫn trên thiết bị.</small></p></li>
+                <li><span>4</span><p><strong>Chờ hoàn tất</strong><small>Kết quả sẽ được cập nhật trong hồ sơ nhân viên.</small></p></li>
+              </ol>
+            </aside>
           </article>
         </div>
+        <article class="card table-card fingerprint-directory-card">
+          <div class="card-title">
+            <span><svg><use href="#i-fingerprint"/></svg> Nhân viên đã đăng ký vân tay</span>
+            <button class="link" id="refreshFingerprints" type="button">Làm mới</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Mã vân tay</th><th>Nhân viên</th><th>Mã NV</th><th>Chức vụ</th><th>Phòng ban</th><th>Trạng thái</th></tr></thead>
+              <tbody id="fingerprintRows"></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="fingerprintPagination"></div>
+        </article>
       </section>
 
       <section class="page" data-page="history">

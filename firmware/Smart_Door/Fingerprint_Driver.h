@@ -34,6 +34,13 @@ typedef void (*EnrollCallback)(const char* message);
  */
 bool enrollFingerprint(uint8_t id, EnrollCallback callback = nullptr);
 
+// Ma loi cua lan dang ky gan nhat, dung de gui ACK ro nghia ve server.
+// Tra ve nullptr neu dang ky thanh cong hoac chua co loi.
+const char* getLastFingerprintEnrollError();
+
+// ID da ton tai neu lan dang ky bi chan vi trung cung mot ngon tay.
+uint16_t getDuplicateFingerprintId();
+
 /**
  * @brief Xóa một ID vân tay khỏi bộ nhớ cảm biến
  * @param id ID cần xóa (1 - 127)

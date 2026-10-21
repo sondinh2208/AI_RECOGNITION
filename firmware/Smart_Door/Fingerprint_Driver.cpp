@@ -8,6 +8,16 @@ static Adafruit_Fingerprint finger = Adafruit_Fingerprint(&serialAS608);
 static bool sensorReady = false;
 static volatile bool isEnrolling = false;
 static uint8_t communicationErrors = 0;
+static const char* lastEnrollError = nullptr;
+static uint16_t duplicateFingerprintId = 0;
+
+const char* getLastFingerprintEnrollError() {
+    return lastEnrollError;
+}
+
+uint16_t getDuplicateFingerprintId() {
+    return duplicateFingerprintId;
+}
 
 bool initFingerprint() {
     // 1. Khởi tạo UART2 với chân TX=17, RX=18 chuẩn ESP32-S3 ở tốc độ 57600 baud
@@ -131,7 +141,11 @@ static void notifyProgress(EnrollCallback callback, const char* msg) {
 }
 
 bool enrollFingerprint(uint8_t id, EnrollCallback callback) {
+    lastEnrollError = nullptr;
+    duplicateFingerprintId = 0;
+
     if (!sensorReady || id == 0 || id > 127) {
+        lastEnrollError = "invalid_fingerprint_id";
         notifyProgress(callback, "❌ ID không hợp lệ (chỉ chấp nhận từ 1 đến 127)!");
         return false;
     }
@@ -166,10 +180,34 @@ bool enrollFingerprint(uint8_t id, EnrollCallback callback) {
 
     p = finger.image2Tz(1);
     if (p != FINGERPRINT_OK) {
+        lastEnrollError = "sensor_operation_failed";
         notifyProgress(callback, "❌ Lỗi tạo đặc trưng mẫu lần 1!");
         isEnrolling = false;
         return false;
     }
+
+    // Chan cung mot ngon tay bi luu lap o mot ID moi. Kiem tra nay phai
+    // thuc hien tren cam bien vi server khong the so sanh mau sinh trac.
+    p = finger.fingerFastSearch();
+    if (p == FINGERPRINT_OK) {
+        duplicateFingerprintId = finger.fingerID;
+        lastEnrollError = "fingerprint_already_registered";
+        snprintf(
+            buf, sizeof(buf),
+            "VAN TAY NAY DA DUOC DANG KY O ID #%u. DA HUY DANG KY.",
+            static_cast<unsigned int>(duplicateFingerprintId)
+        );
+        notifyProgress(callback, buf);
+        isEnrolling = false;
+        return false;
+    }
+    if (p != FINGERPRINT_NOTFOUND) {
+        lastEnrollError = "sensor_operation_failed";
+        notifyProgress(callback, "Khong the kiem tra van tay trung lap. Da huy dang ky.");
+        isEnrolling = false;
+        return false;
+    }
+
     notifyProgress(callback, "✅ Đã chụp xong lần 1! Vui lòng NHẤC NGÓN TAY RA...");
 
     // Bước 2: Chờ nhấc tay (timeout 5s)
@@ -205,6 +243,7 @@ bool enrollFingerprint(uint8_t id, EnrollCallback callback) {
 
     p = finger.image2Tz(2);
     if (p != FINGERPRINT_OK) {
+        lastEnrollError = "sensor_operation_failed";
         notifyProgress(callback, "❌ Lỗi tạo đặc trưng mẫu lần 2!");
         isEnrolling = false;
         return false;
@@ -213,6 +252,7 @@ bool enrollFingerprint(uint8_t id, EnrollCallback callback) {
     // Bước 4: Tạo model mẫu
     p = finger.createModel();
     if (p != FINGERPRINT_OK) {
+        lastEnrollError = "sensor_operation_failed";
         notifyProgress(callback, "❌ THẤT BẠI: Hai lần quét không khớp mẫu vân tay!");
         isEnrolling = false;
         return false;
@@ -226,6 +266,7 @@ bool enrollFingerprint(uint8_t id, EnrollCallback callback) {
         isEnrolling = false;
         return true;
     } else {
+        lastEnrollError = "sensor_operation_failed";
         notifyProgress(callback, "❌ THẤT BẠI: Không thể lưu mẫu vào bộ nhớ Flash!");
         isEnrolling = false;
         return false;

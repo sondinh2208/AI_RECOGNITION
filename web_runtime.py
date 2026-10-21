@@ -293,7 +293,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             image = self._profile_image(employee_id, profile)
             return {
                 "id": employee_id,
-                "name": registered.get("name") or profile.get("name") or "Nhân viên",
+                "name": profile.get("name") or registered.get("name") or "Nhân viên",
                 "role": profile.get("role") or "Nhân viên",
                 "department": profile.get("department") or profile.get("dept") or "—",
                 "image_url": (
@@ -304,8 +304,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         return {
             "id": employee_id,
             "name": registered.get("name") or f"Vân tay #{fingerprint_id}",
-            "role": "Nhân viên",
-            "department": "—",
+            "role": registered.get("role") or "Nhân viên",
+            "department": registered.get("department") or "—",
             "image_url": None,
         }
 
@@ -706,10 +706,35 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         }
 
     def enroll_fingerprint(self, payload):
+        employee_id = self._clean_field(payload.get("employee_id", ""), compact=True)
+        name = self._clean_field(payload.get("name", ""))
+        role = self._clean_field(payload.get("role", ""))
+        department = self._clean_field(payload.get("department", ""))
+        if not all((employee_id, name, role, department)):
+            raise ValueError("Vui lòng nhập đầy đủ thông tin nhân viên")
+        selected_employee_id = self._clean_field(
+            payload.get("existing_employee_id", ""), compact=True,
+        )
+        matches = self.list_employees(query=employee_id, page=1, page_size=100)["items"]
+        existing = next(
+            (item for item in matches if item["id"].casefold() == employee_id.casefold()),
+            None,
+        )
+        if existing and not selected_employee_id:
+            raise ValueError("employee_id_exists_select_profile")
+        if selected_employee_id:
+            if not existing or existing["id"].casefold() != selected_employee_id.casefold():
+                raise ValueError("employee_profile_not_found")
+            employee_id = existing["id"]
+            name = existing["name"]
+            role = existing["role"]
+            department = existing["department"]
         result = self.door_service.request_fingerprint_enroll(
             payload.get("fingerprint_id"),
-            employee_id=payload.get("employee_id", ""),
-            name=payload.get("name", ""),
+            employee_id=employee_id,
+            name=name,
+            role=role,
+            department=department,
         )
         if not result.get("accepted"):
             raise ValueError(result.get("reason", "fingerprint_enroll_rejected"))
@@ -726,6 +751,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             fingerprint_id,
             payload.get("employee_id", ""),
             payload.get("name", ""),
+            payload.get("role"),
+            payload.get("department"),
         )
 
     def _on_kiosk_recognition_success(self, emp_info, distance):
@@ -888,6 +915,17 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._publish()
 
     # ---------- Enrollment adapter: worker trích vector vẫn là worker gốc ----------
+    def _fingerprint_identity_for_employee(self, emp_id):
+        """Return the canonical fingerprint-only profile for an employee ID."""
+        normalized_id = str(emp_id or "").strip().casefold()
+        if not normalized_id:
+            return None
+        for fingerprint in self.door_service.fingerprints():
+            linked_id = str(fingerprint.get("employee_id") or "").strip()
+            if linked_id.casefold() == normalized_id:
+                return fingerprint
+        return None
+
     def save_enrollment(self, payload):
         if self._enrollment_saving:
             raise ValueError("Hệ thống đang lưu một hồ sơ khác")
@@ -902,6 +940,27 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         duplicate = self._find_existing_employee_id(emp_id)
         if duplicate:
             raise ValueError(f"Mã nhân viên {duplicate} đã tồn tại")
+        fingerprint_identity = self._fingerprint_identity_for_employee(emp_id)
+        if fingerprint_identity:
+            canonical = {
+                "name": str(fingerprint_identity.get("name") or "").strip(),
+                "role": str(fingerprint_identity.get("role") or "").strip(),
+                "department": str(fingerprint_identity.get("department") or "").strip(),
+            }
+            submitted = {"name": name, "role": role, "department": department}
+            conflicts = [
+                field for field, value in canonical.items()
+                if value and value.casefold() != submitted[field].casefold()
+            ]
+            if conflicts:
+                stored_name = canonical["name"] or emp_id
+                raise ValueError(
+                    f"Mã nhân viên {emp_id} đã thuộc hồ sơ {stored_name}. "
+                    "Hãy sử dụng thông tin đã lưu hoặc sửa hồ sơ tại tab Nhân viên."
+                )
+            name = canonical["name"] or name
+            role = canonical["role"] or role
+            department = canonical["department"] or department
         if not self.camera_running:
             raise ValueError("Camera chưa sẵn sàng")
         if not self.enrollment_capture_ready:
@@ -928,6 +987,14 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
     def _finish_enrollment(self, success, name="", emp_id="", error_msg=""):
         self._enrollment_saving = False
         if success:
+            profile = (self.embeddings_cache or {}).get(emp_id, {})
+            for fingerprint in self.door_service.fingerprints():
+                if str(fingerprint.get("employee_id") or "").strip().casefold() == emp_id.casefold():
+                    self.door_service.update_fingerprint_identity(
+                        int(fingerprint["fingerprint_id"]), emp_id,
+                        profile.get("name") or name,
+                        profile.get("role"), profile.get("department"),
+                    )
             self._enrollment_scan_armed = False
             self._reset_enrollment_scan(clear_preview=False, wait_for_face_leave=True)
             self.enrollment_result = {
@@ -1011,6 +1078,26 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             "title": "Chờ khuôn mặt hợp lệ",
             "message": "Giữ yên khuôn mặt trong 3 giây để hệ thống tự động quét.",
         }
+        self._publish()
+        return self.snapshot()
+
+    def cancel_enrollment_scan(self):
+        """Hủy lượt quét hiện tại nhưng giữ kiosk và biểu mẫu đăng ký mở."""
+        if self._enrollment_saving:
+            raise ValueError("Không thể hủy khi hệ thống đang lưu khuôn mặt")
+        had_captured_face = bool(self.enrollment_capture_ready)
+        self._enrollment_scan_armed = False
+        self._reset_enrollment_scan(
+            clear_preview=False,
+            wait_for_face_leave=had_captured_face,
+        )
+        self.enrollment_result = {
+            "state": "idle",
+            "title": "Đã hủy quét khuôn mặt",
+            "message": "Thông tin nhân viên vẫn được giữ. Nhấn bắt đầu quét khi bạn sẵn sàng.",
+        }
+        if self._enrollment_continuous_session:
+            self._restart_enrollment_idle_timer()
         self._publish()
         return self.snapshot()
 
@@ -1124,12 +1211,16 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             group = fingerprint_groups.setdefault(group_key, {
                 "employee_id": employee_id,
                 "name": str(item.get("name") or f"Vân tay #{fingerprint_id}"),
+                "role": str(item.get("role") or "Nhân viên"),
+                "department": str(item.get("department") or "—"),
                 "ids": [],
             })
             group["ids"].append(fingerprint_id)
 
         records = []
         for key, profile in profiles.items():
+            if profile.get("source") == "LFW benchmark":
+                continue
             emp_id = str(profile.get("id") or key)
             name = str(profile.get("name") or "Nhân viên")
             fingerprint_group = fingerprint_groups.pop(emp_id.casefold(), None)
@@ -1156,8 +1247,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             records.append({
                 "id": emp_id,
                 "name": group["name"],
-                "role": "Nhân viên",
-                "department": "—",
+                "role": group["role"],
+                "department": group["department"],
                 "recognition_enabled": False,
                 "face_registered": False,
                 "fingerprint_registered": True,
@@ -1224,56 +1315,64 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         return value.replace(" ", "") if compact else value
 
     def update_employee(self, emp_id, payload):
-        with self._lock:
-            profiles = self._read_profiles()
-            key = next((k for k in profiles if str(k).casefold() == emp_id.casefold()), None)
-            if key is None:
-                raise KeyError("Không tìm thấy nhân viên")
-            new_id = self._clean_field(payload.get("id", emp_id), compact=True)
-            name = self._clean_field(payload.get("name", ""))
-            role = self._clean_field(payload.get("role", ""))
-            department = self._clean_field(payload.get("department", ""))
-            if not all((new_id, name, role, department)):
-                raise ValueError("Vui lòng nhập đầy đủ thông tin")
-            duplicate = next((k for k in profiles if str(k).casefold() == new_id.casefold() and k != key), None)
-            if duplicate is not None:
-                raise ValueError(f"Mã nhân viên {new_id} đã tồn tại")
-            profile = dict(profiles.pop(key))
-            timestamp = profile.get("timestamp") or datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{new_id}@{role.replace(' ', '_')}@{department.replace(' ', '_')}@{name.replace(' ', '_')}_{timestamp}.jpg"
-            renames = []
-            if new_id != emp_id or any(profile.get(k) != v for k, v in (("name", name), ("role", role), ("department", department))):
-                for folder in (Path(DATA_FACES_DIR),):
-                    source = next(iter(folder.glob(f"{emp_id}@*")), None)
-                    if source and source.exists():
-                        target = folder / filename
-                        if target != source:
-                            if target.exists():
-                                raise ValueError(f"Tệp khuôn mặt đích đã tồn tại: {target.name}")
-                            renames.append((source, target))
-            completed = []
-            try:
-                for source, target in renames:
-                    source.rename(target)
-                    completed.append((source, target))
-            except Exception:
-                for source, target in reversed(completed):
-                    if target.exists() and not source.exists():
-                        target.rename(source)
-                raise
-            profile.update({"id": new_id, "name": name, "role": role, "department": department, "image_path": str(Path(DATA_FACES_DIR) / filename)})
-            profiles[new_id] = profile
-            self._write_profiles(profiles)
-        # Giữ liên kết sinh trắc học đồng nhất khi đổi mã hoặc tên nhân viên.
-        # Đây chỉ cập nhật bản ánh xạ trên server; mẫu vân tay trong AS608 không đổi.
-        for fingerprint in self.door_service.fingerprints():
+        new_id = self._clean_field(payload.get("id", emp_id), compact=True)
+        name = self._clean_field(payload.get("name", ""))
+        role = self._clean_field(payload.get("role", ""))
+        department = self._clean_field(payload.get("department", ""))
+        if not all((new_id, name, role, department)):
+            raise ValueError("Vui lòng nhập đầy đủ thông tin")
+
+        fingerprints = self.door_service.fingerprints()
+        linked_fingerprints = []
+        for fingerprint in fingerprints:
             linked_id = str(fingerprint.get("employee_id") or "").strip()
             if not linked_id:
                 linked_id = f"VT{int(fingerprint['fingerprint_id']):03d}"
             if linked_id.casefold() == emp_id.casefold():
-                self.door_service.update_fingerprint_identity(
-                    int(fingerprint["fingerprint_id"]), new_id, name
-                )
+                linked_fingerprints.append(fingerprint)
+
+        with self._lock:
+            profiles = self._read_profiles()
+            key = next((k for k in profiles if str(k).casefold() == emp_id.casefold()), None)
+            if key is None and not linked_fingerprints:
+                raise KeyError("Không tìm thấy nhân viên")
+            duplicate = next((k for k in profiles if str(k).casefold() == new_id.casefold() and k != key), None)
+            duplicate_fingerprint = next((item for item in fingerprints
+                if str(item.get("employee_id") or "").strip().casefold() == new_id.casefold()
+                and item not in linked_fingerprints), None)
+            if duplicate is not None or duplicate_fingerprint is not None:
+                raise ValueError(f"Mã nhân viên {new_id} đã tồn tại")
+            if key is not None:
+                profile = dict(profiles.pop(key))
+                timestamp = profile.get("timestamp") or datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{new_id}@{role.replace(' ', '_')}@{department.replace(' ', '_')}@{name.replace(' ', '_')}_{timestamp}.jpg"
+                renames = []
+                if new_id != emp_id or any(profile.get(k) != v for k, v in (("name", name), ("role", role), ("department", department))):
+                    source = next(iter(Path(DATA_FACES_DIR).glob(f"{emp_id}@*")), None)
+                    if source and source.exists():
+                        target = Path(DATA_FACES_DIR) / filename
+                        if target != source:
+                            if target.exists():
+                                raise ValueError(f"Tệp khuôn mặt đích đã tồn tại: {target.name}")
+                            renames.append((source, target))
+                completed = []
+                try:
+                    for source, target in renames:
+                        source.rename(target)
+                        completed.append((source, target))
+                except Exception:
+                    for source, target in reversed(completed):
+                        if target.exists() and not source.exists():
+                            target.rename(source)
+                    raise
+                profile.update({"id": new_id, "name": name, "role": role, "department": department, "image_path": str(Path(DATA_FACES_DIR) / filename)})
+                profiles[new_id] = profile
+                self._write_profiles(profiles)
+
+        for fingerprint in linked_fingerprints:
+            self.door_service.update_fingerprint_identity(
+                int(fingerprint["fingerprint_id"]), new_id, name, role, department
+            )
         self._publish()
         return self.list_employees(query=new_id, page=1, page_size=1)["items"][0]
 
@@ -1336,7 +1435,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             count = sum(token in str(row.get("time", "")) and "Thành công" in str(row.get("status", "")) for row in self.attendance_history)
             week.append({"label": label, "date": date.strftime("%d/%m"), "value": count})
         return {
-            "employees": len(profiles), "today_total": len(today_rows),
+            "employees": self.list_employees(page=1, page_size=1)["all_total"], "today_total": len(today_rows),
             "today_success": success, "today_failed": failed,
             "success_rate": round(success / len(today_rows) * 100) if today_rows else 0,
             "week": week, "recent": self.attendance_history[:5],

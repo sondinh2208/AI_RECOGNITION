@@ -25,8 +25,10 @@ except ValueError:
 
 CAMERA_DEVICE_IDS = tuple(dict.fromkeys((CAMERA_PREFERRED_ID, 0, 1, 2)))
 CAMERA_STREAM_URL = os.environ.get("FACECHECK_CAMERA_URL", "").strip()
+# Khi da chon camera Wi-Fi, khong du phong sang webcam. Neu ESP32 mat ket noi,
+# giao dien phai bao camera ngoai tuyen thay vi am tham hien camera may tinh.
 CAMERA_SOURCES = (
-    (CAMERA_STREAM_URL,) + CAMERA_DEVICE_IDS
+    (CAMERA_STREAM_URL,)
     if CAMERA_STREAM_URL else CAMERA_DEVICE_IDS
 )
 CAMERA_PROFILE = os.environ.get(
