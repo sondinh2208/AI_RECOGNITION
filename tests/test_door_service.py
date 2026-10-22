@@ -61,6 +61,22 @@ class DoorServiceTests(unittest.TestCase):
     def connect(self):
         self.service._on_connect(self.client, None, None, 0)
 
+    def test_oled_notices_expire_and_are_throttled(self):
+        self.service.notify_face_display("checking")
+        self.assertEqual(self.client.published, [])
+        self.connect()
+        self.service.notify_face_display("checking")
+        self.service.notify_face_display("checking")
+        self.assertEqual(len(self.client.published), 1)
+        _, raw, qos, retain = self.client.published[0]
+        payload = json.loads(raw)
+        self.assertEqual(payload["command"], "DISPLAY_FACE")
+        self.assertEqual(payload["expires_at"] - payload["issued_at"], 5)
+        self.assertEqual(qos, 0)
+        self.assertFalse(retain)
+        self.service.notify_face_display("denied")
+        self.assertEqual(len(self.client.published), 2)
+
     def ack(self, command_id, state, reason=None):
         payload = {
             "device_id": "door-01",

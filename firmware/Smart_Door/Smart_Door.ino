@@ -85,7 +85,7 @@ void Task_LockControl(void *pvParameters) {
                 );
                 queueMQTTAck(request.commandId, "OPEN", "started");
 
-                DisplayMsg serverMsg = { DISP_SUCCESS, -1 };
+                DisplayMsg serverMsg = { request.faceRecognition ? DISP_FACE_SUCCESS : DISP_SUCCESS, -1 };
                 xQueueSend(displayQueue, &serverMsg, 0);
                 alertSuccess();
                 openLock();
@@ -128,6 +128,7 @@ void Task_Fingerprint(void *pvParameters) {
                     "failed", "sensor_offline"
                 );
             } else if (inventory) {
+                postDisplay(DISP_FP_SYNC);
                 queueMQTTAck(
                     managementRequest.commandId, managementRequest.command, "started"
                 );
@@ -160,17 +161,21 @@ void Task_Fingerprint(void *pvParameters) {
                     "finished", nullptr, encoded
                 );
                 Serial.printf("[AS608] Da dong bo %u mau voi server.\n", foundCount);
+                postDisplay(DISP_FP_SYNCED);
             } else if (enroll && fingerprintExists(managementRequest.fingerprintId)) {
+                postDisplay(DISP_FP_FAILED, -2);
                 queueMQTTAck(
                     managementRequest.commandId, managementRequest.command,
                     "failed", "fingerprint_id_exists"
                 );
             } else if (!enroll && !fingerprintExists(managementRequest.fingerprintId)) {
+                postDisplay(DISP_FP_FAILED, managementRequest.fingerprintId);
                 queueMQTTAck(
                     managementRequest.commandId, managementRequest.command,
                     "failed", "fingerprint_id_not_found"
                 );
             } else {
+                if (!enroll) postDisplay(DISP_FP_DELETING, managementRequest.fingerprintId);
                 if (enroll) {
                     DisplayMsg workingMsg = {
                         DISP_FP_ENROLL, managementRequest.fingerprintId
@@ -201,14 +206,17 @@ void Task_Fingerprint(void *pvParameters) {
                         managementRequest.fingerprintId
                     );
                 }
+                int displayId = managementRequest.fingerprintId;
+                if (!succeeded && enroll && strcmp(failureReason, "fingerprint_already_registered") == 0) displayId = -2;
+                if (!succeeded && enroll && strcmp(failureReason, "enrollment_timeout") == 0) displayId = -3;
                 DisplayMsg resultMsg = {
                     succeeded
                         ? (enroll ? DISP_FP_SAVED : DISP_FP_DELETED)
                         : DISP_FP_FAILED,
-                    managementRequest.fingerprintId
+                    displayId
                 };
                 xQueueSend(displayQueue, &resultMsg, 0);
-                vTaskDelay(pdMS_TO_TICKS(1500));
+                vTaskDelay(pdMS_TO_TICKS(2500));
                 DisplayMsg homeMsg = { DISP_HOME, 0 };
                 xQueueSend(displayQueue, &homeMsg, 0);
             }
@@ -312,21 +320,36 @@ void Task_Fingerprint(void *pvParameters) {
 // ==========================================
 void Task_Display(void *pvParameters) {
     DisplayMsg msg;
+    DisplayMsg active = {DISP_HOME, 0};
+    uint32_t shownAt = millis();
+    uint32_t holdMs = 0;
+    bool sensorError = false;
+    renderDisplay(active);
     for (;;) {
-        if (xQueueReceive(displayQueue, &msg, portMAX_DELAY) == pdTRUE) {
-            switch (msg.type) {
-                case DISP_HOME:         showHomeScreen();           break;
-                case DISP_SUCCESS:      showSuccessScreen(msg.id);  break;
-                case DISP_ERROR:        showErrorScreen();          break;
-                case DISP_SENSOR_ERROR: showSensorErrorScreen();    break;
-                case DISP_FP_ENROLL:
-                case DISP_FP_SAVED:
-                case DISP_FP_DELETED:
-                case DISP_FP_FAILED:
-                    showFingerprintManagementScreen(msg.type, msg.id);
-                    break;
+        if (readDisplay(msg, pdMS_TO_TICKS(250))) {
+            if (msg.type == DISP_SENSOR_ERROR) sensorError = true;
+            else if (msg.type == DISP_HOME && isFingerprintConnected()) sensorError = false;
+            const bool management = active.type == DISP_FP_ENROLL || active.type == DISP_FP_LIFT || active.type == DISP_FP_SECOND || active.type == DISP_FP_DELETING || active.type == DISP_FP_SYNC;
+            const bool faceNotice = msg.type >= DISP_FACE_CHECK && msg.type != DISP_FACE_SUCCESS;
+            const bool holding = millis() - shownAt < holdMs;
+            if (holding && msg.type == DISP_HOME) continue;
+            // Local fingerprint workflows and relay feedback have priority.
+            if (holding && faceNotice) {
+                if (management || active.type == DISP_SUCCESS || active.type == DISP_ERROR ||
+                    (active.type >= DISP_FP_SAVED && active.type <= DISP_FP_SYNCED)) continue;
+                if (active.type == DISP_FACE_SUCCESS) continue;
+                if (active.type == DISP_FACE_DELETED && msg.type != DISP_FACE_DELETED) continue;
+                if (msg.type == DISP_FACE_CHECK && (active.type == DISP_FACE_VERIFIED || active.type == DISP_FACE_DENIED)) continue;
             }
+            active = msg;
+            shownAt = millis();
+            holdMs = (msg.type == DISP_FP_ENROLL || msg.type == DISP_FP_SECOND) ? 18000 : msg.type == DISP_FP_LIFT ? 7000 : msg.type == DISP_FP_SYNC ? 30000 : msg.type >= DISP_FACE_ENROLL && msg.type <= DISP_FACE_SAVING ? 6000 : msg.type == DISP_HOME ? 0 : 3000;
         }
+        if (active.type != DISP_HOME && millis() - shownAt >= holdMs) {
+            active = {sensorError ? DISP_SENSOR_ERROR : DISP_HOME, 0};
+            holdMs = 0;
+        }
+        renderDisplay(active);
     }
 }
 
@@ -409,6 +432,7 @@ void setup() {
     // 2. Khởi tạo FreeRTOS primitives
     lockEventGroup = xEventGroupCreate();
     displayQueue   = xQueueCreate(5, sizeof(DisplayMsg));
+    attachDisplayQueue(displayQueue);
     serverUnlockQueue = xQueueCreate(SERVER_UNLOCK_QUEUE_LENGTH, sizeof(ServerUnlockRequest));
     fingerprintCommandQueue = xQueueCreate(2, sizeof(FingerprintCommandRequest));
 

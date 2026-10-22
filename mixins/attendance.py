@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from camera_capture import open_camera_capture
+from frame_metrics import FrameRateMeter
 
 from config import (
     DEEPFACE_MODEL_NAME, ARCFACE_THRESHOLD, ARCFACE_TOP2_MARGIN,
@@ -196,8 +197,7 @@ class AttendanceMixin:
         - Vẽ HUD Kiosk hiện đại (Bounding box bo góc, nhãn DA XAC THUC / DANG NHAN DIEN).
         - Khi có khuôn mặt hợp lệ và không bận nhận diện -> trigger luồng phụ DeepFace ArcFace.
         """
-        prev_time = time.time()
-        smoothed_fps = 0.0
+        fps_meter = FrameRateMeter()
         first_frame_logged = False
         consecutive_read_failures = 0
         last_reconnect_attempt = 0.0
@@ -219,6 +219,7 @@ class AttendanceMixin:
                 
             ret, frame = self.camera_cap.read()
             if not ret or frame is None:
+                self.kiosk_fps = fps_meter.value()
                 consecutive_read_failures += 1
                 now_fail = time.time()
                 if consecutive_read_failures > 20 and (now_fail - last_reconnect_attempt > 2.0):
@@ -407,11 +408,7 @@ class AttendanceMixin:
                         ).start()
             
             # 4. Tính toán và làm mượt FPS
-            curr_time = time.time()
-            instant_fps = 1.0 / (curr_time - prev_time) if curr_time > prev_time else 0
-            prev_time = curr_time
-            smoothed_fps = instant_fps if smoothed_fps == 0.0 else (0.85 * smoothed_fps + 0.15 * instant_fps)
-            self.kiosk_fps = smoothed_fps
+            self.kiosk_fps = fps_meter.tick()
             
             # 5. Xuất trực tiếp frame BGR cho luồng MJPEG của web runtime.
             self.kiosk_latest_frame = frame

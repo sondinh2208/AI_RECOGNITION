@@ -2,6 +2,8 @@
 #define DISPLAY_DRIVER_H
 
 #include "config.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
 // ==========================================
 // KIỂU DỮ LIỆU QUEUE MÀN HÌNH (dùng chung toàn project)
@@ -18,7 +20,23 @@ enum DisplayMsgType {
     DISP_FP_ENROLL,
     DISP_FP_SAVED,
     DISP_FP_DELETED,
-    DISP_FP_FAILED
+    DISP_FP_FAILED,
+    DISP_FP_LIFT,
+    DISP_FP_SECOND,
+    DISP_FP_DELETING,
+    DISP_FP_SYNC,
+    DISP_FP_SYNCED,
+    DISP_FACE_CHECK,
+    DISP_FACE_DENIED,
+    DISP_FACE_SUCCESS,
+    DISP_FACE_VERIFIED,
+    DISP_FACE_ENROLL,
+    DISP_FACE_READY,
+    DISP_FACE_SAVING,
+    DISP_FACE_SAVED,
+    DISP_FACE_ENROLL_FAILED,
+    DISP_FACE_CANCELLED,
+    DISP_FACE_DELETED
 };
 
 /**
@@ -29,6 +47,11 @@ struct DisplayMsg {
     DisplayMsgType type;
     int id;
 };
+
+void attachDisplayQueue(QueueHandle_t queue);
+void postDisplay(DisplayMsgType type, int id = 0);
+bool readDisplay(DisplayMsg &message, TickType_t timeout);
+void renderDisplay(const DisplayMsg &message);
 
 // ==========================================
 // API CÔNG KHAI CỦA DISPLAY DRIVER

@@ -6,6 +6,7 @@ import threading
 import mediapipe as mp
 
 from camera_capture import open_camera_capture
+from frame_metrics import FrameRateMeter
 
 from config import (
     CAMERA_SOURCES, ENROLLMENT_DETECTION_INTERVAL_SECONDS,
@@ -82,7 +83,7 @@ class CameraMixin:
         Background Thread: AI Pipeline Enrollment
         Chuyên đọc frame, chạy AI và render HUD để không block UI.
         """
-        prev_time = time.time()
+        fps_meter = FrameRateMeter()
         smoothed_fps = 0.0
         
         # Biến State Machine chống nhiễu (Debounce)
@@ -109,6 +110,7 @@ class CameraMixin:
                 
             ret, frame = self.camera_cap.read()
             if not ret or frame is None:
+                self.current_fps = fps_meter.value()
                 consecutive_read_failures += 1
                 now_fail = time.time()
                 if consecutive_read_failures > 20 and (now_fail - last_reconnect_attempt > 2.0):
@@ -278,6 +280,12 @@ class CameraMixin:
             # Cập nhật biến trạng thái (Atomic)
             self.is_face_valid = display_locked
             self.ai_status_text = display_text
+            sync_oled = getattr(self, "_sync_oled_display", None)
+            if callable(sync_oled):
+                sync_oled()
+            sync_oled = getattr(self, "_sync_oled_display", None)
+            if callable(sync_oled):
+                sync_oled()
             
             # Lưu telemetry
             highest_conf = 0.0
@@ -303,14 +311,9 @@ class CameraMixin:
                 output = frame
                 
             # --- Tính và vẽ FPS ---
-            curr_time = time.time()
-            instant_fps = 1.0 / (curr_time - prev_time) if curr_time > prev_time else 0
-            prev_time = curr_time
+            smoothed_fps = fps_meter.tick()
             
-            if smoothed_fps == 0.0:
-                smoothed_fps = instant_fps
-            else:
-                smoothed_fps = 0.9 * smoothed_fps + 0.1 * instant_fps
+            self.current_fps = smoothed_fps
                 
             self.latest_processed_frame = output
             self._current_frame_id = getattr(self, '_current_frame_id', 0) + 1

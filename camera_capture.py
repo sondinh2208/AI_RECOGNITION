@@ -13,6 +13,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import cv2
 import numpy as np
+from frame_metrics import FrameRateMeter
 
 
 def _active_ipv4_network():
@@ -83,6 +84,15 @@ class LatestMjpegCapture:
         self._running = True
         self._response = None
         self._opened = threading.Event()
+        self._receive_rate = FrameRateMeter()
+        self._received_at = None
+        self._max_gap_ms = 0.0
+        self._decode_ms = 0.0
+        self._max_decode_ms = 0.0
+        self._decoded_frames = 0
+        self._skipped_decode_frames = 0
+        self._connections = 0
+        self._receive_errors = 0
         self._reader_thread = threading.Thread(
             target=self._reader_loop,
             name="mjpeg-network-reader",
@@ -105,6 +115,12 @@ class LatestMjpegCapture:
         with self._condition:
             self._jpeg = jpeg
             self._jpeg_sequence += 1
+            if hasattr(self, "_receive_rate"):
+                now = time.perf_counter()
+                gap = (now - self._received_at) * 1000 if self._received_at is not None else 0.0
+                self._received_at = now
+                self._max_gap_ms = max(self._max_gap_ms, gap)
+                self._receive_rate.tick()
             sequence = self._jpeg_sequence
             self._condition.notify_all()
             return sequence
@@ -127,14 +143,20 @@ class LatestMjpegCapture:
                 jpeg = self._jpeg
                 jpeg_sequence = self._jpeg_sequence
 
+            decode_started = time.perf_counter()
             frame = cv2.imdecode(
                 np.frombuffer(jpeg, dtype=np.uint8),
                 cv2.IMREAD_COLOR,
             )
+            skipped = max(0, jpeg_sequence - decoded_jpeg_sequence - 1)
             decoded_jpeg_sequence = jpeg_sequence
             if frame is None:
                 continue
             with self._condition:
+                self._decode_ms = (time.perf_counter() - decode_started) * 1000
+                self._max_decode_ms = max(self._max_decode_ms, self._decode_ms)
+                self._decoded_frames += 1
+                self._skipped_decode_frames += skipped
                 self._frame = frame
                 self._sequence = jpeg_sequence
                 self._opened.set()
@@ -149,6 +171,8 @@ class LatestMjpegCapture:
             )
             try:
                 with urllib.request.urlopen(request, timeout=4.0) as response:
+                    with self._condition:
+                        self._connections += 1
                     self._response = response
                     buffer = bytearray()
                     while self._running:
@@ -178,7 +202,8 @@ class LatestMjpegCapture:
             # release() dong socket de danh thuc read(); http.client co the nem
             # AttributeError neu file socket bi xoa dung luc dang doc chunked.
             except (OSError, TimeoutError, ValueError, AttributeError):
-                pass
+                with self._condition:
+                    self._receive_errors += 1
             finally:
                 self._response = None
             if self._running:
@@ -202,6 +227,23 @@ class LatestMjpegCapture:
         """Return the newest original JPEG without decoding or re-encoding it."""
         with self._condition:
             return self._jpeg_sequence, self._jpeg
+
+    def transport_snapshot(self):
+        """Numeric diagnostics only; no image or identity data."""
+        with self._condition:
+            return {
+                "receive_fps": round(self._receive_rate.value(), 2),
+                "received_frames": self._jpeg_sequence,
+                "last_frame_age_ms": round((time.perf_counter() - self._received_at) * 1000) if self._received_at is not None else None,
+                "jpeg_bytes": len(self._jpeg) if self._jpeg else 0,
+                "max_receive_gap_ms": round(self._max_gap_ms),
+                "decode_ms": round(self._decode_ms, 2),
+                "max_decode_ms": round(self._max_decode_ms, 2),
+                "decoded_frames": self._decoded_frames,
+                "skipped_decode_frames": self._skipped_decode_frames,
+                "reconnects": max(0, self._connections - 1),
+                "receive_errors": self._receive_errors,
+            }
 
     def release(self):
         self._running = False

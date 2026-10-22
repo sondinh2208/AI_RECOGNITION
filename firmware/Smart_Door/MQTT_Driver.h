@@ -8,6 +8,7 @@ struct ServerUnlockRequest {
     char commandId[49];
     uint32_t durationMs;
     int64_t expiresAt;
+    bool faceRecognition;
 };
 
 struct FingerprintCommandRequest {

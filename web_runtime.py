@@ -195,6 +195,32 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
     def _publish(self):
         with self._lock:
             self._event_version += 1
+        self._sync_oled_display()
+
+    def _sync_oled_display(self):
+        if self.current_page == "add_employee":
+            result = self.enrollment_result.get("state")
+            if result == "saving":
+                state = "saving"
+            elif result == "success":
+                state = "saved"
+            elif result == "error":
+                state = "save_failed"
+            elif self.enrollment_capture_ready:
+                state = "captured"
+            elif self._enrollment_scan_armed:
+                state = "enrolling"
+            else:
+                return
+            self.door_service.notify_face_display(state)
+            return
+        state = self.recognition_state.get("state")
+        if state in {"recognizing", "strict_confirmation"}:
+            self.door_service.notify_face_display("checking")
+        elif state in {"unknown", "ambiguous"}:
+            self.door_service.notify_face_display("denied")
+        elif state in {"success", "duplicate"}:
+            self.door_service.notify_face_display("verified")
 
     def snapshot(self):
         with self._lock:
@@ -215,6 +241,11 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                     "light_ok": bool(self.is_face_bright),
                     "faces": int(self.kiosk_face_count),
                     "device": self.device,
+                    "transport": (
+                        self.camera_cap.transport_snapshot()
+                        if callable(getattr(self.camera_cap, "transport_snapshot", None))
+                        else None
+                    ),
                 },
                 "recognition": dict(self.recognition_state),
                 "access": self._access_snapshot(),
@@ -1104,6 +1135,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         }
         if self._enrollment_continuous_session:
             self._restart_enrollment_idle_timer()
+        self.door_service.notify_face_display("cancelled")
         self._publish()
         return self.snapshot()
 
@@ -1408,6 +1440,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                     image.unlink(missing_ok=True)
             self._write_profiles(profiles)
         self._publish()
+        self.door_service.notify_face_display("deleted")
 
     def history_page(self, page=1, page_size=10, status="", query=""):
         rows = list(self.attendance_history)

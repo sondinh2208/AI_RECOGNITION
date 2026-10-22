@@ -49,9 +49,11 @@ constexpr char kStreamPart[] =
     "\r\n--facecheck-boundary\r\nContent-Type: image/jpeg\r\n"
     "Content-Length: %u\r\n\r\n";
 // HVGA/q20: khop khung 480x320 va nham JPEG khoang 8 KB/frame.
-// Ban thu dong bo toan tuyen: camera, backend va TFT cung chay 5 FPS.
-constexpr uint32_t kStreamTargetFps = 5;
-constexpr uint32_t kStreamFrameIntervalMs = 1000 / kStreamTargetFps;
+// VGA uu tien chi tiet khuon mat o xa; khoi dong 5 FPS de giu du dia truyen.
+constexpr uint8_t kDefaultStreamFps = 5;
+constexpr uint8_t kMinStreamFps = 1;
+constexpr uint8_t kMaxStreamFps = 15;
+volatile uint8_t stream_target_fps = kDefaultStreamFps;
 httpd_handle_t web_server = nullptr;
 httpd_handle_t stream_server = nullptr;
 bool web_server_ready = false;
@@ -196,10 +198,33 @@ esp_err_t health_handler(httpd_req_t *request) {
            "\"ip\":\"%s\"}",
            WiFi.RSSI(), ESP.getFreeHeap(),
            stream_client_active ? "true" : "false", stream_client_count,
-           stream_frame_count, stream_fps, kStreamTargetFps,
+           stream_frame_count, stream_fps, stream_target_fps,
            WiFi.localIP().toString().c_str());
   httpd_resp_set_type(request, "application/json");
   httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(request, response, HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t config_handler(httpd_req_t *request) {
+  char query[32] = {};
+  char fps_value[8] = {};
+  if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
+      httpd_query_key_value(query, "fps", fps_value, sizeof(fps_value)) != ESP_OK) {
+    httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Thieu tham so fps");
+    return ESP_FAIL;
+  }
+  const int requested_fps = atoi(fps_value);
+  if (requested_fps < kMinStreamFps || requested_fps > kMaxStreamFps) {
+    httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "FPS phai tu 1 den 15");
+    return ESP_FAIL;
+  }
+  stream_target_fps = static_cast<uint8_t>(requested_fps);
+  char response[64];
+  snprintf(response, sizeof(response),
+           "{\"ok\":true,\"target_fps\":%u}", stream_target_fps);
+  httpd_resp_set_type(request, "application/json");
+  httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "*");
+  Serial.printf("[CONFIG] Stream target=%u FPS\n", stream_target_fps);
   return httpd_resp_send(request, response, HTTPD_RESP_USE_STRLEN);
 }
 
@@ -324,8 +349,10 @@ esp_err_t stream_handler(httpd_req_t *request) {
     esp_camera_fb_return(frame);
     if (result != ESP_OK) break;
     const unsigned long frame_elapsed = millis() - frame_started;
-    if (frame_elapsed < kStreamFrameIntervalMs) {
-      delay(kStreamFrameIntervalMs - frame_elapsed);
+    const uint8_t target_fps = stream_target_fps;
+    const uint32_t frame_interval_ms = 1000U / (target_fps ? target_fps : 1);
+    if (frame_elapsed < frame_interval_ms) {
+      delay(frame_interval_ms - frame_elapsed);
     } else {
       delay(1);
     }
@@ -347,11 +374,13 @@ void start_web_servers() {
   httpd_uri_t root_uri = {"/", HTTP_GET, root_handler, nullptr};
   httpd_uri_t health_uri = {"/health", HTTP_GET, health_handler, nullptr};
   httpd_uri_t capture_uri = {"/capture", HTTP_GET, capture_handler, nullptr};
+  httpd_uri_t config_uri = {"/config", HTTP_GET, config_handler, nullptr};
   const esp_err_t web_error = httpd_start(&web_server, &web_config);
   if (web_error == ESP_OK) {
     httpd_register_uri_handler(web_server, &root_uri);
     httpd_register_uri_handler(web_server, &health_uri);
     httpd_register_uri_handler(web_server, &capture_uri);
+    httpd_register_uri_handler(web_server, &config_uri);
     web_server_ready = true;
     Serial.println("[SERVER] Web server port 80: OK");
   } else {
@@ -418,9 +447,9 @@ bool start_camera() {
   // Reduce continuous camera DMA pressure so Wi-Fi can transmit reliably.
   config.xclk_freq_hz = 8000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_HVGA;
-  // Gia tri lon hon nen manh hon; q20 nham muc tieu khoang 8 KB/frame.
-  config.jpeg_quality = 20;
+  config.frame_size = FRAMESIZE_VGA;
+  // Gia tri nho hon it nen hon; q18 giu chi tiet khuon mat o xa tot hon.
+  config.jpeg_quality = 18;
   // One on-demand framebuffer avoids continuous PSRAM/DMA contention.
   config.fb_count = 1;
   config.fb_location = CAMERA_FB_IN_PSRAM;
@@ -439,12 +468,21 @@ bool start_camera() {
     sensor->set_vflip(sensor, 1);
     sensor->set_hmirror(sensor, 1);
     sensor->set_sharpness(sensor, 1);
-    sensor->set_contrast(sensor, 1);
     if (sensor->id.PID == OV3660_PID) {
-      // Can bang anh trong moi truong nguoc sang ma khong doi FPS hay tai mang.
-      sensor->set_brightness(sensor, 1);
-      sensor->set_ae_level(sensor, 2);
+      // Tang sang vua phai bang ISP cua OV3660. Giu tu dong phoi sang/gain/
+      // can bang trang de khong tang tai CPU, kich thuoc frame hay FPS mang.
+      sensor->set_brightness(sensor, 2);
+      sensor->set_contrast(sensor, 0);
       sensor->set_saturation(sensor, 0);
+      sensor->set_exposure_ctrl(sensor, 1);
+      sensor->set_gain_ctrl(sensor, 1);
+      sensor->set_whitebal(sensor, 1);
+      sensor->set_awb_gain(sensor, 1);
+      sensor->set_ae_level(sensor, 2);
+      sensor->set_bpc(sensor, 1);
+      sensor->set_wpc(sensor, 1);
+    } else {
+      sensor->set_contrast(sensor, 0);
     }
   }
   return true;
@@ -466,7 +504,7 @@ void setup() {
   if (!start_camera()) {
     while (true) delay(1000);
   }
-  Serial.println("[CAMERA] San sang (HVGA 480x320/q20, 1 buffer, XCLK 8 MHz)");
+  Serial.println("[CAMERA] San sang (VGA 640x480/q18, 1 buffer, XCLK 8 MHz)");
 #else
   Serial.println("[TEST] Bo qua camera va web server, chi kiem tra SoftAP.");
 #endif

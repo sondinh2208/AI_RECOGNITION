@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -29,6 +30,45 @@ class DoorRuntimeIntegrationTests(unittest.TestCase):
             runtime._on_kiosk_recognition_success(employee, 0.25)
 
         runtime.door_service.request_open.assert_called_once_with("NV001")
+        runtime.door_service.notify_face_display.assert_called_with("verified")
+
+    def test_face_delete_notifies_oled_only_after_successful_storage(self):
+        runtime = self.make_runtime()
+        with tempfile.TemporaryDirectory() as folder, patch("web_runtime.DATA_FACES_DIR", folder), patch.object(runtime, "_read_profiles", return_value={"TEST": {}}), patch.object(runtime, "_write_profiles") as write:
+            runtime.delete_employee("TEST")
+            write.assert_called_once_with({})
+        runtime.door_service.notify_face_display.assert_called_with("deleted")
+
+    def test_failed_face_delete_does_not_report_success_on_oled(self):
+        runtime = self.make_runtime()
+        with tempfile.TemporaryDirectory() as folder, patch("web_runtime.DATA_FACES_DIR", folder), patch.object(runtime, "_read_profiles", return_value={"TEST": {}}), patch.object(runtime, "_write_profiles", side_effect=OSError("storage failure")):
+            with self.assertRaises(OSError):
+                runtime.delete_employee("TEST")
+        runtime.door_service.notify_face_display.assert_not_called()
+
+    def test_oled_enrollment_tracks_capture_and_save_without_opening(self):
+        runtime = self.make_runtime()
+        runtime.current_page = "add_employee"
+        runtime._enrollment_scan_armed = True
+        runtime._sync_oled_display()
+        runtime.door_service.notify_face_display.assert_called_with("enrolling")
+        runtime.enrollment_capture_ready = True
+        runtime._sync_oled_display()
+        runtime.door_service.notify_face_display.assert_called_with("captured")
+        runtime.enrollment_result = {"state": "saving"}
+        runtime._sync_oled_display()
+        runtime.door_service.notify_face_display.assert_called_with("saving")
+        runtime.enrollment_result = {"state": "success"}
+        runtime._sync_oled_display()
+        runtime.door_service.notify_face_display.assert_called_with("saved")
+        runtime.door_service.request_open.assert_not_called()
+
+    def test_failed_recognition_updates_oled_without_opening(self):
+        runtime = self.make_runtime()
+        with patch.object(runtime, "_add_attendance_record"):
+            runtime._on_kiosk_recognition_failed(0.8)
+        runtime.door_service.notify_face_display.assert_called_with("denied")
+        runtime.door_service.request_open.assert_not_called()
 
     def test_attendance_duplicate_still_uses_door_anti_repeat_policy(self):
         runtime = self.make_runtime()

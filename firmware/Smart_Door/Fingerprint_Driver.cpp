@@ -1,4 +1,5 @@
 #include "Fingerprint_Driver.h"
+#include "Display_Driver.h"
 #include <HardwareSerial.h>
 #include <Adafruit_Fingerprint.h>
 
@@ -157,11 +158,13 @@ bool enrollFingerprint(uint8_t id, EnrollCallback callback) {
     snprintf(buf, sizeof(buf), "🔄 BẮT ĐẦU ĐĂNG KÝ VÂN TAY CHO ID #%d", id);
     notifyProgress(callback, buf);
 
+    postDisplay(DISP_FP_ENROLL, id);
     // Bước 1: Quét lần 1
     notifyProgress(callback, "👉 [BƯỚC 1/2] Đặt ngón tay cần đăng ký lên cảm biến (chờ trong 15s)...");
     unsigned long startWait1 = millis();
     while (p != FINGERPRINT_OK) {
         if (millis() - startWait1 > 15000) {
+            lastEnrollError = "enrollment_timeout";
             notifyProgress(callback, "⏱️ Quá thời gian (15s)! Đã hủy đăng ký.");
             isEnrolling = false;
             return false;
@@ -210,6 +213,7 @@ bool enrollFingerprint(uint8_t id, EnrollCallback callback) {
 
     notifyProgress(callback, "✅ Đã chụp xong lần 1! Vui lòng NHẤC NGÓN TAY RA...");
 
+    postDisplay(DISP_FP_LIFT, id);
     // Bước 2: Chờ nhấc tay (timeout 5s)
     delay(1000);
     p = 0;
@@ -219,12 +223,14 @@ bool enrollFingerprint(uint8_t id, EnrollCallback callback) {
         delay(50);
     }
 
+    postDisplay(DISP_FP_SECOND, id);
     // Bước 3: Quét lần 2 (cùng ngón tay đó)
     notifyProgress(callback, "👉 [BƯỚC 2/2] Đặt lại CÙNG NGÓN TAY ĐÓ lên cảm biến (chờ trong 15s)...");
     p = -1;
     unsigned long startWait2 = millis();
     while (p != FINGERPRINT_OK) {
         if (millis() - startWait2 > 15000) {
+            lastEnrollError = "enrollment_timeout";
             notifyProgress(callback, "⏱️ Quá thời gian (15s)! Đã hủy đăng ký.");
             isEnrolling = false;
             return false;
@@ -276,6 +282,7 @@ bool enrollFingerprint(uint8_t id, EnrollCallback callback) {
 
 bool deleteFingerprint(uint8_t id) {
     if (!sensorReady || id == 0 || id > 127) return false;
+    postDisplay(DISP_FP_DELETING, id);
     isEnrolling = true;
     
     uint8_t p = finger.deleteModel(id);
@@ -283,11 +290,13 @@ bool deleteFingerprint(uint8_t id) {
         Serial.print(F("[AS608] Da xoa thanh cong van tay ID #"));
         Serial.println(id);
         isEnrolling = false;
+        postDisplay(DISP_FP_DELETED, id);
         return true;
     } else {
         Serial.print(F("[AS608] Khong the xoa van tay ID #"));
         Serial.println(id);
         isEnrolling = false;
+        postDisplay(DISP_FP_FAILED, id);
         return false;
     }
 }

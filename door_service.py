@@ -734,6 +734,30 @@ class DoorService:
         self._notify_change()
         return {"accepted": True, "command_id": command_id}
 
+    def notify_face_display(self, state: str) -> None:
+        """Best-effort, short-lived OLED notices; never controls the relay."""
+        if state not in {"checking", "denied", "verified", "enrolling", "captured", "saving", "saved", "save_failed", "cancelled", "deleted", "idle"}:
+            return
+        with self._lock:
+            if not self.connected:
+                return
+            now = self._epoch_time()
+            previous = getattr(self, "_oled_notice", (None, 0))
+            if previous[0] == state and now - previous[1] < 3:
+                return
+            payload = {
+                "command": "DISPLAY_FACE", "state": state,
+                "device_id": self.device_id,
+                "command_id": f"oled-{uuid.uuid4().hex[:12]}",
+                "issued_at": int(now), "expires_at": int(now) + 5,
+            }
+            try:
+                info = self.client.publish(self.command_topic, json.dumps(payload), qos=0, retain=False)
+                if info.rc == 0:
+                    self._oled_notice = (state, now)
+            except Exception:
+                pass  # Display loss must not interrupt authentication.
+
     def request_open(self, employee_id: str) -> dict:
         """Try to publish one OPEN command; returns a non-throwing decision."""
         now = self._monotonic()

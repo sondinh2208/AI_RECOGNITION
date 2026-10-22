@@ -1,4 +1,5 @@
 #include "MQTT_Driver.h"
+#include "Display_Driver.h"
 
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
@@ -266,6 +267,7 @@ void handleOpenCommand(JsonDocument &document, const char *commandId) {
     ServerUnlockRequest request = {};
     strlcpy(request.commandId, commandId, sizeof(request.commandId));
     request.durationMs = static_cast<uint32_t>(durationMs);
+    request.faceRecognition = strcmp(document["source"] | "", "face_recognition") == 0;
     request.expiresAt = expiresAt;
 
     if (xQueueSend(unlockQueue, &request, 0) != pdTRUE) {
@@ -309,6 +311,23 @@ void onMQTTMessage(char *topic, byte *payload, unsigned int length) {
     Serial.printf("[MQTT] Nhan command %s (%s)\n", command, commandId);
     if (strcmp(command, "PING") == 0) {
         publishAck(commandId, command, "received");
+        return;
+    }
+    if (strcmp(command, "DISPLAY_FACE") == 0) {
+        int64_t expiry = 0;
+        if (!commandExpiryIsValid(document, expiry)) return;
+        const char *state = document["state"] | "";
+        if (strcmp(state, "checking") == 0) postDisplay(DISP_FACE_CHECK);
+        else if (strcmp(state, "denied") == 0) postDisplay(DISP_FACE_DENIED);
+        else if (strcmp(state, "verified") == 0) postDisplay(DISP_FACE_VERIFIED);
+        else if (strcmp(state, "enrolling") == 0) postDisplay(DISP_FACE_ENROLL);
+        else if (strcmp(state, "captured") == 0) postDisplay(DISP_FACE_READY);
+        else if (strcmp(state, "saving") == 0) postDisplay(DISP_FACE_SAVING);
+        else if (strcmp(state, "saved") == 0) postDisplay(DISP_FACE_SAVED);
+        else if (strcmp(state, "save_failed") == 0) postDisplay(DISP_FACE_ENROLL_FAILED);
+        else if (strcmp(state, "cancelled") == 0) postDisplay(DISP_FACE_CANCELLED);
+        else if (strcmp(state, "deleted") == 0) postDisplay(DISP_FACE_DELETED);
+        else if (strcmp(state, "idle") == 0) postDisplay(DISP_HOME);
         return;
     }
     if (strcmp(command, "OPEN") == 0) {
