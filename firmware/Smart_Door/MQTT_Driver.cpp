@@ -21,6 +21,8 @@ struct MQTTAckMessage {
     char command[24];
     char state[12];
     char reason[40];
+    // Bitmap 128 bit, ma hoa hex (32 ky tu). Bit N = slot van tay ID N.
+    char fingerprintSlots[33];
 };
 
 struct MQTTEventMessage {
@@ -83,7 +85,8 @@ bool publishAck(
     const char *commandId,
     const char *command,
     const char *state,
-    const char *reason = nullptr
+    const char *reason = nullptr,
+    const char *fingerprintSlots = nullptr
 ) {
     if (!mqttClient.connected()) return false;
 
@@ -94,6 +97,9 @@ bool publishAck(
     document["state"] = state;
     document["uptime_ms"] = static_cast<unsigned long>(millis());
     if (reason && reason[0] != '\0') document["reason"] = reason;
+    if (fingerprintSlots && fingerprintSlots[0] != '\0') {
+        document["fingerprint_slots"] = fingerprintSlots;
+    }
 
     char payload[320];
     const size_t payloadLength = serializeJson(document, payload, sizeof(payload));
@@ -118,7 +124,9 @@ void flushQueuedAcks() {
     MQTTAckMessage message;
     while (xQueuePeek(ackQueue, &message, 0) == pdTRUE) {
         const char *reason = message.reason[0] == '\0' ? nullptr : message.reason;
-        if (!publishAck(message.commandId, message.command, message.state, reason)) return;
+        const char *slots = message.fingerprintSlots[0] == '\0'
+            ? nullptr : message.fingerprintSlots;
+        if (!publishAck(message.commandId, message.command, message.state, reason, slots)) return;
         xQueueReceive(ackQueue, &message, 0);
     }
 }
@@ -193,8 +201,9 @@ void handleFingerprintCommand(
         rejectFingerprintCommand(commandId, command, "duplicate_command");
         return;
     }
+    const bool inventory = strcmp(command, "FINGERPRINT_SYNC") == 0;
     const int fingerprintId = document["fingerprint_id"] | 0;
-    if (fingerprintId < 1 || fingerprintId > 127) {
+    if (!inventory && (fingerprintId < 1 || fingerprintId > 127)) {
         rejectFingerprintCommand(commandId, command, "invalid_fingerprint_id");
         return;
     }
@@ -211,14 +220,15 @@ void handleFingerprintCommand(
     FingerprintCommandRequest request = {};
     strlcpy(request.commandId, commandId, sizeof(request.commandId));
     strlcpy(request.command, command, sizeof(request.command));
-    request.fingerprintId = static_cast<uint8_t>(fingerprintId);
+    request.fingerprintId = inventory ? 0 : static_cast<uint8_t>(fingerprintId);
     request.expiresAt = expiresAt;
     if (xQueueSend(fingerprintQueue, &request, 0) != pdTRUE) {
         rejectFingerprintCommand(commandId, command, "fingerprint_queue_full");
         return;
     }
     rememberCommand(commandId);
-    Serial.printf("[MQTT] Da dua %s ID #%d vao hang doi.\n", command, fingerprintId);
+    if (inventory) Serial.printf("[MQTT] Da dua %s vao hang doi.\n", command);
+    else Serial.printf("[MQTT] Da dua %s ID #%d vao hang doi.\n", command, fingerprintId);
 }
 
 void handleOpenCommand(JsonDocument &document, const char *commandId) {
@@ -306,7 +316,8 @@ void onMQTTMessage(char *topic, byte *payload, unsigned int length) {
         return;
     }
     if (strcmp(command, "FINGERPRINT_ENROLL") == 0 ||
-        strcmp(command, "FINGERPRINT_DELETE") == 0) {
+        strcmp(command, "FINGERPRINT_DELETE") == 0 ||
+        strcmp(command, "FINGERPRINT_SYNC") == 0) {
         handleFingerprintCommand(document, commandId, command);
         return;
     }
@@ -443,7 +454,8 @@ bool queueMQTTAck(
     const char *commandId,
     const char *command,
     const char *state,
-    const char *reason
+    const char *reason,
+    const char *fingerprintSlots
 ) {
     if (!ackQueue) return false;
 
@@ -452,6 +464,9 @@ bool queueMQTTAck(
     strlcpy(message.command, command, sizeof(message.command));
     strlcpy(message.state, state, sizeof(message.state));
     if (reason) strlcpy(message.reason, reason, sizeof(message.reason));
+    if (fingerprintSlots) {
+        strlcpy(message.fingerprintSlots, fingerprintSlots, sizeof(message.fingerprintSlots));
+    }
 
     if (xQueueSend(ackQueue, &message, 0) == pdTRUE) return true;
     Serial.printf("[MQTT] ACK queue day, mat ACK %s:%s.\n", commandId, state);

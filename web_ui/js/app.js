@@ -76,8 +76,12 @@ const fingerprintErrorLabels = {
   invalid_fingerprint_id: "ID vân tay phải nằm trong khoảng 1–127.",
   fingerprint_id_exists: "ID vân tay này đã tồn tại.",
   fingerprint_id_not_found: "Không tìm thấy ID vân tay này.",
+  fingerprint_employee_required: "Hãy chọn hồ sơ nhân viên cần gắn vân tay.",
+  fingerprint_reassignment_forbidden: "Vân tay đã được gắn với một hồ sơ. Hãy xóa mẫu và đăng ký lại nếu cần thay đổi chủ sở hữu.",
   employee_id_exists_select_profile: "Mã nhân viên này đã tồn tại. Hãy chọn nhân viên trong danh sách hồ sơ có sẵn.",
   fingerprint_already_registered: "Ngón tay này đã được đăng ký trước đó. Hãy sử dụng ngón tay khác.",
+  inventory_scan_incomplete: "Không đọc đủ dữ liệu vân tay từ thiết bị. Hãy kiểm tra kết nối cảm biến và thử lại.",
+  invalid_fingerprint_inventory: "Dữ liệu đồng bộ từ thiết bị không hợp lệ. Hãy nạp lại firmware mới và thử lại.",
   publish_error: "Không thể gửi yêu cầu tới thiết bị.",
   publish_failed: "Thiết bị chưa tiếp nhận yêu cầu.",
 };
@@ -571,7 +575,7 @@ function clearFingerprintEnrollForm() {
 function renderFingerprintState(door = {}) {
   const management = door.fingerprint_management || {};
   const state = management.state || "idle";
-  const commandLabel = management.command === "FINGERPRINT_ENROLL" ? "Đăng ký" : management.command === "FINGERPRINT_DELETE" ? "Xóa" : "Không có";
+  const commandLabel = management.command === "FINGERPRINT_ENROLL" ? "Đăng ký" : management.command === "FINGERPRINT_DELETE" ? "Xóa" : management.command === "FINGERPRINT_SYNC" ? "Đồng bộ dữ liệu" : "Không có";
   const stateLabels = { sent: "Đang gửi yêu cầu", started: "Đang thực hiện", finished: "Hoàn tất", failed: "Thất bại", idle: "Sẵn sàng" };
   const sensorLabels = { sensor_online: "Đang hoạt động", sensor_offline: "Mất kết nối", unknown: "Chưa có trạng thái" };
   const css = ["sent", "started"].includes(state) ? "fingerprint-command-busy" : state === "finished" ? "fingerprint-command-ok" : state === "failed" ? "fingerprint-command-failed" : "";
@@ -614,12 +618,22 @@ function renderFingerprintDirectory() {
     const employee = fingerprintEmployeeDirectory.find(candidate =>
       candidate.id.toLocaleLowerCase() === String(item.employee_id || "").toLocaleLowerCase()
     );
-    const name = item.name || employee?.name || `Vân tay #${item.fingerprint_id}`;
+    const linked = Boolean(String(item.employee_id || "").trim());
+    const sensorPresent = item.sensor_present !== false;
+    const name = linked ? (employee?.name || item.name || "Hồ sơ không còn tồn tại") : "Chưa gắn hồ sơ";
     const employeeId = item.employee_id || employee?.id || "—";
-    const role = item.role || employee?.role || "—";
-    const department = item.department || employee?.department || "—";
-    return `<tr><td><span class="method-status active">${icon("fingerprint")} #${esc(item.fingerprint_id)}</span></td><td><strong>${esc(name)}</strong></td><td>${esc(employeeId)}</td><td>${esc(role)}</td><td>${esc(department)}</td><td><span class="status-text success">Đã đăng ký</span></td></tr>`;
-  }).join("") : `<tr><td class="empty" colspan="6">Chưa có nhân viên nào đăng ký vân tay</td></tr>`);
+    const role = employee?.role || item.role || "—";
+    const department = employee?.department || item.department || "—";
+    const status = !sensorPresent
+      ? '<span class="status-text failed">Không còn trên cảm biến</span>'
+      : linked
+        ? '<span class="status-text success">Đã gắn hồ sơ</span>'
+        : '<span class="status-text warning">Chưa gắn hồ sơ</span>';
+    const action = sensorPresent && !linked
+      ? `<button class="link" type="button" data-link-fingerprint="${esc(item.fingerprint_id)}">Gắn hồ sơ</button>`
+      : linked ? '<span class="muted">Liên kết đã khóa</span>' : "—";
+    return `<tr><td><span class="method-status ${sensorPresent ? "active" : ""}">${icon("fingerprint")} #${esc(item.fingerprint_id)}</span></td><td><strong>${esc(name)}</strong></td><td>${esc(employeeId)}</td><td>${esc(role)}</td><td>${esc(department)}</td><td>${status}</td><td>${action}</td></tr>`;
+  }).join("") : `<tr><td class="empty" colspan="7">Chưa có dữ liệu vân tay. Nhấn “Đồng bộ từ cảm biến” để kiểm tra.</td></tr>`);
   pagination($("#fingerprintPagination"), {
     total: items.length,
     page: state.page,
@@ -629,6 +643,38 @@ function renderFingerprintDirectory() {
     state.page = page;
     renderFingerprintDirectory();
   }, "vân tay");
+}
+
+function openFingerprintLink(item) {
+  if (String(item.employee_id || "").trim()) {
+    toast("Liên kết này đã được khóa. Hãy xóa mẫu và đăng ký lại nếu cần thay đổi chủ sở hữu.", true);
+    return;
+  }
+  if (!fingerprintEmployeeDirectory.length) {
+    toast("Chưa có hồ sơ nhân viên để liên kết.", true);
+    return;
+  }
+  const options = fingerprintEmployeeDirectory.map(employee =>
+    `<option value="${esc(employee.id)}" ${String(item.employee_id || "").toLocaleLowerCase() === employee.id.toLocaleLowerCase() ? "selected" : ""}>${esc(employee.id)} · ${esc(employee.name)} · ${esc(employee.department)}</option>`
+  ).join("");
+  openModal(`<h2>Gắn vân tay #${esc(item.fingerprint_id)} với nhân viên</h2><p class="subtitle">Hãy xác minh đúng người sở hữu trước khi lưu. Liên kết sẽ được khóa sau lần gắn đầu tiên; muốn đổi chủ sở hữu phải xóa mẫu và đăng ký lại.</p><form id="fingerprintLinkForm"><label>Nhân viên<select name="employee_id" required>${options}</select></label><div class="modal-actions"><button type="button" class="secondary" id="cancelFingerprintLink">Hủy</button><button class="primary">Lưu liên kết</button></div></form>`);
+  $("#cancelFingerprintLink").addEventListener("click", closeModal);
+  $("#fingerprintLinkForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const employeeId = new FormData(event.currentTarget).get("employee_id");
+    const employee = fingerprintEmployeeDirectory.find(candidate => candidate.id === employeeId);
+    if (!employee) return;
+    try {
+      await api.updateFingerprint(item.fingerprint_id, {
+        employee_id: employee.id, name: employee.name,
+        role: employee.role, department: employee.department,
+      });
+      closeModal();
+      store.fingerprints.stale = store.employees.stale = store.dashboard.stale = true;
+      await loadFingerprints(true);
+      toast(`Đã gắn vân tay #${item.fingerprint_id} với ${employee.name}.`);
+    } catch (error) { toast(friendlyFingerprintError(error), true); }
+  });
 }
 
 async function loadFingerprints(force = false) {
@@ -848,6 +894,25 @@ $("#refreshFingerprints").addEventListener("click", () => {
   store.fingerprints.page = 1;
   store.fingerprints.stale = true;
   loadFingerprints(true);
+});
+$("#syncFingerprints").addEventListener("click", async event => {
+  event.currentTarget.disabled = true;
+  try {
+    await api.syncFingerprints();
+    toast("Đã yêu cầu thiết bị kiểm tra toàn bộ ID vân tay. Danh sách sẽ tự cập nhật.");
+  } catch (error) {
+    toast(friendlyFingerprintError(error), true);
+  } finally {
+    event.currentTarget.disabled = false;
+  }
+});
+$("#fingerprintRows").addEventListener("click", event => {
+  const button = event.target.closest("[data-link-fingerprint]");
+  if (!button) return;
+  const item = (store.fingerprints.data?.items || []).find(
+    candidate => Number(candidate.fingerprint_id) === Number(button.dataset.linkFingerprint)
+  );
+  if (item) openFingerprintLink(item);
 });
 $("#fingerprintEnrollForm").addEventListener("submit", async event => {
   event.preventDefault();

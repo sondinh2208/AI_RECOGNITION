@@ -115,6 +115,8 @@ void Task_Fingerprint(void *pvParameters) {
             const int64_t now = static_cast<int64_t>(time(nullptr));
             const bool enroll =
                 strcmp(managementRequest.command, "FINGERPRINT_ENROLL") == 0;
+            const bool inventory =
+                strcmp(managementRequest.command, "FINGERPRINT_SYNC") == 0;
             if (now <= 0 || now > managementRequest.expiresAt) {
                 queueMQTTAck(
                     managementRequest.commandId, managementRequest.command,
@@ -125,6 +127,39 @@ void Task_Fingerprint(void *pvParameters) {
                     managementRequest.commandId, managementRequest.command,
                     "failed", "sensor_offline"
                 );
+            } else if (inventory) {
+                queueMQTTAck(
+                    managementRequest.commandId, managementRequest.command, "started"
+                );
+                uint8_t slots[16] = {};
+                uint16_t foundCount = 0;
+                for (uint8_t id = 1; id <= 127; ++id) {
+                    if (fingerprintExists(id)) {
+                        slots[id / 8] |= (1U << (id % 8));
+                        ++foundCount;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(2));
+                }
+                const uint16_t expectedCount = getFingerprintCount();
+                if (foundCount != expectedCount) {
+                    queueMQTTAck(
+                        managementRequest.commandId, managementRequest.command,
+                        "failed", "inventory_scan_incomplete"
+                    );
+                    continue;
+                }
+                static const char hex[] = "0123456789abcdef";
+                char encoded[33];
+                for (size_t i = 0; i < sizeof(slots); ++i) {
+                    encoded[i * 2] = hex[(slots[i] >> 4) & 0x0F];
+                    encoded[i * 2 + 1] = hex[slots[i] & 0x0F];
+                }
+                encoded[32] = '\0';
+                queueMQTTAck(
+                    managementRequest.commandId, managementRequest.command,
+                    "finished", nullptr, encoded
+                );
+                Serial.printf("[AS608] Da dong bo %u mau voi server.\n", foundCount);
             } else if (enroll && fingerprintExists(managementRequest.fingerprintId)) {
                 queueMQTTAck(
                     managementRequest.commandId, managementRequest.command,

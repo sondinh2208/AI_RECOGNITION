@@ -30,7 +30,8 @@ bool queueMQTTAck(
     const char *commandId,
     const char *command,
     const char *state,
-    const char *reason = nullptr
+    const char *reason = nullptr,
+    const char *fingerprintSlots = nullptr
 );
 
 // Dua su kien toi gian vao queue; chi Task_MQTT duoc publish len broker.

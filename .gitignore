@@ -32,6 +32,7 @@ models/
 .vscode/
 .idea/
 .pio/
+.codex-platformio/
 compile_commands.json
 *.swp
 *.swo

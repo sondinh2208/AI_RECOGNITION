@@ -211,11 +211,11 @@
         <article class="card table-card fingerprint-directory-card">
           <div class="card-title">
             <span><svg><use href="#i-fingerprint"/></svg> Nhân viên đã đăng ký vân tay</span>
-            <button class="link" id="refreshFingerprints" type="button">Làm mới</button>
+            <span class="fingerprint-directory-actions"><button class="secondary" id="syncFingerprints" type="button">Đồng bộ từ cảm biến</button><button class="link" id="refreshFingerprints" type="button">Làm mới</button></span>
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Mã vân tay</th><th>Nhân viên</th><th>Mã NV</th><th>Chức vụ</th><th>Phòng ban</th><th>Trạng thái</th></tr></thead>
+              <thead><tr><th>Mã vân tay</th><th>Nhân viên</th><th>Mã NV</th><th>Chức vụ</th><th>Phòng ban</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
               <tbody id="fingerprintRows"></tbody>
             </table>
           </div>

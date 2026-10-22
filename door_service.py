@@ -171,6 +171,62 @@ class DoorService:
         except OSError as exc:
             print(f"[DOOR] Khong luu duoc danh sach van tay: {exc}")
 
+    @staticmethod
+    def _decode_fingerprint_slots(encoded: str) -> set[int]:
+        """Decode the 128-slot bitmap returned by the controller."""
+        if not isinstance(encoded, str) or len(encoded) != 32:
+            raise ValueError("invalid_fingerprint_inventory")
+        try:
+            bitmap = bytes.fromhex(encoded)
+        except ValueError as exc:
+            raise ValueError("invalid_fingerprint_inventory") from exc
+        return {
+            fingerprint_id
+            for fingerprint_id in range(1, 128)
+            if bitmap[fingerprint_id // 8] & (1 << (fingerprint_id % 8))
+        }
+
+    def _reconcile_fingerprint_inventory(self, encoded: str) -> dict:
+        present_ids = self._decode_fingerprint_slots(encoded)
+        now = datetime.now(timezone.utc).isoformat()
+        discovered = 0
+        missing = 0
+        for fingerprint_id in present_ids:
+            key = str(fingerprint_id)
+            current = self.fingerprint_registry.get(key)
+            if current is None:
+                self.fingerprint_registry[key] = {
+                    "fingerprint_id": fingerprint_id,
+                    "employee_id": "",
+                    "name": f"Vân tay #{fingerprint_id}",
+                    "role": "",
+                    "department": "",
+                    "status": "unassigned",
+                    "sensor_present": True,
+                    "first_seen_at": now,
+                }
+                discovered += 1
+            else:
+                current["sensor_present"] = True
+                if not current.get("employee_id"):
+                    current["status"] = "unassigned"
+        for key, current in self.fingerprint_registry.items():
+            try:
+                fingerprint_id = int(key)
+            except ValueError:
+                continue
+            if fingerprint_id not in present_ids:
+                current["sensor_present"] = False
+                current["status"] = "missing_on_sensor"
+                missing += 1
+        self._save_fingerprint_registry()
+        return {
+            "sensor_count": len(present_ids),
+            "discovered_count": discovered,
+            "missing_count": missing,
+            "synced_at": now,
+        }
+
     def _load_events(self) -> None:
         if self._event_history_path is None or not self._event_history_path.exists():
             return
@@ -270,10 +326,11 @@ class DoorService:
                     "state": "failed",
                     "reason": "ack_timeout",
                 }
-                print(
-                    f"[DOOR] Timeout {timed_out['command']} "
-                    f"cho ID #{timed_out['fingerprint_id']}."
+                target = (
+                    f" cho ID #{timed_out['fingerprint_id']}"
+                    if timed_out.get("fingerprint_id") else ""
                 )
+                print(f"[DOOR] Timeout {timed_out['command']}{target}.")
                 self._notify_change()
                 return True
             if not self.pending or now < self.pending["deadline"]:
@@ -356,7 +413,18 @@ class DoorService:
                     )
                 self.last_management = {**pending, **dict(payload)}
                 if state == "finished":
-                    key = str(pending["fingerprint_id"])
+                    if pending["command"] == "FINGERPRINT_SYNC":
+                        try:
+                            summary = self._reconcile_fingerprint_inventory(
+                                payload.get("fingerprint_slots", "")
+                            )
+                            self.last_management.update(summary)
+                        except ValueError as exc:
+                            self.last_management.update({
+                                "state": "failed", "reason": str(exc),
+                            })
+                    else:
+                        key = str(pending["fingerprint_id"])
                     if pending["command"] == "FINGERPRINT_ENROLL":
                         self.fingerprint_registry[key] = {
                             "fingerprint_id": pending["fingerprint_id"],
@@ -365,9 +433,10 @@ class DoorService:
                             "role": pending.get("role", ""),
                             "department": pending.get("department", ""),
                             "status": "active",
+                            "sensor_present": True,
                             "registered_at": datetime.now(timezone.utc).isoformat(),
                         }
-                    else:
+                    elif pending["command"] == "FINGERPRINT_DELETE":
                         self.fingerprint_registry.pop(key, None)
                     self._save_fingerprint_registry()
                     self.pending_management = None
@@ -377,7 +446,7 @@ class DoorService:
                     # server registry, restore it as unassigned. This exposes the
                     # orphaned slot in the UI so it can be deleted explicitly.
                     reason = str(payload.get("reason") or "")
-                    key = str(pending["fingerprint_id"])
+                    key = str(pending.get("fingerprint_id", ""))
                     if (
                         pending["command"] == "FINGERPRINT_ENROLL"
                         and reason == "fingerprint_id_exists"
@@ -516,6 +585,8 @@ class DoorService:
             raise ValueError("invalid_fingerprint_id")
         employee_id = str(employee_id or "").strip()[:40]
         name = str(name or "").strip()[:80]
+        if not employee_id:
+            raise ValueError("fingerprint_employee_required")
         if not name:
             raise ValueError("fingerprint_name_required")
         with self._lock:
@@ -523,10 +594,14 @@ class DoorService:
             current = self.fingerprint_registry.get(key)
             if current is None:
                 raise KeyError("fingerprint_id_not_found")
+            current_employee_id = str(current.get("employee_id", "") or "").strip()
+            if current_employee_id and current_employee_id.casefold() != employee_id.casefold():
+                raise ValueError("fingerprint_reassignment_forbidden")
+            assigned_employee_id = current_employee_id or employee_id
             updated = {
                 **current,
                 "fingerprint_id": fingerprint_id,
-                "employee_id": employee_id,
+                "employee_id": assigned_employee_id,
                 "name": name,
                 "role": str(current.get("role", "") if role is None else role).strip()[:80],
                 "department": str(current.get("department", "") if department is None else department).strip()[:80],
@@ -622,6 +697,42 @@ class DoorService:
         return self._request_fingerprint_management(
             "FINGERPRINT_DELETE", fingerprint_id
         )
+
+    def request_fingerprint_sync(self) -> dict:
+        with self._lock:
+            if not self.enabled or not self.connected:
+                return {"accepted": False, "reason": "mqtt_disconnected"}
+            if self.pending_management:
+                return {"accepted": False, "reason": "management_command_pending"}
+            command_id = f"fp-{uuid.uuid4().hex[:12]}"
+            issued_at = int(self._epoch_time())
+            payload = {
+                "command": "FINGERPRINT_SYNC",
+                "command_id": command_id,
+                "device_id": self.device_id,
+                "issued_at": issued_at,
+                "expires_at": issued_at + 15,
+                "source": "server_management",
+            }
+            try:
+                info = self.client.publish(
+                    self.command_topic, json.dumps(payload, separators=(",", ":")),
+                    qos=1, retain=False,
+                )
+            except Exception:
+                return {"accepted": False, "reason": "publish_error"}
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                return {"accepted": False, "reason": "publish_failed"}
+            self.pending_management = {
+                "command_id": command_id,
+                "command": "FINGERPRINT_SYNC",
+                "state": "sent",
+                "sent_at": self._monotonic(),
+                "deadline": self._monotonic() + self.management_timeout_seconds,
+            }
+            self.last_management = dict(self.pending_management)
+        self._notify_change()
+        return {"accepted": True, "command_id": command_id}
 
     def request_open(self, employee_id: str) -> dict:
         """Try to publish one OPEN command; returns a non-throwing decision."""
@@ -741,7 +852,10 @@ class DoorService:
                     if self.pending_management
                     else (dict(self.last_management) if self.last_management else None)
                 ),
-                "fingerprint_count": len(self.fingerprint_registry),
+                "fingerprint_count": sum(
+                    item.get("sensor_present", True)
+                    for item in self.fingerprint_registry.values()
+                ),
                 "device_status": dict(self.device_status) if self.device_status else None,
                 "event_count": len(self.recent_events),
                 "last_event": dict(self.recent_events[-1]) if self.recent_events else None,

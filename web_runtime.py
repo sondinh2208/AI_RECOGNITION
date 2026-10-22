@@ -755,6 +755,12 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             payload.get("department"),
         )
 
+    def sync_fingerprints(self):
+        result = self.door_service.request_fingerprint_sync()
+        if not result.get("accepted"):
+            raise ValueError(result.get("reason", "fingerprint_sync_rejected"))
+        return result
+
     def _on_kiosk_recognition_success(self, emp_info, distance):
         now = datetime.now()
         now_display = now.strftime("%H:%M:%S · %d/%m/%Y")

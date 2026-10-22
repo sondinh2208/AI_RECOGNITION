@@ -228,6 +228,16 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         update.assert_called_once_with(2, payload)
 
+    async def test_fingerprint_sync_is_available_locally(self):
+        with patch(
+            "web_backend.app.runtime.sync_fingerprints",
+            return_value={"accepted": True, "command_id": "fp-sync"},
+        ) as sync:
+            response = await self.client.post("/api/admin/fingerprints/sync")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["command_id"], "fp-sync")
+        sync.assert_called_once_with()
+
     async def test_frontend_contains_no_ai_decision_parameters(self):
         response = await self.client.get("/js/app.js")
         source = response.text

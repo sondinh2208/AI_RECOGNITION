@@ -96,6 +96,15 @@ async def fingerprint_enroll(request: Request):
         return api_error(exc)
 
 
+async def fingerprint_sync(_request: Request):
+    try:
+        return JSONResponse(
+            {"ok": True, **runtime.sync_fingerprints()}, status_code=202
+        )
+    except Exception as exc:
+        return api_error(exc)
+
+
 async def fingerprint_delete(request: Request):
     try:
         fingerprint_id = int(request.path_params["fingerprint_id"])
@@ -326,6 +335,7 @@ routes = [
     Route("/api/door/events", door_events),
     Route("/api/admin/fingerprints", fingerprints),
     Route("/api/admin/fingerprints/enroll", fingerprint_enroll, methods=["POST"]),
+    Route("/api/admin/fingerprints/sync", fingerprint_sync, methods=["POST"]),
     Route(
         "/api/admin/fingerprints/{fingerprint_id:int}",
         fingerprint_delete,

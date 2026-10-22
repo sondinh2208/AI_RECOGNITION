@@ -35,6 +35,7 @@ export const api = {
   finishEnrollmentSession: () => request("/api/enrollment/finish", { method: "POST" }),
   fingerprints: () => request("/api/admin/fingerprints"),
   enrollFingerprint: (payload) => request("/api/admin/fingerprints/enroll", { method: "POST", headers: jsonHeaders, body: JSON.stringify(payload) }),
+  syncFingerprints: () => request("/api/admin/fingerprints/sync", { method: "POST" }),
   updateFingerprint: (id, payload) => request(`/api/admin/fingerprints/${encodeURIComponent(id)}`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(payload) }),
   deleteFingerprint: (id, confirmationId) => request(`/api/admin/fingerprints/${encodeURIComponent(id)}`, { method: "DELETE", headers: jsonHeaders, body: JSON.stringify({ confirmation_id: confirmationId }) }),
 };

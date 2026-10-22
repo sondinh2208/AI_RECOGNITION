@@ -196,6 +196,87 @@ class DoorServiceTests(unittest.TestCase):
         self.assertEqual(updated["status"], "active")
         self.assertEqual(self.client.published, [])
 
+    def test_linked_fingerprint_cannot_be_reassigned_to_another_employee(self):
+        self.service.fingerprint_registry["2"] = {
+            "fingerprint_id": 2,
+            "employee_id": "NV002",
+            "name": "Nguyen Van B",
+            "status": "active",
+        }
+
+        with self.assertRaisesRegex(ValueError, "fingerprint_reassignment_forbidden"):
+            self.service.update_fingerprint_identity(2, "NV003", "Nguyen Van C")
+
+        saved = self.service.fingerprint_registry["2"]
+        self.assertEqual(saved["employee_id"], "NV002")
+        self.assertEqual(saved["name"], "Nguyen Van B")
+
+    def test_linked_fingerprint_metadata_can_still_follow_its_owner_profile(self):
+        self.service.fingerprint_registry["2"] = {
+            "fingerprint_id": 2,
+            "employee_id": "NV002",
+            "name": "Old Name",
+            "status": "active",
+        }
+
+        updated = self.service.update_fingerprint_identity(
+            2, "nv002", "New Name", "Ky su", "Phong AI",
+        )
+
+        self.assertEqual(updated["employee_id"], "NV002")
+        self.assertEqual(updated["name"], "New Name")
+
+    def test_fingerprint_sync_restores_unassigned_slots_and_preserves_links(self):
+        self.connect()
+        self.service.fingerprint_registry["2"] = {
+            "fingerprint_id": 2,
+            "employee_id": "NV002",
+            "name": "Nguyen Van B",
+            "status": "active",
+        }
+        result = self.service.request_fingerprint_sync()
+        self.assertTrue(result["accepted"])
+        payload = json.loads(self.client.published[-1][1])
+        self.assertEqual(payload["command"], "FINGERPRINT_SYNC")
+        self.assertNotIn("fingerprint_id", payload)
+
+        bitmap = bytearray(16)
+        for fingerprint_id in (2, 7):
+            bitmap[fingerprint_id // 8] |= 1 << (fingerprint_id % 8)
+        self.mqtt_message(self.service.ack_topic, {
+            "device_id": "door-01",
+            "command_id": result["command_id"],
+            "command": "FINGERPRINT_SYNC",
+            "state": "finished",
+            "fingerprint_slots": bitmap.hex(),
+        })
+
+        self.assertEqual(self.service.fingerprint(2)["employee_id"], "NV002")
+        self.assertTrue(self.service.fingerprint(2)["sensor_present"])
+        self.assertEqual(self.service.fingerprint(7)["status"], "unassigned")
+        self.assertEqual(self.service.fingerprint(7)["employee_id"], "")
+
+    def test_fingerprint_sync_marks_server_only_slot_without_deleting_link(self):
+        self.connect()
+        self.service.fingerprint_registry["4"] = {
+            "fingerprint_id": 4,
+            "employee_id": "NV004",
+            "name": "Nguyen Van D",
+            "status": "active",
+        }
+        result = self.service.request_fingerprint_sync()
+        self.mqtt_message(self.service.ack_topic, {
+            "device_id": "door-01",
+            "command_id": result["command_id"],
+            "command": "FINGERPRINT_SYNC",
+            "state": "finished",
+            "fingerprint_slots": bytes(16).hex(),
+        })
+        restored = self.service.fingerprint(4)
+        self.assertEqual(restored["employee_id"], "NV004")
+        self.assertFalse(restored["sensor_present"])
+        self.assertEqual(restored["status"], "missing_on_sensor")
+
     def test_connect_subscribes_to_ack_event_and_status(self):
         self.connect()
 
