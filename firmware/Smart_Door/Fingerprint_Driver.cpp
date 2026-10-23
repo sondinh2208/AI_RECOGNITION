@@ -87,6 +87,7 @@ bool fingerprintExists(uint8_t id) {
 }
 
 int checkFingerprint() {
+    static bool awaitingLift = false;
     // Nếu đang trong chế độ đăng ký hoặc cảm biến chưa sẵn sàng thì bỏ qua
     if (!sensorReady || isEnrolling) {
         return FP_NO_FINGER;
@@ -102,6 +103,8 @@ int checkFingerprint() {
         return FP_READ_ERROR;
     }
     communicationErrors = 0;
+    if (p == FINGERPRINT_NOFINGER) awaitingLift = false;
+    if (awaitingLift) return FP_NO_FINGER;
     if (p != FINGERPRINT_OK) {
         return FP_NO_FINGER; // Chưa có ngón tay đặt lên
     }
@@ -116,6 +119,7 @@ int checkFingerprint() {
     // 3. Tìm kiếm vân tay siêu tốc (Fast Search)
     p = finger.fingerFastSearch();
     if (p == FINGERPRINT_OK) {
+        awaitingLift = true;
         Serial.print(F("[AS608] >> KHOP VAN TAY ID #"));
         Serial.print(finger.fingerID);
         Serial.print(F(" (Do tin cay: "));
@@ -124,6 +128,7 @@ int checkFingerprint() {
         return finger.fingerID; // HỢP LỆ (> 0)
     } 
     else if (p == FINGERPRINT_NOTFOUND) {
+        awaitingLift = true;
         Serial.println(F("[AS608] >> TU CHOI: Van tay khong ton tai trong he thong!"));
         return FP_NOT_FOUND; // KHÔNG HỢP LỆ (-2)
     }

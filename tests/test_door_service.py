@@ -126,7 +126,7 @@ class DoorServiceTests(unittest.TestCase):
         self.assertEqual(payload["expires_at"] - payload["issued_at"], 10)
         self.assertEqual(payload["employee_id"], "NV001")
 
-    def test_finished_requires_face_exit_and_cooldown_before_rearming(self):
+    def test_finished_requires_cooldown_but_not_empty_frame_for_next_person(self):
         self.connect()
         command = self.service.request_open("NV001")
         self.ack(command["command_id"], "started")
@@ -134,13 +134,13 @@ class DoorServiceTests(unittest.TestCase):
 
         self.assertEqual(
             self.service.request_open("NV002")["reason"],
-            "waiting_for_face_exit",
+            "door_cooldown",
         )
         self.service.observe_faces(1)
         self.service.observe_faces(0)
         self.clock.advance(1.4)
         self.service.observe_faces(0)
-        self.assertTrue(self.service.snapshot()["waiting_for_face_exit"])
+        self.assertFalse(self.service.snapshot()["waiting_for_face_exit"])
         self.clock.advance(0.2)
         self.service.observe_faces(0)
         self.assertFalse(self.service.snapshot()["waiting_for_face_exit"])

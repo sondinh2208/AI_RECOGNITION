@@ -148,6 +148,7 @@ ENROLLMENT_SESSION_IDLE_TIMEOUT_SECONDS = 15.0  # Không có thao tác quản tr
 KIOSK_FACE_STABLE_SECONDS = 0.7     # Khuôn mặt phải ổn định trước khi tự nhận diện
 KIOSK_CONFIRMATION_INTERVAL_SECONDS = 0.38  # Lớn hơn chu kỳ 333 ms để chắc chắn là frame mới
 KIOSK_RESULT_HOLD_SECONDS = 1.5     # Thời gian hiển thị kết quả trước khi tự mở lượt mới
+KIOSK_FAILED_RETRY_SECONDS = 4.0    # Sau lượt sai, cho thử lại mà không phải rời camera.
 KIOSK_PROCESSED_FACE_TTL_SECONDS = 3.0  # Tạm bỏ qua vùng mặt vừa xử lý để ưu tiên người kế tiếp
 KIOSK_PROCESSED_FACE_ABSENCE_SECONDS = 0.45  # Xóa dấu vết khi khuôn mặt thực sự rời camera
 KIOSK_ATTENDANCE_COOLDOWN_SECONDS = 60  # Không ghi trùng cùng nhân viên trong khoảng này

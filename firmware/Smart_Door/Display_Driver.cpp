@@ -37,9 +37,12 @@ void renderDisplay(const DisplayMsg &msg) {
     switch (msg.type) {
         case DISP_HOME: break;
         case DISP_SUCCESS: title = "MO KHOA"; main = "THANH CONG";
-            hint = msg.id > 0 ? "Xac thuc van tay" : msg.id == 0 ? "Nut ben trong" : "Lenh tu server"; break;
-        case DISP_FACE_SUCCESS: title = "KHUON MAT"; main = "MO KHOA"; hint = "Xin roi khoi khung"; break;
-        case DISP_FACE_VERIFIED: title = "KHUON MAT"; main = "DA XAC THUC"; hint = "Xin roi khoi khung"; break;
+            hint = msg.id > 0 ? "Xac thuc van tay" : msg.id == 0 ? "Nut ben trong" : msg.id == -2 ? "Mo tu Telegram" : "Lenh tu server"; break;
+        case DISP_FACE_SUCCESS: title = "KHUON MAT"; main = "MO KHOA"; hint = "Moi ban di qua"; break;
+        case DISP_FACE_VERIFIED: title = "DA XAC THUC"; main = "CHO XAC NHAN"; hint = "Cho thiet bi xu ly"; break;
+        case DISP_FACE_WAITING: title = "DA XAC THUC"; main = "CHO KHOA"; hint = "Giu mat truoc camera"; break;
+        case DISP_FACE_REPEAT: title = "DA XU LY LUOT NAY"; main = "MOI DI QUA"; hint = "Cho nguoi tiep theo"; break;
+        case DISP_FACE_UNAVAILABLE: title = "DA XAC THUC"; main = "CHUA MO KHOA"; hint = "Kiem tra thiet bi"; break;
         case DISP_FACE_ENROLL: title = "DANG KY KHUON MAT"; main = "NHIN CAMERA"; hint = "Giu yen mat 3 giay"; break;
         case DISP_FACE_READY: title = "DANG KY KHUON MAT"; main = "DA QUET"; hint = "Cho luu tren server"; break;
         case DISP_FACE_SAVING: title = "DANG KY KHUON MAT"; main = "DANG LUU"; hint = "Vui long cho"; break;
@@ -60,7 +63,7 @@ void renderDisplay(const DisplayMsg &msg) {
         case DISP_FP_FAILED: title = "QUAN LY VAN TAY"; main = "THAT BAI";
             hint = msg.id == -2 ? "Ngon tay da ton tai" : msg.id == -3 ? "Da het thoi gian" : "Kiem tra va thu lai"; break;
         case DISP_FACE_CHECK: title = "KHUON MAT"; main = "DANG XAC THUC"; hint = "Nhin thang camera"; break;
-        case DISP_FACE_DENIED: title = "KHONG XAC THUC DUOC"; main = "TU CHOI"; hint = "Xin roi khoi khung"; break;
+        case DISP_FACE_DENIED: title = "KHUON MAT"; main = "CHUA XAC THUC"; hint = "Thu lai sau 4 giay"; break;
     }
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);

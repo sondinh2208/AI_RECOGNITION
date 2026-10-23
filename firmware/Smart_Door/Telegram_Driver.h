@@ -20,6 +20,7 @@
 
 struct TelegramNotif {
     char message[TELEGRAM_NOTIF_MAX_LEN];
+    uint32_t queuedAt;
 };
 
 // Queue toàn cục: hardware tasks -> Task_Telegram

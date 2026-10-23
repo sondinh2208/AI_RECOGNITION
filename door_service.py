@@ -19,6 +19,7 @@ DEVICE_EVENT_TYPES = {
     "fingerprint_granted",
     "fingerprint_denied",
     "button_open",
+    "telegram_open",
     "sensor_online",
     "sensor_offline",
     "fingerprint_enrolled",
@@ -117,6 +118,8 @@ class DoorService:
         self.cooldown_until = 0.0
         self.waiting_for_face_exit = False
         self.face_absent_since = None
+        self._person_guards = {}
+        self._verified_identity = (None, None)
         self.last_ack = None
         self.last_error = None if self.configured else "missing_mqtt_configuration"
 
@@ -340,6 +343,7 @@ class DoorService:
             self.last_error = "ack_timeout"
             self.last_ack = {
                 "command_id": timed_out["command_id"],
+                "employee_id": timed_out["employee_id"],
                 "command": "OPEN",
                 "state": "failed",
                 "reason": "ack_timeout",
@@ -465,14 +469,16 @@ class DoorService:
                     self.pending_management = None
                 changed = True
             elif self.pending and command_id == self.pending["command_id"]:
-                self.last_ack = dict(payload)
+                self.last_ack = {**dict(payload), "employee_id": self.pending["employee_id"]}
                 self.pending["state"] = state
                 changed = True
                 if state == "finished":
                     self.pending = None
                     self.last_error = None
                     self.cooldown_until = self._monotonic() + self.cooldown_seconds
-                    self.waiting_for_face_exit = True
+                    # Normal completion only waits for the relay cooldown.
+                    # Per-person guards replace the all-camera-empty condition.
+                    self.waiting_for_face_exit = False
                     self.face_absent_since = None
                 elif state == "failed":
                     self.pending = None
@@ -736,7 +742,7 @@ class DoorService:
 
     def notify_face_display(self, state: str) -> None:
         """Best-effort, short-lived OLED notices; never controls the relay."""
-        if state not in {"checking", "denied", "verified", "enrolling", "captured", "saving", "saved", "save_failed", "cancelled", "deleted", "idle"}:
+        if state not in {"checking", "denied", "verified", "waiting", "repeat", "unavailable", "opened", "enrolling", "captured", "saving", "saved", "save_failed", "cancelled", "deleted", "idle"}:
             return
         with self._lock:
             if not self.connected:
@@ -758,10 +764,71 @@ class DoorService:
             except Exception:
                 pass  # Display loss must not interrupt authentication.
 
+    @staticmethod
+    def _same_auth_region(first, second):
+        if first is None or second is None:
+            return False
+        ax1, ay1, ax2, ay2 = first
+        bx1, by1, bx2, by2 = second
+        area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+        area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+        intersection = max(0, min(ax2, bx2) - max(ax1, bx1)) * max(0, min(ay2, by2) - max(ay1, by1))
+        return min(area_a, area_b) > 0 and intersection / min(area_a, area_b) >= 0.5
+
+    def _expire_person_guards(self, now):
+        self._person_guards = {
+            key: guard for key, guard in self._person_guards.items()
+            if guard["absent_since"] is None or now - guard["absent_since"] < self.face_exit_seconds
+        }
+
+    def observe_primary_face(self, face_box, *, ambiguous=False):
+        """Track departure from the foreground authentication region, not the whole image.
+
+        Call with None only when no face is detected. On ambiguous foreground
+        selection the caller skips this update, conservatively keeping guards.
+        """
+        box = tuple(face_box[:4]) if face_box is not None else None
+        now = self._monotonic()
+        with self._lock:
+            if ambiguous:
+                for guard in self._person_guards.values():
+                    if not guard["replaced"]:
+                        guard["absent_since"] = None
+                return
+            self._expire_person_guards(now)
+            for guard in self._person_guards.values():
+                if not guard["replaced"] and self._same_auth_region(guard["box"], box):
+                    guard["box"] = box
+                    guard["absent_since"] = None
+                elif guard["absent_since"] is None:
+                    guard["absent_since"] = now
+
+    def observe_identity(self, employee_id, face_box=None):
+        """Use a fully verified identity to disambiguate people taking the same position."""
+        key = str(employee_id).strip().casefold()
+        box = tuple(face_box[:4]) if face_box is not None else None
+        now = self._monotonic()
+        with self._lock:
+            self._expire_person_guards(now)
+            self._verified_identity = (key, box)
+            for other_key, guard in self._person_guards.items():
+                if other_key != key and self._same_auth_region(guard["box"], box):
+                    guard["replaced"] = True
+                    if guard["absent_since"] is None:
+                        guard["absent_since"] = now
+                elif other_key == key:
+                    guard["absent_since"] = None
+                    guard["replaced"] = False
+                    if box is not None:
+                        guard["box"] = box
+
     def request_open(self, employee_id: str) -> dict:
         """Try to publish one OPEN command; returns a non-throwing decision."""
         now = self._monotonic()
         with self._lock:
+            key = str(employee_id).strip().casefold()
+            if not key:
+                return {"accepted": False, "reason": "invalid_employee_id"}
             if not self.enabled:
                 return {"accepted": False, "reason": "disabled_or_unconfigured"}
             if not self.connected:
@@ -770,6 +837,9 @@ class DoorService:
                 return {"accepted": False, "reason": "command_pending"}
             if self.waiting_for_face_exit:
                 return {"accepted": False, "reason": "waiting_for_face_exit"}
+            self._expire_person_guards(now)
+            if key in self._person_guards:
+                return {"accepted": False, "reason": "person_already_processed"}
             if now < self.cooldown_until:
                 return {"accepted": False, "reason": "door_cooldown"}
 
@@ -808,15 +878,27 @@ class DoorService:
             }
             self.last_error = None
 
+            verified_key, verified_box = self._verified_identity
+            self._person_guards[key] = {
+                "box": verified_box if verified_key == key else None,
+                "absent_since": None, "replaced": False,
+            }
+
         print(f"[DOOR] Da gui OPEN {command_id} cho nhan vien {employee_id}")
         self._notify_change()
         return {"accepted": True, "command_id": command_id}
 
     def observe_faces(self, face_count: int) -> None:
-        """Re-arm only after the camera has no faces for a continuous window."""
+        """Keep the all-camera-empty interlock only for uncertain/lost OPEN ACKs."""
         changed = False
         now = self._monotonic()
         with self._lock:
+            # Also support non-tracking callers when the whole image is empty.
+            if face_count == 0:
+                for guard in self._person_guards.values():
+                    if guard["absent_since"] is None:
+                        guard["absent_since"] = now
+                self._expire_person_guards(now)
             if not self.waiting_for_face_exit:
                 self.face_absent_since = None
                 return
@@ -869,6 +951,7 @@ class DoorService:
                 "pending_employee_id": self.pending["employee_id"] if self.pending else None,
                 "cooldown_remaining_seconds": round(cooldown_remaining, 1),
                 "waiting_for_face_exit": self.waiting_for_face_exit,
+                "repeat_guard_count": len(self._person_guards),
                 "last_ack": dict(self.last_ack) if self.last_ack else None,
                 "last_error": self.last_error,
                 "fingerprint_management": (

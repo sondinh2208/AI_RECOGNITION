@@ -320,6 +320,10 @@ void onMQTTMessage(char *topic, byte *payload, unsigned int length) {
         if (strcmp(state, "checking") == 0) postDisplay(DISP_FACE_CHECK);
         else if (strcmp(state, "denied") == 0) postDisplay(DISP_FACE_DENIED);
         else if (strcmp(state, "verified") == 0) postDisplay(DISP_FACE_VERIFIED);
+        else if (strcmp(state, "waiting") == 0) postDisplay(DISP_FACE_WAITING);
+        else if (strcmp(state, "repeat") == 0) postDisplay(DISP_FACE_REPEAT);
+        else if (strcmp(state, "unavailable") == 0) postDisplay(DISP_FACE_UNAVAILABLE);
+        else if (strcmp(state, "opened") == 0) postDisplay(DISP_FACE_SUCCESS);
         else if (strcmp(state, "enrolling") == 0) postDisplay(DISP_FACE_ENROLL);
         else if (strcmp(state, "captured") == 0) postDisplay(DISP_FACE_READY);
         else if (strcmp(state, "saving") == 0) postDisplay(DISP_FACE_SAVING);

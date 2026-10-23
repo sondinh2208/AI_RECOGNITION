@@ -17,12 +17,14 @@ import cv2
 import numpy as np
 
 from door_service import DoorService
+from telegram_alerts import TelegramFaceAlerts
 from config import (
     DATA_FACES_DIR,
     ENROLLMENT_EMBEDDING_SAMPLES,
     ENROLLMENT_MIN_SAMPLES,
     ENROLLMENT_SESSION_IDLE_TIMEOUT_SECONDS,
     KIOSK_ATTENDANCE_COOLDOWN_SECONDS,
+    KIOSK_FAILED_RETRY_SECONDS,
 )
 from mixins.attendance import AttendanceMixin
 from mixins.camera import CameraMixin
@@ -95,6 +97,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             on_change=self._publish,
             on_event=self._on_door_event,
         )
+        self.telegram_alerts = TelegramFaceAlerts.from_environment()
+        self._kiosk_alert_face = None
 
         self.enrollment_running = False
         self.is_face_valid = False
@@ -160,6 +164,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             self._started = True
         self._sync_door_events_to_attendance_history()
         self.door_service.start()
+        self.telegram_alerts.start()
         if self._load_ai_requested:
             self._load_ai_models()
             self._start_camera()
@@ -184,6 +189,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             except Exception:
                 pass
         self.door_service.shutdown()
+        self.telegram_alerts.shutdown()
 
     def after(self, _delay_ms, callback, *args):
         """Tương thích callback Tk; web runtime không có main-loop widget."""
@@ -193,9 +199,31 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         callback(*args)
 
     def _publish(self):
+        self._refresh_face_door_feedback()
         with self._lock:
             self._event_version += 1
         self._sync_oled_display()
+
+    def _refresh_face_door_feedback(self):
+        face = getattr(self, "recognition_state", {})
+        command_id = face.get("door_command_id")
+        if not command_id:
+            return
+        ack = self.door_service.snapshot().get("last_ack")
+        if not isinstance(ack, dict) or ack.get("command_id") != command_id:
+            return
+        state = ack.get("state")
+        labels = {
+            "started": ("executing", "Đang thực hiện mở khóa", "Bộ điều khiển đã tiếp nhận và đang thực hiện mở khóa."),
+            "finished": ("executed", "Đã thực hiện mở khóa", "Chu kỳ điều khiển khóa đã hoàn tất. Mời người tiếp theo tiến vào vùng xác thực."),
+            "failed": ("unavailable", "Đã xác thực — chưa xác nhận mở khóa", "Không xác nhận được lệnh mở khóa. Vui lòng kiểm tra thiết bị hoặc dùng vân tay."),
+        }
+        if state not in labels:
+            return
+        phase, title, message = labels[state]
+        with self._lock:
+            if self.recognition_state.get("door_command_id") == command_id:
+                self.recognition_state.update({"door_phase": phase, "title": title, "message": message})
 
     def _sync_oled_display(self):
         if self.current_page == "add_employee":
@@ -220,7 +248,10 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         elif state in {"unknown", "ambiguous"}:
             self.door_service.notify_face_display("denied")
         elif state in {"success", "duplicate"}:
-            self.door_service.notify_face_display("verified")
+            phase = self.recognition_state.get("door_phase")
+            notice = {"waiting": "waiting", "repeat": "repeat", "unavailable": "unavailable", "executed": "opened"}.get(phase, "verified")
+            if phase != "executing":  # Relay task already owns the active OLED screen.
+                self.door_service.notify_face_display(notice)
 
     def snapshot(self):
         with self._lock:
@@ -250,6 +281,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 "recognition": dict(self.recognition_state),
                 "access": self._access_snapshot(),
                 "door": self.door_service.snapshot(),
+                "telegram": self.telegram_alerts.snapshot(),
                 "recognition_test": dict(self.recognition_test_result),
                 "enrollment": {
                     **self.enrollment_result,
@@ -290,6 +322,19 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             })
         if state in {"success", "duplicate"}:
             access_state, access_label = "allowed", "Đã cho phép ra vào"
+            phase = face.get("door_phase")
+            if phase == "waiting":
+                access_state, access_label = "processing", "Đã xác thực — đang chờ khóa sẵn sàng"
+            elif phase == "requested":
+                access_state, access_label = "processing", "Đang chờ thiết bị xác nhận mở khóa"
+            elif phase == "repeat":
+                access_state, access_label = "waiting", "Đã xử lý lượt của bạn"
+            elif phase == "unavailable":
+                access_state, access_label = "error", "Chưa xác nhận mở khóa"
+            elif phase == "executing":
+                access_label = "Đang thực hiện mở khóa"
+            elif phase == "executed":
+                access_label = "Đã thực hiện mở khóa"
         elif state in {"unknown", "ambiguous"}:
             access_state, access_label = "denied", "Không được phép ra vào"
         elif state == "error":
@@ -644,7 +689,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         event_id = str(event.get("event_id") or "").strip()
         event_type = str(event.get("event") or "").strip()
         if not event_id or event_type not in {
-            "fingerprint_granted", "fingerprint_denied", "button_open"
+            "fingerprint_granted", "fingerprint_denied", "button_open", "telegram_open"
         }:
             return
 
@@ -654,7 +699,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
 
         common = {
             "time": self._door_event_time(event),
-            "source": "fingerprint" if event_type.startswith("fingerprint_") else "button",
+            "source": "fingerprint" if event_type.startswith("fingerprint_") else "telegram" if event_type == "telegram_open" else "button",
             "door_event_id": event_id,
         }
         if event_type == "fingerprint_granted":
@@ -709,7 +754,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         else:
             record = {
                 **common,
-                "name": "Nút mở cửa bên trong",
+                "name": "Mở khóa từ Telegram" if event_type == "telegram_open" else "Nút mở cửa bên trong",
                 "id": "—",
                 "role": "Thiết bị",
                 "dept": "Cửa chính",
@@ -793,6 +838,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         return result
 
     def _on_kiosk_recognition_success(self, emp_info, distance):
+        self.telegram_alerts.success()
+        self._kiosk_alert_face = None
         now = datetime.now()
         now_display = now.strftime("%H:%M:%S · %d/%m/%Y")
         now_value = now.strftime("%H:%M:%S %d/%m/%Y")
@@ -808,6 +855,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             "department": emp_info.get("department") or emp_info.get("dept") or "Phòng IT",
             "image_url": self._employee_image_url(emp_id, emp_info),
         }
+        self.door_service.observe_identity(emp_id, self._kiosk_active_face_box)
         door_decision = self.door_service.request_open(emp_id)
         if not door_decision.get("accepted"):
             print(
@@ -821,22 +869,31 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
                 "role": employee["role"], "dept": employee["department"],
                 "status": "Thành công",
             })
+        reason = door_decision.get("reason")
+        if door_decision.get("accepted"):
+            phase, title, message = "requested", "Đã xác thực", "Đang chờ bộ điều khiển xác nhận mở khóa."
+        elif reason in {"command_pending", "door_cooldown"}:
+            phase, title, message = "waiting", "Đã xác thực — đang chờ khóa", "Giữ mặt trong vùng xác thực. Hệ thống sẽ xác thực lại khi khóa sẵn sàng."
+        elif reason == "person_already_processed":
+            phase, title, message = "repeat", "Đã xử lý lượt của bạn", "Bạn vừa được gửi lệnh mở khóa. Mời đi qua để nhường lượt tiếp theo."
+        else:
+            phase, title, message = "unavailable", "Đã xác thực — chưa mở khóa", "Khóa chưa sẵn sàng hoặc mất kết nối. Vui lòng kiểm tra thiết bị hoặc dùng vân tay."
         self.recognition_state = {
             "state": "duplicate" if duplicate else "success",
-            "title": "Đã xác thực gần đây" if duplicate else "Xác thực thành công",
-            "message": (
-                f"Lần gần nhất: {previous[1]}" if duplicate
-                else f"Thời gian xác thực: {now_display}"
-            ),
+            "title": title, "message": message,
+            "door_phase": phase,
+            "door_command_id": door_decision.get("command_id"),
             "employee": employee, "timestamp": now_display,
             "metrics": {"distance": round(float(distance), 4)},
         }
-        self._hold_result_and_suppress_active_face()
+        self._hold_result_and_suppress_active_face(retry_delay=KIOSK_FAILED_RETRY_SECONDS)
         self.is_recognizing = False
         self._is_kiosk_ui_idle = False
         self._publish()
 
     def _on_kiosk_recognition_ambiguous(self, best_distance, second_distance, margin):
+        self.telegram_alerts.failure(self._kiosk_alert_face)
+        self._kiosk_alert_face = None
         now_value = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
         self._add_attendance_record({
             "time": now_value, "name": "Chưa xác định", "id": "—",
@@ -849,16 +906,18 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self.recognition_state = {
             **self._idle_payload(), "state": "ambiguous",
             "title": "Không thể xác minh danh tính",
-            "message": "Không có hồ sơ nào đủ độ tin cậy",
+            "message": "Chưa đủ độ tin cậy. Nhìn thẳng camera; hệ thống cho thử lại sau 4 giây.",
             "timestamp": now_value,
             "metrics": {"distance": best_distance, "margin": margin},
         }
-        self._hold_result_and_suppress_active_face()
+        self._hold_result_and_suppress_active_face(retry_delay=KIOSK_FAILED_RETRY_SECONDS)
         self.is_recognizing = False
         self._is_kiosk_ui_idle = False
         self._publish()
 
     def _on_kiosk_recognition_failed(self, distance):
+        self.telegram_alerts.failure(self._kiosk_alert_face)
+        self._kiosk_alert_face = None
         now_value = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
         self._add_attendance_record({
             "time": now_value, "name": "Người lạ / Khách", "id": "—",
@@ -868,10 +927,10 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self.recognition_state = {
             **self._idle_payload(), "state": "unknown",
             "title": "Chưa nhận diện được",
-            "message": "Khuôn mặt chưa có trong hệ thống",
+            "message": "Chưa xác thực được. Nhìn thẳng camera; hệ thống cho thử lại sau 4 giây.",
             "timestamp": now_value,
         }
-        self._hold_result_and_suppress_active_face()
+        self._hold_result_and_suppress_active_face(retry_delay=KIOSK_FAILED_RETRY_SECONDS)
         self.is_recognizing = False
         self._is_kiosk_ui_idle = False
         self._publish()
@@ -890,6 +949,8 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._publish()
 
     def retry_recognition(self):
+        if self.recognition_state.get("state") in {"unknown", "ambiguous"} and time.time() < self._kiosk_result_hold_until:
+            return self.snapshot()
         self._kiosk_suppressed_face_tracks = []
         self._kiosk_result_hold_until = 0.0
         self.set_idle_state()

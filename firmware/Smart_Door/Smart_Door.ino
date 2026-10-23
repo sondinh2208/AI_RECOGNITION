@@ -59,8 +59,10 @@ void Task_LockControl(void *pvParameters) {
         );
 
         if (event & (EVT_UNLOCK_FINGER | EVT_UNLOCK_BUTTON | EVT_UNLOCK_TELEGRAM)) {
+            if (event & EVT_UNLOCK_TELEGRAM) postDisplay(DISP_SUCCESS, -2);
             alertSuccess();
             openLock();
+            if (event & EVT_UNLOCK_TELEGRAM) queueMQTTEvent("telegram_open", "telegram");
             vTaskDelay(pdMS_TO_TICKS(UNLOCK_DURATION));
             closeLock();
 
@@ -106,6 +108,9 @@ void Task_LockControl(void *pvParameters) {
 // ==========================================
 void Task_Fingerprint(void *pvParameters) {
     static unsigned long lastWarningTime = 0;
+    static uint32_t deniedTimes[3] = {};
+    static unsigned deniedCount = 0;
+    static bool warningSent = false;
     static unsigned long lastReconnectAttempt = 0;
     bool sensorWasConnected = isFingerprintConnected();
 
@@ -244,6 +249,7 @@ void Task_Fingerprint(void *pvParameters) {
             int result = checkFingerprint();
 
             if (result > 0) {
+                deniedCount = 0;
                 // ==========================================
                 // 1. VÂN TAY HỢP LỆ -> MỞ CỬA
                 // ==========================================
@@ -269,12 +275,7 @@ void Task_Fingerprint(void *pvParameters) {
                     addLog("Mở cửa: Vân tay #" + String(result));
                 }
 
-                if (telegramNotifQueue) {
-                    TelegramNotif notif;
-                    strncpy(notif.message, msgBuf, sizeof(notif.message) - 1);
-                    notif.message[sizeof(notif.message) - 1] = '\0';
-                    xQueueSend(telegramNotifQueue, &notif, 0);
-                }
+                // Ordinary successful scans are logged on the server, not Telegram.
 
                 vTaskDelay(pdMS_TO_TICKS(UNLOCK_DURATION + 300));
             }
@@ -289,16 +290,24 @@ void Task_Fingerprint(void *pvParameters) {
                 DisplayMsg errMsg = { DISP_ERROR, 0 };
                 xQueueSend(displayQueue, &errMsg, 0);
 
-                // Giới hạn gửi cảnh báo tối thiểu cách nhau 5 giây để tránh spam
-                if (millis() - lastWarningTime > 5000) {
+                uint32_t nowWarning = millis();
+                unsigned kept = 0;
+                for (unsigned i = 0; i < deniedCount; ++i)
+                    if (nowWarning - deniedTimes[i] <= 60000UL) deniedTimes[kept++] = deniedTimes[i];
+                deniedCount = kept;
+                if (deniedCount < 3) deniedTimes[deniedCount++] = nowWarning;
+                if (deniedCount >= 3 && (!warningSent || nowWarning - lastWarningTime >= 60000UL)) {
                     if (telegramNotifQueue) {
                         TelegramNotif notif;
+                        notif.queuedAt = millis();
                         snprintf(notif.message, TELEGRAM_NOTIF_MAX_LEN,
-                                 "⚠️ CẢNH BÁO! Vân tay lạ bị từ chối lúc %s.", getTimeStr().c_str());
+                                 "⚠️ Có ít nhất 3 lượt quét vân tay không hợp lệ trong 60 giây tại cửa chính, lúc %s.", getTimeStr().c_str());
                         xQueueSend(telegramNotifQueue, &notif, 0);
                     }
                     addLog("⚠️ Cảnh báo: Vân tay lạ");
                     lastWarningTime = millis();
+                    warningSent = true;
+                    deniedCount = 0;
                 }
 
                 vTaskDelay(pdMS_TO_TICKS(ERROR_DURATION));
@@ -343,7 +352,7 @@ void Task_Display(void *pvParameters) {
             }
             active = msg;
             shownAt = millis();
-            holdMs = (msg.type == DISP_FP_ENROLL || msg.type == DISP_FP_SECOND) ? 18000 : msg.type == DISP_FP_LIFT ? 7000 : msg.type == DISP_FP_SYNC ? 30000 : msg.type >= DISP_FACE_ENROLL && msg.type <= DISP_FACE_SAVING ? 6000 : msg.type == DISP_HOME ? 0 : 3000;
+            holdMs = msg.type == DISP_FACE_DENIED ? 4000 : (msg.type == DISP_FP_ENROLL || msg.type == DISP_FP_SECOND) ? 18000 : msg.type == DISP_FP_LIFT ? 7000 : msg.type == DISP_FP_SYNC ? 30000 : msg.type >= DISP_FACE_ENROLL && msg.type <= DISP_FACE_SAVING ? 6000 : msg.type == DISP_HOME ? 0 : 3000;
         }
         if (active.type != DISP_HOME && millis() - shownAt >= holdMs) {
             active = {sensorError ? DISP_SENSOR_ERROR : DISP_HOME, 0};
@@ -374,12 +383,7 @@ void Task_Button(void *pvParameters) {
                 xEventGroupSetBits(lockEventGroup, EVT_UNLOCK_BUTTON);
                 queueMQTTEvent("button_open", "inside_button");
 
-                if (telegramNotifQueue) {
-                    TelegramNotif notif;
-                    snprintf(notif.message, TELEGRAM_NOTIF_MAX_LEN,
-                             "🚪 Mở cửa từ nút nhấn bên trong lúc %s.", getTimeStr().c_str());
-                    xQueueSend(telegramNotifQueue, &notif, 0);
-                }
+                // Button operations are logged on the server without Telegram spam.
                 addLog("Nút nhấn bên trong lúc " + getTimeStr());
 
                 vTaskDelay(pdMS_TO_TICKS(UNLOCK_DURATION + 300));

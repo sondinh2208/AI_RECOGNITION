@@ -120,9 +120,10 @@ class AttendanceMixin:
         scale = max(first_w, first_h, second_w, second_h)
         return 0.45 <= area_ratio <= 2.20 and center_distance <= 0.35 * scale
 
-    def _hold_result_and_suppress_active_face(self, now=None):
+    def _hold_result_and_suppress_active_face(self, now=None, retry_delay=None):
         """Giữ kết quả ngắn hạn, nhưng không buộc toàn bộ camera phải trống."""
         now = time.time() if now is None else now
+        hold_seconds = KIOSK_RESULT_HOLD_SECONDS if retry_delay is None else retry_delay
         active_box = getattr(self, '_kiosk_active_face_box', None)
         tracks = list(getattr(self, '_kiosk_suppressed_face_tracks', []))
         if active_box is not None:
@@ -130,9 +131,10 @@ class AttendanceMixin:
                 "box": tuple(active_box),
                 "suppressed_at": now,
                 "last_seen": now,
+                "ttl_seconds": max(KIOSK_PROCESSED_FACE_TTL_SECONDS, hold_seconds),
             })
         self._kiosk_suppressed_face_tracks = tracks
-        self._kiosk_result_hold_until = now + KIOSK_RESULT_HOLD_SECONDS
+        self._kiosk_result_hold_until = now + hold_seconds
         self._kiosk_waiting_for_departure = True
 
     def _filter_processed_kiosk_faces(self, faces, now=None):
@@ -141,7 +143,7 @@ class AttendanceMixin:
         tracks = [
             dict(track)
             for track in getattr(self, '_kiosk_suppressed_face_tracks', [])
-            if now - track["suppressed_at"] < KIOSK_PROCESSED_FACE_TTL_SECONDS
+            if now - track["suppressed_at"] < track.get("ttl_seconds", KIOSK_PROCESSED_FACE_TTL_SECONDS)
         ]
         matched_face_indexes = set()
         live_tracks = []
@@ -272,6 +274,19 @@ class AttendanceMixin:
             faces = cached_faces
             self.kiosk_face_count = len(faces)
             self.door_service.observe_faces(self.kiosk_face_count)
+            # Presence guards use unfiltered foreground detections, including
+            # the face temporarily suppressed after a successful recognition.
+            raw_ranked = sorted(faces, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]), reverse=True)
+            if not raw_ranked:
+                self.door_service.observe_primary_face(None)
+            elif len(raw_ranked) == 1 or (
+                (raw_ranked[0][2] - raw_ranked[0][0]) * (raw_ranked[0][3] - raw_ranked[0][1])
+                >= KIOSK_PRIMARY_FACE_MIN_AREA_RATIO *
+                (raw_ranked[1][2] - raw_ranked[1][0]) * (raw_ranked[1][3] - raw_ranked[1][1])
+            ):
+                self.door_service.observe_primary_face(raw_ranked[0][:4])
+            else:
+                self.door_service.observe_primary_face(None, ambiguous=True)
             
             # 2. Chọn khuôn mặt gần camera nhất theo diện tích bounding box.
             curr_now = time.time()
@@ -392,6 +407,7 @@ class AttendanceMixin:
                     
                     if cx2 > cx1 and cy2 > cy1:
                         cropped_img = clean_frame[cy1:cy2, cx1:cx2].copy()
+                        self._kiosk_alert_face = cropped_img
                         # Đặt cờ self.is_recognizing = True để bỏ qua các frame tiếp theo
                         self.is_recognizing = True
                         self._kiosk_active_face_area = primary_area

@@ -7,8 +7,8 @@
 #define WIFI_SSID       "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
 
-// Telegram se duoc chuyen len server o giai doan sau.
-// Trong thoi gian chuyen doi, firmware cu van can cac gia tri nay.
+// ESP32 polls /open, /status and sends fingerprint alerts without the server.
+// The server uses this same bot ONLY to send face alerts (no getUpdates).
 #define BOT_TOKEN       "YOUR_NEW_TELEGRAM_BOT_TOKEN"
 #define ADMIN_CHAT_ID   "YOUR_TELEGRAM_CHAT_ID"
 #define BOT_USERNAME    "YOUR_TELEGRAM_BOT_USERNAME"

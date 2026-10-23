@@ -9,7 +9,7 @@
 // ==========================================
 #define DEVICE_ID                  "door-01"
 #define FIRMWARE_VERSION            "0.4.0-fingerprint-admin"
-#define ENABLE_LEGACY_TELEGRAM      0
+#define ENABLE_LEGACY_TELEGRAM      1 // Restricted remote/status bot; management lives on server.
 #define MQTT_HEARTBEAT_INTERVAL_MS  30000UL
 #define MQTT_RECONNECT_INTERVAL_MS  5000UL
 #define MQTT_COMMAND_MAX_FUTURE_SECONDS 15LL
