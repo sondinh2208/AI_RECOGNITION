@@ -1,721 +1,488 @@
-# FaceTouch Pro — Hệ thống quản lý ra vào tích hợp nhận diện khuôn mặt và cảm biến vân tay
+<p align="center">
+  <img src="assets/facecheck-id-icon-filled-256.png" width="96" alt="Logo FaceTouch Pro">
+</p>
 
-FaceTouch Pro là hệ thống quản lý ra vào tích hợp nhận diện khuôn mặt và cảm biến vân tay. Server nhận hình ảnh từ camera ESP32-S3 OV3660, xử lý YOLO/ArcFace, quản lý hồ sơ và nhật ký xác thực; ESP32-S3 cửa xử lý AS608, OLED, nút và relay, đồng thời vẫn cho phép vân tay hoạt động khi mất mạng.
+<h1 align="center">FaceTouch Pro</h1>
+<p align="center"><strong>Khuôn mặt &amp; vân tay · Kiểm soát ra vào</strong></p>
+<p align="center">Python · YOLO · ArcFace · ESP32 · MQTT/TLS</p>
 
-Tên sản phẩm đã đổi từ FaceCheck sang **FaceTouch Pro**. Lệnh mới là
-`python facetouch_pro.py wifi`; lệnh cũ `python facecheck.py wifi` vẫn hoạt động.
-Các khóa `FACECHECK_*`, header `X-FaceCheck-*`, hostname `facecheck-cam.local`,
-định danh dịch vụ, vùng NVS và mật khẩu cấu hình hiện có được giữ tương thích.
-Firmware mới hiển thị tên FaceTouch Pro và phát `FaceTouchPro-Setup-...`;
-thiết bị chưa nạp lại vẫn hiển thị tên cũ nhưng tiếp tục kết nối được.
+FaceTouch Pro là hệ thống quản lý ra vào kết hợp nhận diện khuôn mặt, cảm biến vân tay và điều khiển khóa cửa. Quản trị viên đăng ký nhân viên, quản lý khuôn mặt/vân tay và xem nhật ký trên laptop. Người sử dụng xác thực tại camera hoặc cảm biến; màn hình TFT hiển thị ảnh và kết quả.
 
-Ứng dụng có giao diện quản trị dạng web chạy trong cửa sổ desktop, chế độ kiosk dành cho người điểm danh, API nội bộ, luồng camera MJPEG và firmware cho camera/màn hình ESP32.
+**Laptop xử lý AI, ESP32 điều khiển phần cứng.** Camera và TFT không chạy mô hình nhận diện. Camera dùng mạng LAN; MQTT Cloud và Telegram cần Internet. Vân tay và nút mở bên trong được xử lý cục bộ trên bo cửa khi bo đang ở chế độ vận hành.
 
-> **Phạm vi hiện tại:** phần mềm quyết định nhận diện, ghi lịch sử và gửi lệnh `OPEN` ngắn hạn qua MQTT/TLS cho ESP32-S3 điều khiển khóa. Vân tay và nút thoát vẫn hoạt động offline trực tiếp trên ESP32.
+> Repository không bao gồm trọng số AI, dữ liệu nhân viên hoặc mật khẩu. Clone mã nguồn chưa đủ để nhận diện: cần chuẩn bị model và cấu hình theo hướng dẫn dưới đây.
 
-## 1. Chức năng chính
+**Đã cài sẵn?** Cấp nguồn các bo, kết nối laptop cùng Wi-Fi với camera/màn hình, rồi nhấp biểu tượng **FaceTouch Pro** trên Desktop. Hoặc chạy:
 
-- Nhận camera từ ba nguồn: webcam USB/laptop, ESP32 qua USB-OTG hoặc ESP32 qua Wi-Fi.
-- Phát hiện khuôn mặt bằng mô hình YOLOv8 tùy biến trong `models/model.pt`.
-- Kiểm tra landmark, tư thế, độ sáng và chất lượng mặt bằng MediaPipe.
-- Nhận diện danh tính bằng embedding ArcFace 512 chiều và cosine distance.
-- Gộp kết quả từ nhiều frame, kiểm tra khoảng cách Top 1/Top 2 và xác nhận theo thời gian để giảm nhận nhầm do ảnh JPEG nhiễu.
-- Đăng ký nhiều nhân viên liên tiếp, tự động chụp khi khuôn mặt đạt yêu cầu.
-- Quản lý hồ sơ: tìm kiếm, sửa, bật/tắt nhận diện và xóa nhân viên.
-- Theo dõi dashboard và lịch sử xác thực thành công/thất bại.
-- Kiểm thử một ảnh tĩnh mà không ghi vào lịch sử điểm danh.
-- Đồng bộ trạng thái và ảnh đến màn hình TFT ESP32-035 qua một kênh chỉ đọc có token.
-- Tự kết nối lại camera khi nguồn hình bị gián đoạn.
+~~~powershell
+.\venv\Scripts\python.exe facetouch_pro.py wifi
+~~~
 
-## 2. Công nghệ sử dụng
+**Lần đầu đọc dự án?** Bắt đầu từ kiến trúc, sau đó đến cài đặt/model/cấu hình. Có thể thử webcam trước khi lắp đầy đủ phần cứng.
 
-- **Python 3.11**: runtime chính của dự án.
-- **OpenCV**: đọc camera, xử lý frame, encode/decode JPEG và vẽ HUD.
-- **Ultralytics YOLOv8**: phát hiện khuôn mặt.
-- **MediaPipe Face Detector**: landmark và kiểm tra tư thế/chất lượng.
-- **DeepFace + ArcFace**: tạo embedding và nhận diện danh tính.
-- **Starlette + Uvicorn**: HTTP API, WebSocket trạng thái và MJPEG stream.
-- **PyWebView**: đóng gói Web UI thành cửa sổ desktop.
-- **HTML/CSS/JavaScript thuần**: giao diện quản trị và kiosk.
-- **PlatformIO/Arduino**: firmware cho ESP32-S3 camera và ESP32-035 TFT.
+## Mục lục
 
-## 3. Kiến trúc tổng thể
+- [1. Chức năng](#1-chức-năng)
+- [2. Kiến trúc và nguyên lý](#2-kiến-trúc-và-nguyên-lý)
+- [3. Phần cứng và môi trường](#3-phần-cứng-và-môi-trường)
+- [4. Cài đặt trên laptop](#4-cài-đặt-trên-laptop)
+- [5. Cấu hình](#5-cấu-hình)
+- [6. Chạy chương trình](#6-chạy-chương-trình)
+- [7. Sử dụng hằng ngày](#7-sử-dụng-hằng-ngày)
+- [8. Đổi Wi-Fi](#8-đổi-wi-fi)
+- [9. Build và nạp firmware](#9-build-và-nạp-firmware)
+- [10. Mạng và API](#10-mạng-và-api)
+- [11. Cấu trúc mã nguồn](#11-cấu-trúc-mã-nguồn)
+- [12. Dữ liệu và sao lưu](#12-dữ-liệu-và-sao-lưu)
+- [13. Kiểm thử và công cụ](#13-kiểm-thử-và-công-cụ)
+- [14. Xử lý lỗi](#14-xử-lý-lỗi)
+- [15. Giới hạn triển khai](#15-giới-hạn-triển-khai)
 
-```text
-Webcam / ESP32 USB / ESP32 Wi-Fi
-              │
-              ▼
-        Camera Capture
-              │ frame mới nhất
-              ▼
-     YOLO phát hiện khuôn mặt
-              │
-              ├──────────────► MediaPipe kiểm tra chất lượng/tư thế
-              │                              │
-              ▼                              ▼
-       Cắt + căn chỉnh mặt ◄────────── khuôn mặt hợp lệ
-              │
-              ▼
-       ArcFace embedding 512-D
-              │
-              ▼
-  Gộp nhiều frame + so khớp cosine
-              │
-       ┌──────┼─────────┐
-       ▼      ▼         ▼
-  Thành công  Mơ hồ   Người lạ
-       │      │         │
-       └──────┴─────────┘
-              │
-              ▼
-  Runtime state + lịch sử JSON
-              │
-       ┌──────┼────────────┐
-       ▼      ▼            ▼
-   Admin UI  Kiosk UI   TFT ESP32-035
-```
+## 1. Chức năng
 
-Các lớp được tách theo trách nhiệm:
+### Phần mềm laptop
 
-- `facetouch_pro.py` là launcher duy nhất, nạp `.env`, chọn nguồn camera và quản lý camera bridge nếu cần.
-- `web_admin.py` giữ cổng backend, khởi động Uvicorn, mở cửa sổ PyWebView và dừng dịch vụ khi cửa sổ đóng.
-- `web_backend/app.py` chỉ vận chuyển dữ liệu qua REST, WebSocket và MJPEG; quyết định nghiệp vụ nằm trong runtime.
-- `web_runtime.py` giữ state dùng chung, điều phối chế độ, CRUD nhân viên, lịch sử và dữ liệu gửi đến UI/TFT.
-- `door_service.py` quản lý MQTT/TLS, ACK mở cửa, timeout, cooldown và điều kiện khuôn mặt phải rời camera trước lượt mới.
-- `mixins/attendance.py` chứa pipeline nhận diện và chính sách quyết định điểm danh.
-- `mixins/camera.py` chứa pipeline camera/kiểm tra chất lượng khi đăng ký.
-- `mixins/enrollment.py` tạo embedding và lưu hồ sơ mới.
-- `mixins/core.py` tải model, cache embedding, warm-up ArcFace và đọc/ghi lịch sử.
-- `ai_engine.py` chứa các hàm AI mức thấp: detect, quality check, alignment và cosine distance.
-- `camera_capture.py` đọc MJPEG theo chiến lược “latest frame”, tránh xử lý backlog cũ.
-- `ekyc_renderer.py` dựng vùng hướng dẫn và HUD cho quá trình đăng ký.
-- `web_ui/` chứa toàn bộ giao diện frontend.
+- Camera từ ESP32 Wi-Fi, webcam hoặc USB-OTG với firmware riêng.
+- Phát hiện mặt bằng YOLO, kiểm tra chất lượng/tư thế bằng MediaPipe, nhận diện bằng ArcFace.
+- Đăng ký, sửa, tìm kiếm, bật/tắt nhận diện và xóa hồ sơ khuôn mặt.
+- Đăng ký, đồng bộ, liên kết mã vân tay với nhân viên và xóa mẫu.
+- Dashboard, giám sát camera/bo cửa, nhật ký xác thực và sự kiện.
+- Yêu cầu mở khóa có thời hạn qua MQTT/TLS, theo dõi ACK và chống gửi lặp.
+- Giao diện quản trị trên laptop và chế độ kiosk.
+- Launcher Desktop tự tìm camera, hiện tiến trình khởi động, cho tìm lại và xem log.
+- Cảnh báo Telegram tùy chọn theo chính sách xác thực thất bại.
 
-Camera và model chỉ được khởi tạo một lần trong vòng đời backend. Chuyển trang trên giao diện không tải lại model hoặc mở lại camera.
+### Phần nhúng
 
-## 4. Luồng khởi động
+- **Camera ESP32-S3 + OV3660:** chụp JPEG, phát MJPEG, trang chẩn đoán.
+- **Bo cửa ESP32-S3:** AS608, relay, nút, OLED, MQTT và Telegram.
+- **TFT ESP32-035:** tải ảnh/trạng thái, tự tìm máy chủ khi IP laptop thay đổi.
+- **Cấu hình Wi-Fi:** RESET hai lần để chọn mạng và lưu NVS; không cần nạp lại firmware mỗi lần đổi mạng.
 
-Khi chạy `python facetouch_pro.py <camera>`:
+## 2. Kiến trúc và nguyên lý
 
-1. Launcher gọi `http://127.0.0.1:8765/api/health` để bảo đảm không có phiên FaceTouch Pro khác đang chạy.
-2. Các biến trong `.env` được nạp, nhưng không ghi đè biến đã đặt từ shell.
-3. Launcher cấu hình nguồn camera:
-   - `webcam`: xóa URL stream và chọn camera index.
-   - `usb`: mở `tools/usb_camera_bridge.py`, chờ stream nội bộ tại cổng `8766`.
-   - `wifi`: tìm camera theo tham số CLI, `.env`, mDNS `facecheck-cam.local`, sau đó có thể quét các mạng IPv4 cục bộ; stream được lấy trực tiếp từ ESP32 tại cổng `81`.
-4. `web_admin.py` giữ độc quyền cổng `8765` trước khi import backend. Việc này ngăn tiến trình thừa tải model hoặc mở camera.
-5. Backend tạo một `WebFaceCheckRuntime`, tải YOLO/MediaPipe, nạp cache nhân viên, warm-up ArcFace ở background và mở camera.
-6. Runtime mặc định chạy chế độ điểm danh.
-7. Giao diện quản trị mở tại `http://127.0.0.1:8765/?view=admin#dashboard`.
-8. Đồng thời, server chỉ đọc cho TFT lắng nghe ở cổng `8767`. Giao diện quản trị chính vẫn chỉ bind vào localhost.
-9. Khi đóng cửa sổ chính, runtime dừng worker, giải phóng camera và đóng các server do tiến trình sở hữu.
+~~~mermaid
+flowchart LR
+    Camera["ESP32-S3 + OV3660"] -->|"MJPEG qua Wi-Fi"| Laptop["Laptop: AI và quản trị"]
+    Laptop -->|"JPEG và trạng thái qua LAN"| TFT["Màn hình ESP32-035"]
+    Laptop <-->|"Lệnh, ACK, sự kiện"| MQTT["MQTT Broker qua TLS"]
+    MQTT <--> Door["ESP32-S3 bo cửa"]
+    Finger["AS608: vân tay"] --> Door
+    Button["Nút mở bên trong"] --> Door
+    Door --> Lock["Relay và khóa"]
+    Door --> OLED["OLED"]
+~~~
 
-## 5. Luồng điểm danh/nhận diện
+Laptop, camera và TFT cần liên lạc được trong cùng LAN. Bo cửa giao tiếp qua broker MQTT nên có thể ở mạng khác nếu cả hai truy cập được broker; dùng chung mạng giúp vận hành thuận tiện hơn.
 
-### 5.1 Phát hiện và chọn khuôn mặt
+### Nhận diện khuôn mặt
 
-Worker điểm danh đọc camera liên tục nhưng giới hạn YOLO theo chu kỳ cấu hình để UI vẫn mượt. Kết quả detect gần nhất được tái sử dụng giữa các lần inference.
+1. Laptop nhận frame mới nhất để hạn chế độ trễ hàng đợi.
+2. YOLO phát hiện mặt; kiểm tra kích thước, vị trí, độ sáng, tư thế và độ ổn định.
+3. Mặt hợp lệ được cắt/căn chỉnh; ArcFace tạo vector 512 chiều.
+4. Vector từ các frame liên tiếp được chuẩn hóa và gộp để giảm nhiễu.
+5. So với centroid của từng hồ sơ đang bật nhận diện; xét khoảng cách Top 1 và độ tách biệt Top 1/Top 2.
+6. Chỉ kết quả đạt điều kiện khớp được xử lý thành công. Mơ hồ/người lạ không cho phép mở khóa; hồ sơ benchmark LFW không tham gia xác thực thực tế.
 
-Nếu có nhiều người, hệ thống chọn khuôn mặt có bounding box lớn nhất, tức người được giả định đang gần camera nhất. Khuôn mặt chính phải lớn hơn khuôn mặt thứ hai ít nhất theo tỷ lệ `KIOSK_PRIMARY_FACE_MIN_AREA_RATIO`; nếu không, UI yêu cầu người cần điểm danh tiến gần hơn.
+Quy tắc ở [recognition_policy.py](recognition_policy.py); ngưỡng và timing ở [config.py](config.py). Đánh giá cả nhận nhầm và từ chối nhầm trên dữ liệu đại diện, thay vì hạ ngưỡng theo vài mẫu thử.
 
-Trước khi nhận diện, ứng viên phải thỏa các điều kiện chính:
+### Vân tay và mở khóa
 
-- Bounding box đủ tin cậy và không bị cắt sát mép ảnh.
-- Chiều rộng mặt đủ lớn cho ArcFace.
-- Góc nghiêng, yaw và pitch trong giới hạn.
-- Độ sáng không quá tối hoặc cháy sáng.
-- Khuôn mặt tồn tại ổn định ít nhất `KIOSK_FACE_STABLE_SECONDS`.
+AS608 so khớp tại bo cửa. Server quản lý liên kết mã vân tay với nhân viên; template vân tay giữ trong cảm biến, không truyền lên laptop qua MQTT.
 
-### 5.2 Trích xuất và so khớp
+MQTT callback kiểm tra lệnh và đưa vào queue; task khóa mới thực hiện relay. Lệnh có mã riêng, hạn dùng và ACK bắt đầu/hoàn tất/thất bại. Cooldown và chốt theo danh tính/vị trí mặt hạn chế mở lặp; không tự gửi lại OPEN khi mất ACK.
 
-1. Mặt được mở rộng thêm padding rồi căn chỉnh bằng landmark.
-2. ArcFace sinh vector đặc trưng 512 chiều.
-3. Runtime chuẩn hóa và trung bình embedding của nhiều frame liên tiếp để giảm nhiễu JPEG.
-4. Query embedding được so với centroid embedding của từng hồ sơ đang bật nhận diện.
-5. Các hồ sơ benchmark có `source = "LFW benchmark"` luôn bị loại khỏi nhận diện thực tế.
-6. Kết quả được xếp theo cosine distance; giá trị càng nhỏ càng giống.
-7. Hệ thống xét đồng thời:
-   - khoảng cách của Top 1;
-   - margin giữa Top 1 và Top 2;
-   - số frame xác nhận;
-   - khoảng thời gian tối thiểu giữa các frame.
+**Xác thực thành công không đồng nghĩa cánh cửa đã mở vật lý.** Chưa có cảm biến vị trí cửa. Chi tiết: [Luồng xác thực và điều khiển khóa](docs/door_flow.md).
 
-### 5.3 Chính sách quyết định
+## 3. Phần cứng và môi trường
 
-- **Strict:** Top 1 nằm trong `ARCFACE_THRESHOLD` và cách Top 2 đủ xa theo `ARCFACE_TOP2_MARGIN`. Đây là nhánh duy nhất có quyền ghi điểm danh.
-- **High confidence:** kết quả rất mạnh có thể đi theo nhánh xác nhận nhanh, nhưng vẫn cần hai frame độc lập và đủ khoảng thời gian.
-- **Strict confirmation:** trường hợp sát ngưỡng phải tích lũy chuỗi xác nhận trong cửa sổ thời gian; frame nhiễu làm đứt chuỗi.
-- **Ambiguous:** có nét tương đồng nhưng không đủ margin/độ tin cậy; hệ thống từ chối xác minh.
-- **Unknown:** không có hồ sơ phù hợp; cần nhiều lần kiểm tra hợp lệ trước khi kết luận người lạ.
+Có thể bắt đầu thử AI/giao diện bằng laptop và webcam. Hệ thống đầy đủ dùng:
 
-Sau kết quả cuối, UI giữ thông báo một khoảng ngắn. Khuôn mặt vừa xử lý bị tạm loại khỏi hàng đợi để một người đứng lại trước camera không chặn người tiếp theo.
+- Windows 10/11; **Python 3.11** được khuyến nghị.
+- ESP32-S3 WROOM CAM + **OV3660**, có PSRAM phù hợp.
+- Bo cửa **ESP32-S3-WROOM-1-N16R8**, AS608, OLED SSD1306, relay/khóa, nút mở bên trong; còi/đèn theo sơ đồ.
+- **ESP32-035**, TFT 3,5 inch; ST7796 mặc định hoặc ILI9488 tùy bo.
+- Wi-Fi **2.4 GHz** cho ESP, cho phép các thiết bị trong LAN giao tiếp.
+- Internet cho MQTT Cloud, Telegram hoặc tải dependency/model lần đầu.
+- PlatformIO và cáp USB dữ liệu để build/nạp firmware.
 
-### 5.4 Ghi lịch sử và chống trùng
+GPU NVIDIA/CUDA là tùy chọn, có lựa chọn CPU nếu CUDA không khả dụng. Hiệu năng tùy máy, nguồn, model và Wi-Fi; camera/TFT hiện hướng đến khoảng **5 FPS**, không cam kết trên mọi cấu hình.
 
-- Kết quả thành công được ghi vào `data/attendance_history.json`.
-- Kết quả mơ hồ/người lạ cũng được ghi với trạng thái thất bại và metric liên quan.
-- Lịch sử trong runtime được giới hạn ở 100 bản ghi gần nhất.
-- Cùng một nhân viên nhận diện lại trong `KIOSK_ATTENDANCE_COOLDOWN_SECONDS` sẽ hiện “Đã điểm danh trước đó” và không tạo bản ghi trùng.
+ESP có thể dùng nguồn ngoài đúng điện áp, không cần USB khi vận hành. Laptop vẫn phải bật để chạy AI và cấp hình TFT. Không đưa 12V của khóa trực tiếp vào đường 5V/3.3V ESP; dùng mạch nguồn phù hợp từng bo.
 
-## 6. Luồng đăng ký nhân viên
+## 4. Cài đặt trên laptop
 
-1. Quản trị viên mở trang **Đăng ký khuôn mặt**.
-2. Frontend chuyển runtime sang mode `add_employee`; worker điểm danh dừng và worker đăng ký dùng lại camera/model hiện có.
-3. Quản trị viên nhập mã nhân viên, họ tên, chức vụ và phòng ban rồi bấm **Bắt đầu quét tại kiosk**.
-4. Camera kiểm tra chỉ có một khuôn mặt, vị trí, kích thước, YOLO confidence, MediaPipe confidence, góc đầu, độ sáng và vùng miệng không bị che.
-5. State machine dùng chuỗi frame hợp lệ/không hợp lệ để tránh trạng thái nhấp nháy.
-6. Khi mặt hợp lệ liên tục, hệ thống đếm ngược và thu tối đa 5 ảnh crop vào RAM, cách nhau theo `ENROLLMENT_SAMPLE_INTERVAL_SECONDS`.
-7. Có ít nhất 3 mẫu hợp lệ thì snapshot được khóa và nút lưu được bật.
-8. Khi lưu, từng mẫu được căn chỉnh và đưa qua ArcFace. Các vector được chuẩn hóa; centroid được lưu để tương thích, đồng thời giữ toàn bộ danh sách embedding.
-9. Hệ thống kiểm tra trùng mã nhân viên không phân biệt hoa/thường trước khi ghi.
-10. Một ảnh toàn frame được lưu trong `data/faces/`; hồ sơ và embedding được ghi nguyên tử vào `data/embeddings.pkl` qua file tạm.
-11. Sau khi lưu, người cũ phải rời khỏi khung. Quản trị viên nhập hồ sơ mới và chủ động bắt đầu lượt tiếp theo.
-12. Nếu phiên đăng ký không có thao tác trong 15 giây và không bận lưu/chụp, runtime tự trở về điểm danh.
+Các lệnh dùng **PowerShell** tại thư mục gốc repository.
 
-Tên file ảnh có dạng:
+### Lấy mã nguồn và tạo môi trường
 
-```text
-<ma_nv>@<chuc_vu>@<phong_ban>@<ho_ten>_<YYYYMMDD_HHMMSS>.jpg
-```
+~~~powershell
+git clone --branch doan https://github.com/sondinh2208/AI_RECOGNITION.git
+cd AI_RECOGNITION
+py -3.11 -m venv venv
+.\venv\Scripts\python.exe -m pip install --upgrade pip
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pip install mediapipe
+~~~
 
-## 7. Giao diện và các chế độ
+Mã import trực tiếp MediaPipe nhưng requirements hiện chưa liệt kê trực tiếp, nên có bước cài bổ sung. Dependency chính: OpenCV, Ultralytics/PyTorch, MediaPipe, DeepFace, Starlette/Uvicorn, PyWebView, pyserial, psutil và paho-mqtt.
 
-Giao diện quản trị có các trang:
+Nếu dùng CUDA, chọn PyTorch phù hợp GPU/driver và kiểm tra trong venv. DeepFace/ArcFace cần TensorFlow/Keras tương thích. Dependency chưa khóa toàn bộ phiên bản; kiểm tra môi trường mới trước khi bàn giao, không giả định mọi bản mới nhất đều tương thích.
 
-- **Tổng quan:** số hồ sơ, lượt hôm nay, tỷ lệ thành công, thống kê tuần và bản ghi gần nhất.
-- **Đăng ký:** nhập thông tin, theo dõi chất lượng camera, quét và lưu khuôn mặt.
-- **Giám sát nhận diện:** xem trạng thái camera/AI, kết quả gần nhất và kiểm thử bằng ảnh.
-- **Nhân viên:** tìm kiếm, xem ảnh, sửa thông tin, bật/tắt tham gia nhận diện hoặc xóa hồ sơ.
-- **Lịch sử:** tìm kiếm, lọc theo trạng thái và phân trang.
+### Chuẩn bị model
 
-Hai kiểu hiển thị được hỗ trợ:
+Cung cấp riêng hai tệp:
 
-- `?view=admin`: giao diện quản trị đầy đủ.
-- `?view=kiosk`: khóa router ở trang nhận diện, phù hợp màn hình kiosk.
+~~~text
+models/
+├── model.pt                       # YOLO phát hiện mặt của dự án
+└── blaze_face_short_range.tflite   # Model MediaPipe
+~~~
 
-Frontend nhận state qua `/ws/state` mỗi khoảng 350 ms và nhận camera qua `/api/camera/stream`. Nhiều client dùng chung JPEG cache để tránh encode cùng một frame nhiều lần.
+Thư mục models không đưa lên Git. Liên hệ người quản lý dự án để nhận đúng bộ trọng số; không thay YOLO mặt bằng model phát hiện vật thể thông thường.
 
-## 8. Cấu trúc thư mục
+Lần đầu ArcFace, DeepFace có thể cần tải/chuẩn bị trọng số trong cache người dùng. Hoàn tất khi có Internet; thời gian mở lần đầu có thể dài hơn.
 
-```text
-AI_RECOGNITION/
-├── facetouch_pro.py                 # Launcher webcam/USB/Wi-Fi
-├── web_admin.py                 # Vòng đời server và cửa sổ desktop
-├── web_runtime.py               # State, CRUD, callback và điều phối mode
-├── web_backend/app.py           # REST API, WebSocket, static files
-├── ai_engine.py                 # Detect, quality, alignment, distance
-├── camera_capture.py            # OpenCV/local camera và latest-frame MJPEG
-├── ekyc_renderer.py             # Overlay/HUD đăng ký
-├── config.py                    # Ngưỡng AI, camera và timing
-├── mixins/
-│   ├── attendance.py            # Pipeline điểm danh
-│   ├── camera.py                # Pipeline camera đăng ký
-│   ├── enrollment.py            # Tạo/lưu hồ sơ khuôn mặt
-│   └── core.py                  # Model, cache, lịch sử
-├── web_ui/
-│   ├── index.html
-│   ├── css/                     # Layout, component, kiosk, animation
-│   └── js/                      # API bridge, router, state, app
-├── models/
-│   ├── model.pt                 # YOLO face detector
-│   └── blaze_face_short_range.tflite
-├── data/                        # Dữ liệu runtime, không commit Git
-├── tools/                       # Bridge, benchmark và hiệu chuẩn
-├── firmware/
-│   ├── esp32_s3_ov3660/         # Camera Wi-Fi
-│   ├── esp32_s3_ov3660_usb/     # Camera USB-OTG
-│   └── esp32_035_display/       # Màn hình TFT
-└── tests/                       # Unit/smoke tests
-```
+## 5. Cấu hình
 
-## 9. Yêu cầu hệ thống
+Tạo **.env** ở thư mục gốc; tệp này không commit Git. Thay placeholder bằng giá trị thật trên máy.
 
-- Windows 10/11 được hỗ trợ trực tiếp bởi launcher và cấu hình camera hiện tại.
-- Python 3.11 khuyến nghị; môi trường phát triển hiện tại dùng Python 3.11.4.
-- Webcam hoặc một ESP32-S3 WROOM CAM + OV3660 đã nạp firmware phù hợp.
-- RAM đủ để chạy YOLO, MediaPipe, TensorFlow/DeepFace; GPU CUDA là tùy chọn.
-- Nếu dùng ESP32 Wi-Fi/TFT: các thiết bị và laptop phải liên lạc được trong cùng LAN 2.4 GHz, hoặc dùng SoftAP theo cấu hình firmware.
-- Nếu build firmware: VS Code + PlatformIO, hoặc Arduino IDE 2.x đối với firmware camera.
+### Camera và TFT
 
-`check_gpu_quick()` tự chọn CUDA khi khả dụng, nếu không hệ thống chạy bằng CPU.
-
-## 10. Cài đặt
-
-Tại thư mục gốc dự án:
-
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-Mã nguồn import trực tiếp `mediapipe`. Nếu môi trường mới báo `ModuleNotFoundError: mediapipe` sau bước trên, cài bổ sung:
-
-```powershell
-pip install mediapipe
-```
-
-Cài thêm dependency phục vụ kiểm thử:
-
-```powershell
-pip install -r requirements-dev.txt
-```
-
-Hai model sau phải tồn tại trước khi chạy AI:
-
-```text
-models/model.pt
-models/blaze_face_short_range.tflite
-```
-
-Ở lần dùng ArcFace đầu tiên, DeepFace có thể cần chuẩn bị trọng số model trong cache người dùng. Hãy khởi động lần đầu khi máy có thể hoàn tất bước này.
-
-## 11. Cấu hình `.env`
-
-Tạo `.env` tại thư mục gốc nếu chưa có. Không commit file này vì chứa địa chỉ mạng và token.
-
-Ví dụ an toàn:
-
-```dotenv
-# Camera Wi-Fi ưu tiên; có thể dùng IP hoặc hostname
+~~~dotenv
+# Camera ưu tiên; không tìm thấy thì launcher tiếp tục dò LAN.
 FACECHECK_CAMERA_HOST=facecheck-cam.local
 
-# Profile: webcam hoặc embedded_ov3660
-FACECHECK_CAMERA_PROFILE=webcam
-
-# 1 = lật gương, 0 = giữ nguyên
-FACECHECK_CAMERA_FLIP=1
-
-# Địa chỉ LAN của laptop để TFT truy cập, ví dụ 192.168.1.11
-FACECHECK_DISPLAY_HOST=192.168.1.11
+# Cùng token được nạp trong firmware màn hình.
 FACECHECK_DISPLAY_TOKEN=THAY_BANG_TOKEN_DAI_NGAU_NHIEN
-# Điều khiển cửa ESP32-S3 qua HiveMQ Cloud
-MQTT_HOST=THAY_BANG_HOST_HIVEMQ
+~~~
+
+Tạo token, dùng cùng giá trị trong .env và include/secrets.h của TFT:
+
+~~~powershell
+.\venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(32))"
+~~~
+
+Launcher tự đặt URL/profile theo chế độ camera. Thường không cần đặt tay FACECHECK_CAMERA_URL hoặc FACECHECK_CAMERA_PROFILE. Nếu chỉnh lật ảnh, FACECHECK_CAMERA_FLIP nhận 0/1; khởi động lại sau sửa.
+
+`FACECHECK_DISPLAY_HOST` là địa chỉ laptop được ưu tiên/in ra khi khởi động, không phải lệnh chuyển Wi-Fi ESP. TFT tự tìm máy chủ nên không cần IP laptop cố định để dùng bình thường.
+
+### Bo cửa MQTT/TLS
+
+~~~dotenv
+MQTT_HOST=YOUR_BROKER_HOST
 MQTT_PORT=8883
-MQTT_USERNAME=THAY_BANG_TAI_KHOAN
-MQTT_PASSWORD=THAY_BANG_MAT_KHAU
+MQTT_USERNAME=YOUR_USERNAME
+MQTT_PASSWORD=YOUR_PASSWORD
 MQTT_DOOR_DEVICE_ID=door-01
 FACECHECK_DOOR_ENABLED=1
 FACECHECK_DOOR_OPEN_DURATION_MS=3000
 FACECHECK_DOOR_COOLDOWN_SECONDS=8
 FACECHECK_DOOR_FACE_EXIT_SECONDS=1.5
 FACECHECK_DOOR_ACK_TIMEOUT_SECONDS=12
+~~~
 
-# Tùy chọn preview/bridge
-FACECHECK_PREVIEW_WIDTH=640
-FACECHECK_PREVIEW_QUALITY=80
-```
+Firmware phải dùng cùng broker, tài khoản có quyền phù hợp và cùng DEVICE_ID. MQTT/TLS hiện dùng CA; đổi broker cần kiểm tra cả chứng chỉ. Bo cần đồng bộ NTP trước TLS.
 
-Các biến runtime đáng chú ý:
+`FACECHECK_DOOR_ENABLED=0` tắt yêu cầu tự mở từ nhận diện. Chỉ thử webcam/AI có thể chưa cấu hình MQTT; giao diện sẽ báo dịch vụ cửa chưa sẵn sàng.
 
-- `FACECHECK_CAMERA_INDEX`: camera local ưu tiên, mặc định `0`; runtime thử tiếp `0`, `1`, `2` nếu cần.
-- `FACECHECK_CAMERA_URL`: URL MJPEG. Launcher tự đặt cho mode USB/Wi-Fi; thường không cần nhập tay.
-- `FACECHECK_CAMERA_PROFILE`: `webcam` hoặc `embedded_ov3660`; profile nhúng dùng ngưỡng đăng ký phù hợp ảnh nén.
-- `FACECHECK_CAMERA_FLIP`: bật/tắt lật ngang.
-- `FACECHECK_DRAW_DEBUG_BOXES=1`: vẽ bounding box khi chẩn đoán detector.
-- `FACECHECK_DISPLAY_HOST`: IP laptop được in cho màn hình TFT.
-- `FACECHECK_DISPLAY_TOKEN`: token bắt buộc cho API TFT ở cổng `8767`.
-- Quản lý vân tay dùng trực tiếp trên dịch vụ quản trị localhost `127.0.0.1:8765`, không yêu cầu mã mở khóa riêng. Không công khai cổng quản trị ra LAN khi chưa bổ sung đăng nhập toàn hệ thống.
-- `FACECHECK_DOOR_ENABLED`: `1` để tự mở cửa sau nhận diện thành công; đặt `0` để tắt mà không xóa thông tin broker.
-- `FACECHECK_DOOR_OPEN_DURATION_MS`: thời gian giữ relay, firmware giới hạn trong 500–10000 ms.
-- `FACECHECK_DOOR_COOLDOWN_SECONDS`: thời gian nghỉ toàn cửa sau ACK `finished`, mặc định 8 giây.
-- `FACECHECK_DOOR_FACE_EXIT_SECONDS`: camera phải không thấy khuôn mặt liên tục trong thời gian này mới re-arm, mặc định 1,5 giây.
-- `FACECHECK_DOOR_ACK_TIMEOUT_SECONDS`: thời gian tối đa chờ ESP32 hoàn tất lệnh, mặc định 12 giây.
-- `FACECHECK_WEB_SKIP_AI=1`: chỉ dùng cho test/smoke test; bỏ qua tải model và mở camera.
+### Telegram — tùy chọn
 
-Biến môi trường đặt từ PowerShell có độ ưu tiên cao hơn giá trị trong `.env`.
+ESP32 nhận lệnh bot; server chỉ gửi cảnh báo mặt và không poll thêm cùng token. Cấu hình/chính sách/dữ liệu gửi đi: [docs/telegram.md](docs/telegram.md).
 
-## 12. Chạy hệ thống
+Biến shell được ưu tiên hơn .env. Sau khi sửa cấu hình, đóng và mở lại ứng dụng.
 
-### Mở từ Desktop trên Windows
+## 6. Chạy chương trình
 
-Nhấp đúp biểu tượng **FaceTouch Pro** trên Desktop. Cửa sổ khởi động tự tìm camera
-ESP32 trên Wi-Fi, tải AI rồi mở giao diện, không cần terminal. Laptop và camera
-phải cùng mạng. Khi chưa thấy camera, cửa sổ hiện **Thử lại** và **Xem log**.
-Đóng cửa sổ FaceTouch Pro để dừng; nhấp lại biểu tượng khi đang chạy sẽ đưa cửa sổ
-hiện có lên trước, không khởi tạo thêm AI/camera.
+### Dùng hằng ngày: Desktop
 
-Log mỗi lần khởi động nằm trong `logs/facetouch-pro-<thời-gian>.log`. Không gửi
-toàn bộ `.env` hoặc `secrets.h` khi báo lỗi. Launcher sử dụng môi trường `venv`
-hiện có; giữ nguyên vị trí thư mục dự án để shortcut hoạt động.
+Sau khi cài môi trường/model/cấu hình, tạo shortcut một lần:
 
-Để tạo lại shortcut sau khi di chuyển dự án hoặc cho tài khoản Windows khác,
-chạy một lần từ thư mục gốc:
-
-```powershell
+~~~powershell
 powershell.exe -NoProfile -File tools\install_desktop_shortcut.ps1
-```
+~~~
 
-Shortcut chạy `venv\Scripts\pythonw.exe facetouch_pro_desktop.pyw`. Chức năng này
-không cài tự chạy cùng Windows và không thay đổi firewall.
+Nhấp **FaceTouch Pro**. Launcher hiện **Tìm camera → Tải AI → Mở giao diện**. Không thấy camera thì kiểm tra nguồn/mạng và nhấn **Tìm lại camera**; **Chi tiết kỹ thuật** mở log. Nhấp biểu tượng khi đang chạy ưu tiên cửa sổ hiện có.
 
-### ESP32-S3 Wi-Fi mặc định
+Desktop launcher mặc định dùng **ESP32 Wi-Fi**. Giữ nguyên vị trí dự án sau tạo shortcut; di chuyển thì chạy lại script. Chưa cài tự chạy cùng Windows.
 
-```powershell
-python facetouch_pro.py
-```
+### Terminal
 
-Lệnh không có tham số mặc định tìm camera ESP32-S3 theo
-`FACECHECK_CAMERA_HOST`, sau đó thử mDNS `facecheck-cam.local` và quét LAN nếu
-cần. Nó không tự rơi về webcam máy tính.
+Tự tìm camera trên mạng hiện tại:
 
-### Webcam máy tính
+~~~powershell
+.\venv\Scripts\python.exe facetouch_pro.py wifi
+~~~
 
-```powershell
-python facetouch_pro.py webcam
-```
+Chỉ định IP khi cần; địa chỉ dưới đây là ví dụ:
 
-Hoặc chọn camera cụ thể:
+~~~powershell
+.\venv\Scripts\python.exe facetouch_pro.py wifi --camera-host 192.168.1.100
+~~~
 
-```powershell
-python facetouch_pro.py webcam --camera-index 1
-```
+Thử webcam:
 
-Webcam local được yêu cầu MJPG, 640×480, 30 FPS và buffer size 1. Driver có thể trả về thông số thực tế khác tùy thiết bị.
+~~~powershell
+.\venv\Scripts\python.exe facetouch_pro.py webcam --camera-index 0
+~~~
 
-### ESP32-S3 qua USB-OTG
+USB-OTG cần **firmware USB riêng**, khác firmware Wi-Fi:
 
-```powershell
-python facetouch_pro.py usb
-```
+~~~powershell
+.\venv\Scripts\python.exe facetouch_pro.py usb --usb-port COMx
+~~~
 
-Chỉ định cổng CDC nếu tự động dò không đúng:
+Thay COMx bằng cổng CDC runtime thật. Mở thêm kiosk mô phỏng 480×320:
 
-```powershell
-python facetouch_pro.py usb --usb-port COM13
-```
+~~~powershell
+.\venv\Scripts\python.exe facetouch_pro.py wifi --simulate-display
+~~~
 
-Bridge đọc JPEG từ serial và cung cấp stream nội bộ:
+Quản trị ở **http://127.0.0.1:8765/?view=admin#dashboard**. Entry point web có phương án trình duyệt nếu thiếu PyWebView. Đóng cửa sổ desktop chính để dừng phiên do nó sở hữu. Với terminal/trình duyệt, đóng tab không nhất thiết dừng backend; dùng Ctrl+C tại terminal khởi chạy.
 
-- `http://127.0.0.1:8766/stream`
-- `http://127.0.0.1:8766/capture`
-- `http://127.0.0.1:8766/health`
+**Tương thích tên cũ:** `facecheck.py`, `facecheck_desktop.pyw`, `FACECHECK_*`, `X-FaceCheck-*`, `facecheck-cam.local` và định danh giao thức được giữ để cấu hình/firmware cũ tiếp tục hoạt động.
 
-### ESP32-S3 qua Wi-Fi
+## 7. Sử dụng hằng ngày
 
-```powershell
-python facetouch_pro.py wifi
-```
+### Đăng ký khuôn mặt
 
-Chỉ định IP/hostname để bỏ qua sự không chắc chắn của mDNS:
+1. Mở **Đăng ký khuôn mặt**, nhập mã nhân viên, họ tên, chức vụ, phòng ban.
+2. Bắt đầu quét; nhìn thẳng, mặt đủ sáng, trong vùng hướng dẫn.
+3. Đợi thu mẫu hợp lệ rồi lưu khi giao diện cho phép.
+4. Người vừa đăng ký rời khung trước lượt tiếp theo. Phiên không hoạt động tự về nhận diện theo timeout.
 
-```powershell
-python facetouch_pro.py wifi --camera-host 192.168.1.105
-```
+### Đăng ký vân tay
 
-Các tùy chọn:
+1. Kiểm tra MQTT bo cửa online và AS608 hoạt động.
+2. Mở **Vân tay**, chọn/nhập hồ sơ nhân viên để liên kết đúng danh tính.
+3. Bắt đầu đăng ký; đặt cùng ngón tay hai lần theo giao diện/OLED.
+4. Chờ hoàn tất; dùng đồng bộ khi cần đối chiếu dữ liệu cảm biến.
 
-```powershell
-python facetouch_pro.py wifi --no-lan-scan
-```
+Khuôn mặt và vân tay là phương thức thay thế trong luồng hiện tại, không mặc định bắt thực hiện đồng thời như xác thực hai yếu tố. Hồ sơ có thể có mặt, vân tay hoặc cả hai.
 
-Launcher cũng giữ tùy chọn tương thích `--skip-fps-check`; ở phiên bản hiện tại phép đo FPS lúc khởi động đã được tắt mặc định nên tùy chọn này không làm thay đổi hành vi.
+**Tổng quan** tổng hợp số liệu; **Giám sát cửa** xem camera/trạng thái; **Nhân viên** quản lý hồ sơ; **Nhật ký xác thực** tra cứu kết quả. Kiểm thử ảnh phục vụ thuật toán, không phải lượt mở cửa thật.
 
-Luồng hiện tại lấy MJPEG trực tiếp từ `http://<camera-ip>:81/stream`. ESP32 cung cấp health tại `http://<camera-ip>/health` để launcher xác minh đúng loại camera.
+## 8. Đổi Wi-Fi
 
-### Mô phỏng màn hình kiosk
+Không cần USB/nạp lại khi bo đã có firmware cấu hình mạng. Nguồn ngoài đúng điện áp dùng được.
 
-Thêm `--simulate-display` hoặc alias `--simulate-pi` vào bất kỳ mode nào:
+Thực hiện lần lượt trên camera, bo cửa, màn hình:
 
-```powershell
-python facetouch_pro.py wifi --simulate-display
-```
+1. Bật mạng mới **2.4 GHz**, giữ hotspot bật nếu dùng điện thoại.
+2. Nhấn/thả **RESET/EN hai lần**, cách nhau **1–2 giây**, không giữ BOOT.
+3. Chọn mạng Setup tương ứng: **FaceTouchPro-Setup-Camera-…**, **FaceTouchPro-Setup-Door-…**, **FaceTouchPro-Setup-Display-…**.
+4. Kết nối điện thoại/laptop, mật khẩu mặc định **FaceCheck2026** (giữ từ phiên bản cũ).
+5. Mở **http://192.168.4.1**, nhập Wi-Fi mới và mật khẩu, bấm **Lưu và kết nối**.
+6. ESP lưu NVS rồi khởi động lại; Setup biến mất sau lưu là bình thường. Đưa điện thoại/laptop về mạng vận hành.
 
-Ứng dụng mở đồng thời một cửa sổ kiosk 480×320 và một cửa sổ quản trị 1440×900.
+Firmware cũ có thể phát FaceCheck-Setup-…. Khi không kết nối được lúc khởi động hoặc mất mạng kéo dài, firmware cũng có thể tự mở portal sau các lần thử. Trong portal, vận hành thường bị gián đoạn; cần hoàn tất cấu hình hoặc khởi động lại để trở về vận hành.
 
-> Chỉ chạy một phiên FaceTouch Pro tại một thời điểm. Muốn đổi nguồn camera, hãy đóng ứng dụng hiện tại rồi chạy lại launcher.
+**TFT tự tìm laptop** qua UDP 8768, xác minh HMAC-SHA256 bằng token chung. Nếu broadcast bị chặn, tìm qua TCP 8767 trong subnet, tối đa /24. Dự phòng có thể mất khoảng 1–2 phút. Không cần nhập IP máy chủ; laptop phải chạy ứng dụng và firewall cho phép.
 
-## 13. Các cổng mạng
+**Mạng dự phòng vẫn còn.** Wi-Fi NVS thất bại thì bo có thể thử secrets.h; camera/TFT hỗ trợ thêm mạng thứ hai. Chỉ đổi mạng laptop không bảo đảm ESP đổi theo. Dùng portal chọn mạng cụ thể và kiểm tra log SSID/IP. RESET một lần là khởi động lại, không bảo đảm chuyển sang SSID nhất định.
 
-- `127.0.0.1:8765`: backend, Admin UI, Kiosk UI, REST, WebSocket state và camera stream. Chỉ truy cập cục bộ.
-- `0.0.0.0:8767`: API ảnh/trạng thái chỉ đọc cho TFT. Yêu cầu header `X-FaceCheck-Token` và nên chỉ cho phép trong LAN tin cậy.
-- `127.0.0.1:8766`: USB camera bridge khi chạy mode `usb`.
-- `<ESP32-IP>:80`: trang chẩn đoán, `/health`, `/capture` của camera Wi-Fi.
-- `<ESP32-IP>:81`: MJPEG `/stream` của camera Wi-Fi.
+Sau đổi mạng, kết nối laptop cùng mạng camera/TFT, đóng phiên cũ và mở lại. Lệnh chạy vẫn là `facetouch_pro.py wifi`; bỏ tham số IP mạng cũ.
 
-## 14. API nội bộ
+## 9. Build và nạp firmware
 
-Các endpoint chính trên cổng `8765`:
+### Cấu hình riêng
 
-- `GET /api/health`: kiểm tra đúng backend FaceTouch Pro.
-- `GET /api/state`: snapshot runtime hiện tại.
-- `POST /api/mode`: chuyển giữa `attendance`, `add_employee`, `idle`.
-- `GET /api/camera/stream`: MJPEG dùng cho UI.
-- `WS /ws/state`: stream snapshot trạng thái.
-- `POST /api/recognition/retry`: mở lại lượt nhận diện.
-- `POST /api/recognition/test-image`: kiểm thử file ảnh; tên file truyền qua header `X-Filename`.
-- `POST /api/enrollment/start`: bắt đầu lượt quét đăng ký.
-- `POST /api/enrollment/save`: lưu hồ sơ đã quét.
-- `POST /api/enrollment/reset`: hủy snapshot đăng ký.
-- `POST /api/enrollment/activity`: gia hạn timeout phiên đăng ký.
-- `POST /api/enrollment/finish`: kết thúc phiên và quay lại điểm danh.
-- `GET /api/employees`: danh sách/tìm kiếm/phân trang nhân viên.
-- `GET /api/employees/{id}/image`: ảnh hồ sơ.
-- `PUT /api/employees/{id}`: sửa thông tin.
-- `POST /api/employees/{id}/toggle`: bật/tắt nhận diện.
-- `DELETE /api/employees/{id}`: xóa hồ sơ và ảnh.
-- `GET /api/attendance`: lịch sử có lọc và phân trang.
-- `GET /api/dashboard`: số liệu tổng quan.
+- **Camera:** chép [secrets.example.h](firmware/esp32_s3_ov3660/secrets.example.h) thành firmware/esp32_s3_ov3660/secrets.h.
+- **Bo cửa:** chép [secrets.example.h](firmware/Smart_Door/secrets.example.h) thành firmware/Smart_Door/secrets.h; điền Wi-Fi, MQTT, Telegram nếu dùng.
+- **TFT:** chép [secrets.example.h](firmware/esp32_035_display/secrets.example.h) thành firmware/esp32_035_display/include/secrets.h; token trùng .env.
 
-API TFT trên cổng `8767` có:
+Không commit secrets.h. Kiểm tra bo/pinout/cấu hình trước đấu nối. Bo cửa mặc định N16R8, không áp dụng nguyên cho mọi ESP32-S3.
 
-- `GET /health`
-- `GET /frame.jpg`
+### Xác định đúng bo
 
-Cả hai yêu cầu `X-FaceCheck-Token` trùng với `FACECHECK_DISPLAY_TOKEN`.
+~~~powershell
+pio device list
+~~~
 
-`GET /discover?nonce=<32 ký tự hex>` trả thông tin dịch vụ kèm chữ ký HMAC,
-không trả token, hình ảnh hay dữ liệu nhân viên. UDP `8768` trả cùng phản hồi
-cho yêu cầu `FACECHECK_DISCOVER_V1 <nonce>` để TFT tự tìm laptop trên LAN.
+Nếu pio chưa ở PATH, dùng terminal PlatformIO hoặc đường dẫn công cụ đã cài:
 
-## 15. Dữ liệu lưu trữ
+~~~powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" device list
+~~~
+
+**COM thay đổi theo máy/cổng USB.** Không dùng số COM người khác. CH340/CH343 chưa đủ xác định chức năng: lần đầu cắm riêng từng bo, ghi serial USB/MAC, đối chiếu log. Nạp camera vào bo cửa khiến bo sai chức năng tới khi khôi phục.
+
+### Build/upload
 
-- `data/embeddings.pkl`: dictionary hồ sơ nhân viên và vector sinh trắc học.
-- `data/faces/*.jpg`: một ảnh tham chiếu/hiển thị cho mỗi hồ sơ đăng ký trực tiếp.
-- `data/attendance_history.json`: tối đa 100 sự kiện gần nhất do runtime duy trì.
-- `data/benchmark_faces/`: dữ liệu và báo cáo benchmark offline.
-- `data/captures/`, `data/known_faces/`: dữ liệu hỗ trợ hiệu chuẩn/kiểm thử nếu có.
-
-`data/`, `models/`, `.env` và các file secret firmware đều bị `.gitignore` loại trừ. Khi chuyển máy, cần sao lưu riêng tối thiểu:
-
-```text
-data/embeddings.pkl
-data/faces/
-data/attendance_history.json
-models/
-.env
-```
-
-`embeddings.pkl` và ảnh khuôn mặt là dữ liệu sinh trắc học nhạy cảm. Hãy giới hạn quyền đọc, mã hóa bản sao lưu, không đưa vào repository và tuân thủ quy định bảo vệ dữ liệu áp dụng tại nơi triển khai.
-
-Không chỉnh sửa `embeddings.pkl` thủ công. Khi khởi động, cache sẽ loại vector mồ côi nếu không tìm thấy ảnh tương ứng trong `data/faces/`.
-
-## 16. Firmware
-
-### Bộ điều khiển cửa/vân tay — `firmware/Smart_Door`
-
-ESP32-S3 nhận `OPEN` qua MQTT/TLS nhưng callback mạng không điều khiển relay trực tiếp. Lệnh hợp lệ được đưa vào FreeRTOS queue và chỉ `Task_LockControl` được phép mở khóa. Mỗi lệnh có `command_id`, TTL, giới hạn thời gian mở và ACK `started`/`finished`/`failed`. Khi mất mạng, vân tay và nút thoát vẫn mở cửa cục bộ.
-
-Server chỉ phát một lệnh tại một thời điểm. Sau khi hoàn tất, nó áp dụng cooldown và yêu cầu camera không còn khuôn mặt liên tục trước khi cho phép lượt mở tiếp theo. Nếu mất ACK, server giả định relay có thể đã hoạt động và chuyển sang trạng thái khóa lặp an toàn.
-
-### Camera Wi-Fi — `firmware/esp32_s3_ov3660`
-
-1. Sao chép `secrets.example.h` thành `secrets.h`.
-2. Điền Wi-Fi 2.4 GHz hoặc bật SoftAP.
-3. Build/upload bằng PlatformIO environment `esp32-s3-wroom-cam`.
-4. Theo dõi serial ở 115200 baud.
-5. Kiểm tra `/health`, `/capture` và stream cổng `81`.
-
-Firmware dùng mô hình laptop kéo MJPEG trực tiếp qua cổng 81.
-
-### Camera USB — `firmware/esp32_s3_ov3660_usb`
-
-Firmware gửi JPEG từ OV3660 qua USB-OTG. Sau khi nạp, Windows tạo cổng CDC runtime; `tools/usb_camera_bridge.py` đọc frame và chuyển thành MJPEG local.
-
-Lưu ý cổng upload và cổng CDC runtime có thể khác nhau. Xem Device Manager và log bridge thay vì giả định cố định theo ví dụ trong `platformio.ini`.
-
-### TFT — `firmware/esp32_035_display`
-
-1. Sao chép `secrets.example.h` thành `include/secrets.h`.
-2. Điền Wi-Fi và cùng `FACECHECK_DISPLAY_TOKEN` với `.env`; TFT tự tìm máy chủ trên cùng mạng.
-3. Thử environment `esp32-035-st7796`; nếu màn hình trắng/đen/nhiễu, thử `esp32-035-ili9488`.
-4. Cho phép inbound TCP 8767 trên Windows Firewall trong mạng private.
-
-TFT chỉ tải JPEG và đọc trạng thái từ laptop; thiết bị không chạy AI và không kết nối trực tiếp với camera.
-Ở chế độ chấm công, backend tạo JPEG 480×250 phủ kín vùng ảnh phía trên;
-camera gốc, frame AI và chế độ đăng ký 480×320 không đổi.
-Kênh hiển thị chạy 5 FPS với pipeline latest-frame hai buffer: Wi-Fi/TCP của
-ESP-IDF xử lý ở Core 0, còn task HTTP và task vẽ LovyanGFX được điều phối ở
-Core 1. Queue chỉ giữ một frame sẵn sàng nên frame cũ không thể tích backlog.
-Request LAN dùng timeout ngắn và chỉ retry một lần trên socket mới; log TFT
-hiển thị `DROP`, `RETRY`, `FAIL` cùng thời gian trung bình/tối đa để phân biệt
-chậm mạng với chậm giải mã/vẽ.
-
-Mỗi thư mục firmware có README riêng với hướng dẫn phần cứng chi tiết.
-
-### Đổi Wi-Fi không cần nạp lại firmware
-
-Để mở trang cấu hình ngay khi Wi-Fi cũ vẫn hoạt động, nhấn rồi thả nút
-**RESET/EN hai lần**, cách nhau khoảng **1–2 giây**. Không giữ nút BOOT.
-Thiết bị sẽ phát `FaceTouchPro-Setup-...`; kết nối bằng `FaceCheck2026` rồi mở
-`http://192.168.4.1`. Thao tác này giữ nguyên Wi-Fi đã lưu cho tới khi bạn
-lưu cấu hình mới. Cũng có thể kích hoạt bằng hai lần khởi động nguồn nhanh;
-sau khi cấp nguồn bình thường, hãy đợi ít nhất 5 giây trước khi reset nếu
-không muốn mở trang cấu hình. Khởi động bình thường thêm khoảng 3 giây để
-chờ thao tác nhấn lần hai.
-
-Camera, bộ điều khiển cửa và TFT lưu cấu hình Wi-Fi trong NVS của ESP32. Khi
-không kết nối được lúc khởi động, hoặc mất mạng liên tục 60 giây, thiết bị tự
-mở một mạng có tên dạng `FaceTouchPro-Setup-<thiết-bị>-XXXX`.
-
-1. Kết nối điện thoại/laptop vào mạng `FaceTouchPro-Setup-...` với mật khẩu
-   `FaceCheck2026`.
-2. Mở `http://192.168.4.1` nếu trang cấu hình không tự hiện.
-3. Chọn Wi-Fi 2.4 GHz và nhập mật khẩu. TFT tự tìm laptop, không cần nhập IP máy chủ.
-4. Bấm **Lưu và kết nối**. ESP32 lưu cấu hình vào flash rồi tự khởi động lại.
-
-`secrets.h` chỉ còn là cấu hình mặc định cho lần nạp đầu tiên và phương án dự
-phòng. Có thể nhấn RESET hai lần để đổi mạng hoặc chờ mất mạng 60 giây
-để cổng cấu hình xuất hiện. TFT tự tìm máy chủ bằng UDP 8768, dự phòng tìm
-từng địa chỉ trong subnet qua TCP 8767 (tối đa /24). Phản hồi tìm kiếm được
-xác minh HMAC-SHA256; token hiển thị vẫn lấy từ `secrets.h` và phải
-trùng với `FACECHECK_DISPLAY_TOKEN` trong `.env`.
-
-## 17. Công cụ hỗ trợ
-
-- `tools/usb_camera_bridge.py`: serial JPEG → MJPEG local cho mode USB.
-- `tools/mqtt_door_monitor.py`: theo dõi heartbeat/status của bộ điều khiển cửa.
-- `tools/mqtt_door_ping.py`: kiểm tra MQTT hai chiều mà không kích relay.
-- `tools/mqtt_door_open.py`: gửi `OPEN` thủ công, bắt buộc có `--confirm-open`.
-
-Sự kiện cục bộ từ bộ điều khiển cửa được nhận tại
-`smartdoor/v1/<device_id>/event`, lọc theo whitelist rồi lưu tối đa 100 bản ghi
-trong `data/door_events.json`. API đọc là `GET /api/door/events`; snapshot
-WebSocket cũng chứa trạng thái heartbeat, AS608 và sự kiện gần nhất. Không có
-tên, ảnh hay template vân tay trong payload MQTT.
-- `tools/read_serial.py`: đọc log serial trong một khoảng thời gian.
-- `tools/benchmark_wifi_camera.py`: đo nhiều mức FPS camera Wi-Fi và chọn mức ổn định.
-- `tools/prepare_lfw_benchmark.py`: chuẩn bị bộ đánh giá LFW.
-- `tools/import_lfw_benchmark.py`: nhập hồ sơ benchmark, mặc định không cho tham gia nhận diện thật.
-- `tools/select_lfw_medoid_gallery.py`: chọn ảnh đại diện medoid cho gallery LFW.
-- `tools/calibrate_recognition.py`: đánh giá/nghiệm thu ngưỡng ArcFace chung.
-- `tools/calibrate_esp_camera_recognition.py`: hiệu chuẩn trên ảnh từ camera ESP.
-
-Xem `--help` trước khi chạy một công cụ:
-
-```powershell
-python tools\benchmark_wifi_camera.py --help
-python tools\calibrate_recognition.py --help
-```
-
-## 18. Kiểm thử
-
-Chạy toàn bộ test mà không tải model hoặc mở camera thật:
-
-```powershell
+Camera Wi-Fi:
+
+~~~powershell
+pio run -d firmware\esp32_s3_ov3660 -e esp32-s3-wroom-cam
+pio run -d firmware\esp32_s3_ov3660 -e esp32-s3-wroom-cam -t upload --upload-port COMx
+~~~
+
+Bo cửa:
+
+~~~powershell
+pio run -d firmware\Smart_Door -e esp32-s3-n16r8
+pio run -d firmware\Smart_Door -e esp32-s3-n16r8 -t upload --upload-port COMx
+~~~
+
+TFT ST7796:
+
+~~~powershell
+pio run -d firmware\esp32_035_display -e esp32-035-st7796
+pio run -d firmware\esp32_035_display -e esp32-035-st7796 -t upload --upload-port COMx
+~~~
+
+Thay COMx bằng cổng đúng. TFT có environment esp32-035-ili9488 tùy panel. USB camera là [project riêng](firmware/esp32_s3_ov3660_usb/README.md).
+
+Camera/bo cửa dùng **no_reset** trước upload: giữ BOOT → nhấn/thả RST/EN → đợi 1–2 giây → thả BOOT, rồi nạp. Khác với RESET hai lần để đổi Wi-Fi. Đóng monitor trước upload để nhường COM.
+
+Log sau nạp ở **115200 baud**:
+
+~~~powershell
+pio device monitor --port COMx --baud 115200
+~~~
+
+Tài liệu phần cứng: [Camera Wi-Fi](firmware/esp32_s3_ov3660/README.md) · [Bo cửa](firmware/Smart_Door/README.md) · [TFT](firmware/esp32_035_display/README.md) · [Camera USB](firmware/esp32_s3_ov3660_usb/README.md).
+
+## 10. Mạng và API
+
+- **TCP 8765, localhost:** quản trị, REST, WebSocket; truy cập qua 127.0.0.1.
+- **TCP 8767, LAN:** TFT; /health và /frame.jpg yêu cầu X-FaceCheck-Token. /discover?nonce=… trả thông tin có chữ ký, không trả token/ảnh.
+- **UDP 8768, LAN:** tìm máy chủ TFT, TCP 8767 làm dự phòng.
+- **TCP 8766, localhost:** bridge USB khi dùng chế độ USB.
+- **Camera TCP 80:** trang kiểm tra, /health, /capture; **TCP 81:** /stream MJPEG.
+- **MQTT/TLS 8883:** broker hiện tại; cần Internet khi dùng MQTT Cloud.
+
+Firewall phải cho TFT truy cập TCP 8767; UDP 8768 giúp tìm nhanh. Giới hạn theo ứng dụng/thiết bị/mạng tin cậy; không tắt firewall. Quy tắc gắn IP cũ có thể không áp dụng sau đổi mạng. tools/allow_verified_display.ps1 cố định IP máy triển khai trước đây, **không tự cấu hình cho mọi mạng/máy**.
+
+API đầy đủ trong [web_backend/app.py](web_backend/app.py):
+
+- Trạng thái: /api/health, /api/state, /api/dashboard, /api/door/events.
+- Hồ sơ: /api/employees và thao tác theo mã nhân viên.
+- Đăng ký mặt: /api/enrollment/*.
+- Vân tay: /api/admin/fingerprints và các thao tác enroll/sync/theo ID.
+- Camera: /api/camera/stream; trạng thái thời gian thực: WebSocket /ws/state.
+
+## 11. Cấu trúc mã nguồn
+
+~~~text
+AI_RECOGNITION/
+├── facetouch_pro.py              # Entry point terminal
+├── facetouch_pro_desktop.pyw      # Entry point Desktop
+├── facecheck.py                  # Launcher camera, tên cũ tương thích
+├── desktop_launcher.py           # Chống trùng, dò camera, tiến trình/log
+├── launcher_ui.py                # Cửa sổ khởi động Tkinter
+├── branding.py                   # Tên và mô tả sản phẩm
+├── web_admin.py                  # Server và PyWebView
+├── web_runtime.py                # Điều phối, hồ sơ, trạng thái, lịch sử
+├── web_backend/                  # REST, WebSocket, TFT
+├── web_ui/                       # HTML/CSS/JavaScript
+├── camera_capture.py             # Camera, latest-frame MJPEG
+├── ai_engine.py                  # Detect, chất lượng, căn chỉnh
+├── recognition_policy.py         # Gộp vector, so khớp, quyết định
+├── mixins/                       # Pipeline, đăng ký, model/cache
+├── door_service.py               # MQTT, ACK, cooldown, vân tay
+├── telegram_alerts.py            # Cảnh báo ảnh
+├── display_discovery.py          # Tìm máy chủ có chữ ký
+├── config.py                    # Model, ngưỡng, timing
+├── firmware/
+│   ├── common/                  # Portal, NVS, RESET hai lần
+│   ├── Smart_Door/              # Bo cửa/AS608/OLED/relay
+│   ├── esp32_s3_ov3660/          # Camera Wi-Fi
+│   ├── esp32_s3_ov3660_usb/      # Camera USB
+│   └── esp32_035_display/        # TFT
+├── assets/                      # Logo/icon
+├── tools/                       # Shortcut, serial, benchmark, hiệu chuẩn
+├── tests/                       # Kiểm thử tự động
+├── docs/                        # Luồng mở cửa, Telegram
+├── models/                      # Cung cấp riêng, không theo dõi Git
+├── data/                        # Runtime, không theo dõi Git
+└── logs/                        # Log, không theo dõi Git
+~~~
+
+## 12. Dữ liệu và sao lưu
+
+Hồ sơ/embedding mặt: **data/embeddings.pkl**; ảnh: **data/faces/**; lịch sử: **data/attendance_history.json**; sự kiện bo: **data/door_events.json**. Lịch sử giới hạn số bản ghi theo mã hiện tại, không phải kho audit vô hạn.
+
+Sao lưu toàn bộ **data/**, **models/**, **.env**, **secrets.h** bằng phương án riêng có kiểm soát quyền. Liên kết vân tay trên server khác với template AS608; sao lưu laptop không tự sao lưu cảm biến.
+
+Ảnh/embedding cần nhất quán; cache có thể loại hồ sơ mồ côi khi thiếu ảnh. Không sửa pickle thủ công hoặc nạp từ nguồn không tin cậy. Xóa từ UI là thao tác thật, cần bản sao phù hợp để khôi phục.
+
+Log Desktop: **logs/facetouch-pro-&lt;thời-gian&gt;.log**; lỗi launcher: **logs/desktop-error.log**. Kiểm tra/che thông tin nhân viên và dữ liệu vận hành trước chia sẻ log.
+
+## 13. Kiểm thử và công cụ
+
+~~~powershell
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 $env:FACECHECK_WEB_SKIP_AI="1"
-python -m unittest discover -s tests -v
-```
-
-Bộ test hiện kiểm tra các nhóm chính:
-
-- camera capture/latest frame;
-- launcher, dò camera Wi-Fi và chọn nguồn camera;
-- API/UI smoke test và vòng đời single-instance;
-- chính sách gộp embedding nhiều frame, centroid và phân loại top1/top2;
-- phiên đăng ký liên tục, timeout và yêu cầu người cũ rời camera;
-- chất lượng khuôn mặt, độ sáng và vùng miệng;
-- layout eKYC và lựa chọn FPS camera.
-
-Sau test có thể xóa biến môi trường trong phiên PowerShell:
-
-```powershell
+.\venv\Scripts\python.exe -m unittest discover -s tests -v
 Remove-Item Env:FACECHECK_WEB_SKIP_AI -ErrorAction SilentlyContinue
-```
+~~~
 
-## 19. Điều chỉnh nhận diện
+Test bao phủ camera, launcher, API/UI, chính sách mặt, đăng ký, MQTT/ACK, chống mở lặp, vân tay và cảnh báo. Phần thiết bị/dịch vụ dùng mock; **test qua không thay nghiệm thu người thật/phần cứng khóa**. Biến bỏ AI chỉ dành kiểm thử.
 
-Để đọc code theo đúng trách nhiệm:
+Công cụ đáng chú ý:
 
-- `facetouch_pro.py`: chọn chế độ, cấu hình môi trường và khởi động ứng dụng.
-- `ai_engine.py`: phát hiện, kiểm tra chất lượng và căn chỉnh khuôn mặt.
-- `recognition_policy.py`: gộp vector, so khoảng cách hồ sơ, xếp top1/top2 và phân loại kết quả; không gửi lệnh mở cửa.
-- `mixins/attendance.py`: điều phối camera và luồng `tạo embedding → gộp frame → so khớp → xử lý kết quả`.
-- `web_runtime.py`: cập nhật trạng thái giao diện, lịch sử và phối hợp dịch vụ cửa/cảnh báo.
-- `door_service.py`, `telegram_alerts.py`: giao tiếp thiết bị và gửi cảnh báo theo chính sách riêng.
+- **tools/read_serial.py:** log có giới hạn thời gian, chọn COM/reset.
+- **tools/benchmark_wifi_camera.py:** đo FPS camera.
+- **tools/calibrate_recognition.py**, **tools/calibrate_esp_camera_recognition.py:** đánh giá ngưỡng.
+- **tools/test_similar_faces.py:** thử khuôn mặt tương đồng.
+- **tools/prepare_lfw_benchmark.py**, **tools/import_lfw_benchmark.py:** benchmark; không đưa LFW vào xác thực thật.
+- **tools/mqtt_door_monitor.py:** theo dõi; **tools/mqtt_door_ping.py:** kiểm tra MQTT không kích relay.
+- **tools/mqtt_door_open.py:** mở thật, yêu cầu cờ xác nhận; chỉ dùng khi đã kiểm soát khu vực khóa.
 
-Các ngưỡng quan trọng nằm trong `config.py`:
+Đọc `--help` và mã công cụ trước khi chạy; một số công cụ thay dữ liệu hoặc điều khiển thiết bị thật.
 
-- `ARCFACE_THRESHOLD`, `ARCFACE_TOP2_MARGIN`: điều kiện nhận diện đạt ngưỡng (`matched`); không phải xác nhận strict nhiều lần.
-- `ARCFACE_QUERY_AGGREGATION_FRAMES`, `ARCFACE_QUERY_AGGREGATION_MAX_SECONDS`: gộp embedding các frame cùng vùng mặt trong thời gian giới hạn.
-- `ARCFACE_UNCERTAIN_THRESHOLD`: phân loại kết quả chưa chắc chắn; không cho phép mở khóa.
-- `KIOSK_FACE_STABLE_SECONDS`, `KIOSK_CONFIRMATION_INTERVAL_SECONDS`: thời gian ổn định và lấy frame tiếp theo.
-- `KIOSK_UNKNOWN_CONFIRMATIONS`: số kết quả không khớp trước khi báo thất bại.
-- `KIOSK_MIN_FACE_WIDTH`, `KIOSK_MIN_FACE_CONFIDENCE`: chất lượng ứng viên.
-- `KIOSK_*_ANGLE/RATIO`: giới hạn tư thế.
-- `FACE_MIN_BRIGHTNESS`, `FACE_MAX_BRIGHTNESS`: giới hạn ánh sáng.
-- `ENROLLMENT_*`: chất lượng, số mẫu và timing đăng ký.
-- `KIOSK_ATTENDANCE_COOLDOWN_SECONDS`: thời gian chống ghi trùng.
+## 14. Xử lý lỗi
 
-Không nên giảm threshold theo cảm tính. Quy trình an toàn là chuẩn bị tập known/unknown đại diện đúng camera triển khai, chạy công cụ calibration, xem false accept/false reject rồi thay đổi một nhóm ngưỡng tại một thời điểm.
+### Không thấy camera sau đổi mạng
 
-## 20. Xử lý sự cố
+- Kiểm tra nguồn và SSID của cả laptop/camera.
+- RESET hai lần chọn mạng cụ thể nếu ESP còn bám mạng dự phòng.
+- Sau lưu portal, đưa laptop về mạng vận hành, không tiếp tục mở 192.168.4.1.
+- Đọc Serial 115200 để biết SSID/IP, mở /health camera từ laptop.
+- RESET một lần để thử khôi phục; vẫn lỗi thì đọc log thay vì nạp lại liên tục.
+- Dùng lệnh tự tìm, bỏ --camera-host trỏ IP cũ.
 
-### Không tìm thấy camera webcam
+### TFT có Wi-Fi nhưng không hình
 
-- Đóng ứng dụng khác đang giữ camera.
-- Thử `python facetouch_pro.py webcam --camera-index 1` rồi index `2`.
-- Kiểm tra quyền Camera trong Windows Settings.
-- Xem log `[CAMERA] Nguồn ưu tiên` và `[CAMERA] KHÔNG TÌM THẤY CAMERA`.
+- Chạy ứng dụng trên laptop, kiểm tra token trùng .env.
+- Kiểm tra firewall TCP 8767/UDP 8768 và chờ tìm dự phòng.
+- Không cần nạp firmware chỉ để sửa IP.
+- DISCOVERY verified=yes là xác minh được máy chủ; DISPLAY FPS là đang vẽ ảnh.
 
-### Không tìm thấy camera Wi-Fi
+### Bo cửa/AS608 chưa online
 
-- Bảo đảm laptop và ESP32 ở cùng mạng và client isolation không chặn thiết bị LAN.
-- Mở `http://<camera-ip>/health` trên laptop.
-- Chạy với `--camera-host <ip>`.
-- Nếu dùng SoftAP, kết nối laptop vào SSID của camera trước khi chạy.
-- Kiểm tra serial monitor 115200 để lấy IP thật.
+- Kiểm tra mạng, Internet, broker, tài khoản, DEVICE_ID, NTP/TLS.
+- Chưa có MQTT thì server chưa thể hoàn tất lệnh mở từ khuôn mặt.
+- AS608 lỗi: kiểm tra nguồn, TX/RX/pinout; không xóa mẫu để thử sửa kết nối.
 
-### Camera USB không lên
+### Sai boot mode hoặc không dữ liệu serial
 
-- Dùng đúng cổng USB-OTG/CDC runtime, không nhầm với USB-UART dùng monitor/upload.
-- Kiểm tra Device Manager và truyền `--usb-port COMx`.
-- Bảo đảm không có serial monitor khác đang giữ cổng.
-- Mở `http://127.0.0.1:8766/health` để kiểm tra bridge.
+- Kiểm tra bo/COM/cáp, đóng monitor; cấu hình no_reset cần BOOT thủ công.
+- Camera ESP_ERR_NOT_FOUND (0x105): kiểm tra cảm biến/cáp/pinout và nạp nhầm bo, trước kết luận hỏng.
 
-### Cổng 8765 hoặc 8767 bị chiếm
+### FPS giảm hoặc đứng ảnh
 
-- Đóng phiên FaceTouch Pro cũ.
-- Kiểm tra process đang lắng nghe cổng bằng `Get-NetTCPConnection -LocalPort 8765,8767`.
-- Không khởi chạy trực tiếp nhiều `web_admin.py`; launcher đã có kiểm tra single-instance.
+- Đối chiếu camera.transport ở /api/state và /health camera: nguồn chậm hay AI chậm?
+- Camera có CAP/SEND; TFT có HTTP/READ/DRAW, DROP/RETRY/FAIL.
+- Mục tiêu hiện 5 FPS; không suy ra nguồn 30 FPS từ chuỗi log OpenCV.
+- YouTube/ứng dụng nặng gây tụt FPS: đo RAM, CPU/GPU, đường nhận Wi-Fi trước sửa firmware. Sóng mạnh không bảo đảm TCP không trễ.
+- Nhiều PID Python có thể là launcher/venv/tiến trình con, chưa đủ kết luận chạy trùng.
 
-### Lần nhận diện đầu chậm
+### Thiếu model/module hoặc không mở cửa sổ
 
-- ArcFace được warm-up trong background, nhưng lần đầu trên máy mới có thể cần tải/khởi tạo trọng số.
-- Đợi log `[AI] DeepFace ArcFace đã sẵn sàng`.
-- CPU-only sẽ chậm hơn CUDA; không phải lỗi nếu camera vẫn hoạt động.
+- Dùng Python venv, kiểm tra model/dependency.
+- Mở Chi tiết kỹ thuật/log; kiểm tra ArcFace/TensorFlow khi lỗi ở lần tải AI đầu.
+- Cổng 8765/8767 bị chiếm: đóng đúng phiên cũ, không kết thúc mọi Python đang phục vụ IDE/công cụ khác.
 
-### Nhận diện nhầm hoặc từ chối nhiều
+## 15. Giới hạn triển khai
 
-- Đặt mặt đủ gần, nhìn thẳng và chiếu sáng đều.
-- Đăng ký lại bằng đúng camera/môi trường sẽ dùng khi điểm danh.
-- Không dùng ảnh mờ, cháy sáng hoặc che miệng.
-- Chạy calibration thay vì chỉ sửa `ARCFACE_THRESHOLD`.
-- Bật `FACECHECK_DRAW_DEBUG_BOXES=1` tạm thời để chẩn đoán vùng detect.
+- Quản trị **localhost**, chưa đăng nhập toàn hệ thống để công khai LAN/Internet; giữ 8765 ở 127.0.0.1.
+- Token/HMAC xác minh TFT; HTTP/MJPEG LAN **không mã hóa như HTTPS**. Dùng mạng tin cậy.
+- Kiểm tra chất lượng mặt không tương đương chống giả mạo đã chứng nhận; chưa bảo đảm chống ảnh in/video hay đạt chuẩn an ninh thương mại.
+- Portal dùng mật khẩu chung mặc định. Đánh giá đổi mật khẩu/quyền tiếp cận vật lý khi triển khai; NVS chưa cấu hình mã hóa riêng trong dự án.
+- Tự tìm IP không tự mở firewall; đổi mạng có thể cần cấp quyền phù hợp.
+- Laptop tắt thì AI mặt/hình TFT dừng; bo vẫn cần nguồn và phần cứng hoạt động.
+- ACK relay không xác nhận người đã qua hay cửa đã đóng.
+- Bảo vệ sinh trắc học; không commit .env, secrets.h, data/, models/ và log thật.
 
-### TFT báo Forbidden hoặc không kết nối
-
-- Token trong firmware phải giống hệt `FACECHECK_DISPLAY_TOKEN` trong `.env`.
-- TFT tự tìm laptop; `FACECHECK_SERVER` chỉ là địa chỉ thử ban đầu, không dùng `127.0.0.1`.
-- Cho phép cổng 8767 trong Windows Firewall cho mạng private.
-- Nếu IP laptop thay đổi, cập nhật firmware hoặc cấp DHCP reservation.
-
-## 21. Ghi chú vận hành và bảo mật
-
-- Admin backend chỉ bind `127.0.0.1`; không đổi sang `0.0.0.0` nếu chưa bổ sung xác thực.
-- Kênh TFT bind LAN nhưng chỉ đọc và bắt buộc token. Dùng token dài, ngẫu nhiên và khác token camera.
-- Không commit `.env`, `secrets.h`, ảnh mặt, embedding hay lịch sử thực tế.
-- Sao lưu ảnh và `embeddings.pkl` cùng nhau; thiếu ảnh, runtime có thể dọn embedding tương ứng như dữ liệu mồ côi.
-- Xóa nhân viên từ UI sẽ xóa hồ sơ embedding và ảnh, không thể hoàn tác nếu không có backup.
-- Thời gian ghi nhận dùng đồng hồ máy tính; nên bật đồng bộ thời gian Windows.
-- Nhật ký ứng dụng có thể chứa mã nhân viên, tên và đường dẫn ảnh; bảo vệ thư mục log khi triển khai thật.
-
-## 22. Bắt đầu nhanh
-
-```powershell
-# 1. Kích hoạt môi trường
-.\venv\Scripts\Activate.ps1
-
-# 2. Cài dependency
-pip install -r requirements.txt
-
-# 3. Chạy với webcam
-python facetouch_pro.py webcam --camera-index 0
-
-# 4. Chạy test ở một terminal khác khi ứng dụng đã đóng
-$env:FACECHECK_WEB_SKIP_AI="1"
-python -m unittest discover -s tests -v
-```
-
-Khi hệ thống chạy, cửa sổ quản trị mở tự động. Nếu PyWebView không khả dụng, chương trình sẽ mở URL tương ứng trong trình duyệt mặc định.
+Đọc thêm: [Luồng mở cửa](docs/door_flow.md) · [Telegram](docs/telegram.md) · [Cấu hình](config.py) · [Kiểm thử](tests/).
