@@ -11,6 +11,7 @@
 
 #include "MQTT_Certificates.h"
 #include "config.h"
+#include "../common/FaceCheckWifiProvisioning.h"
 
 namespace {
 constexpr size_t RECENT_COMMAND_COUNT = 8;
@@ -372,13 +373,25 @@ void publishStatus(const char *state) {
 }
 
 void ensureWiFi() {
-    if (WiFi.status() == WL_CONNECTED) return;
+    static uint32_t disconnectedSince = 0;
+    if (WiFi.status() == WL_CONNECTED) {
+        disconnectedSince = 0;
+        return;
+    }
+    if (disconnectedSince == 0) disconnectedSince = millis();
+    if (millis() - disconnectedSince >= 60000UL) {
+        const FaceCheckWifi::Config saved = FaceCheckWifi::load(
+            WIFI_SSID, WIFI_PASSWORD);
+        FaceCheckWifi::startPortal("Door", saved.server);
+    }
     if (millis() - lastWiFiAttempt < MQTT_RECONNECT_INTERVAL_MS) return;
 
     lastWiFiAttempt = millis();
     Serial.println(F("[WiFi] Dang ket noi de dung MQTT..."));
+    const FaceCheckWifi::Config config = FaceCheckWifi::load(
+        WIFI_SSID, WIFI_PASSWORD);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(config.ssid.c_str(), config.password.c_str());
 }
 
 bool ensureTime() {

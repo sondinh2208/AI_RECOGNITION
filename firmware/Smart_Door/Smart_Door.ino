@@ -15,6 +15,9 @@
  */
 
 #include <Arduino.h>
+#include <DNSServer.h>
+#include <Preferences.h>
+#include <WebServer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
@@ -27,6 +30,7 @@
 #include "Lock_Driver.h"        // API relay khóa cửa + còi báo
 #include "Telegram_Driver.h"    // API bot + addLog() + telegramNotifQueue
 #include "MQTT_Driver.h"        // Wi-Fi + HiveMQ Cloud + heartbeat
+#include "../common/FaceCheckWifiProvisioning.h"
 
 // ==========================================
 // FREERTOS HANDLES (dùng chung giữa các Task)
@@ -417,7 +421,7 @@ void setup() {
     Serial.begin(115200);
     delay(500);
     Serial.println(F("\n=========================================="));
-    Serial.println(F("   KHOA CUA DIEN TU THONG MINH (ESP32)   "));
+    Serial.println(F("   FaceTouch Pro - BO DIEU KHIEN CUA   "));
     Serial.println(F("=========================================="));
     Serial.printf(
         "[SYSTEM] Flash: %u MB | PSRAM: %u MB\n",
@@ -430,8 +434,15 @@ void setup() {
 
     // 1. Khởi tạo phần cứng
     initLock();
+    FaceCheckWifi::checkDoubleReset("Door");
     initDisplay();
     bool fpOk = initFingerprint();
+
+    // Thu Wi-Fi da luu trong NVS, sau do moi dung secrets.h lam mac dinh.
+    // Neu ca hai khong ket noi duoc, thiet bi mo FaceCheck-Setup-... tai
+    // 192.168.4.1 thay vi bat nguoi dung sua va nap lai firmware.
+    FaceCheckWifi::connectOrProvision(
+        "Door", WIFI_SSID, WIFI_PASSWORD, "", 12000);
 
     // 2. Khởi tạo FreeRTOS primitives
     lockEventGroup = xEventGroupCreate();

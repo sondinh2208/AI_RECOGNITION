@@ -223,7 +223,7 @@ app = Starlette(routes=[WebSocketRoute("/camera", camera_socket)])
 
 def main() -> None:
     global CAMERA_TOKEN
-    parser = argparse.ArgumentParser(description="FaceCheck WebSocket camera bridge")
+    parser = argparse.ArgumentParser(description="FaceTouch Pro WebSocket camera bridge")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8768)
     parser.add_argument("--local-port", type=int, default=8769)

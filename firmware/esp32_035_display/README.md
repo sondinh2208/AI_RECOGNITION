@@ -1,4 +1,4 @@
-# FaceCheck ESP32-035 display
+# FaceTouch Pro ESP32-035 display
 
 Firmware cho bo man hinh ESP32-035, TFT 3.5 inch 320 x 480.
 
@@ -38,8 +38,32 @@ Ban sao firmware cua nha san xuat duoc luu tai `factory_backup.bin` va bi Git bo
 
 ## Cau hinh ket noi
 
+Nhan roi tha RESET/EN hai lan, cach nhau 1–2 giay, de mo ngay mang
+`FaceTouchPro-Setup-Display-XXXX`, ke ca khi Wi-Fi cu van hoat dong. Khong giu
+BOOT. Ket noi bang `FaceCheck2026`, mo `http://192.168.4.1` va luu mang moi.
+Man hinh tu tim laptop, khong can nhap IP. Khoi dong binh thuong cho them
+khoang 3 giay.
+
 Sao chep `secrets.example.h` thanh `include/secrets.h`, sau do dien Wi-Fi 2.4 GHz va
-IPv4 cua laptop. `secrets.h` bi Git bo qua de khong dua mat khau len repository.
+token trung voi `FACECHECK_DISPLAY_TOKEN` trong `.env`. Dia chi may chu cu
+chi dung de thu ket noi nhanh; man hinh tu tim dia chi moi khi khong co anh.
+`secrets.h` bi Git bo qua de khong dua mat khau len repository.
+
+Sau lan nap dau, khi khong ket noi duoc hoac mat mang 60 giay, man hinh phat
+Wi-Fi `FaceTouchPro-Setup-Display-XXXX`. Ket noi bang mat khau `FaceCheck2026`, mo
+`http://192.168.4.1`, chon Wi-Fi moi. Cau hinh duoc luu trong NVS, khong can nap lai
+firmware. Token bao mat van nam trong `include/secrets.h`.
+
+## Tu tim may chu
+
+Chay FaceTouch Pro tren laptop cung Wi-Fi. TFT hoi UDP cong 8768 va chi chap nhan
+phan hoi HMAC-SHA256 hop le voi token hien thi. Neu hotspot chan broadcast,
+TFT thu tung dia chi trong subnet (toi da /24), qua TCP 8767 `/discover`.
+Token khong nam trong goi tin tim kiem. Tren /24, cach du phong co the mat
+khoang 1–2 phut; tren hotspot /28 thuong nhanh hon. Khi anh van ve binh
+thuong thi man hinh khong quet mang. Neu laptop doi IP hoac khoi dong muon,
+TFT tu tim lai. Can khoi dong lai chuong trinh laptop sau khi cap nhat ma.
+Cho phep TCP 8767 tren Windows Firewall; UDP 8768 la tuy chon de tim nhanh.
 
 Laptop phai cho phep ket noi TCP noi bo den cong 8767. Kenh nay chi co API doc
 danh cho TFT va bat buoc co khoa `X-FaceCheck-Token`. Toan bo giao dien quan tri

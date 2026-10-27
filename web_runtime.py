@@ -25,6 +25,8 @@ from config import (
     ENROLLMENT_SESSION_IDLE_TIMEOUT_SECONDS,
     KIOSK_ATTENDANCE_COOLDOWN_SECONDS,
     KIOSK_FAILED_RETRY_SECONDS,
+    ARCFACE_QUERY_AGGREGATION_FRAMES,
+    KIOSK_UNKNOWN_CONFIRMATIONS,
 )
 from mixins.attendance import AttendanceMixin
 from mixins.camera import CameraMixin
@@ -80,12 +82,6 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._kiosk_suppressed_face_tracks = []
         self._kiosk_result_hold_until = 0.0
         self._kiosk_unknown_attempts = 0
-        self._kiosk_strict_candidate_id = None
-        self._kiosk_strict_confirmations = 0
-        self._kiosk_strict_attempts = 0
-        self._kiosk_strict_started_at = None
-        self._kiosk_strict_distances = []
-        self._kiosk_strict_margins = []
         self._kiosk_query_embeddings = []
         self._kiosk_query_started_at = None
         self._kiosk_query_face_box = None
@@ -243,7 +239,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             self.door_service.notify_face_display(state)
             return
         state = self.recognition_state.get("state")
-        if state in {"recognizing", "strict_confirmation"}:
+        if state in {"recognizing", "query_aggregation"}:
             self.door_service.notify_face_display("checking")
         elif state in {"unknown", "ambiguous"}:
             self.door_service.notify_face_display("denied")
@@ -339,7 +335,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
             access_state, access_label = "denied", "Không được phép ra vào"
         elif state == "error":
             access_state, access_label = "error", "Không thể xác thực"
-        elif state in {"recognizing", "strict_confirmation", "validating"}:
+        elif state in {"recognizing", "query_aggregation", "validating"}:
             access_state, access_label = "processing", "Đang xác thực..."
         else:
             access_state, access_label = "waiting", "Sẵn sàng xác thực"
@@ -647,16 +643,15 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self.recognition_state = {
             **self._idle_payload(), "state": "recognizing",
             "title": "Đang xác minh lại",
-            "message": f"Lần kiểm tra {attempt}/2 · Cửa vẫn đóng, vui lòng giữ nguyên khuôn mặt",
+            "message": f"Lần kiểm tra {attempt}/{KIOSK_UNKNOWN_CONFIRMATIONS} · Cửa vẫn đóng, vui lòng giữ nguyên khuôn mặt",
         }
         self._publish()
 
-    def _on_kiosk_strict_confirmation_pending(self, votes, attempts, distance, margin):
+    def _on_kiosk_query_aggregation_pending(self, frames):
         self.recognition_state = {
-            **self._idle_payload(), "state": "strict_confirmation",
+            **self._idle_payload(), "state": "query_aggregation",
             "title": "Đang kiểm tra quyền mở cửa",
-            "message": f"Đang gộp đặc trưng chống nhiễu JPEG · {votes}/2 frame",
-            "metrics": {"distance": distance, "margin": margin},
+            "message": f"Đang gộp đặc trưng chống nhiễu JPEG · {frames}/{ARCFACE_QUERY_AGGREGATION_FRAMES} frame",
         }
         self._publish()
 
@@ -943,7 +938,7 @@ class WebFaceCheckRuntime(AttendanceMixin, CameraMixin, EnrollmentMixin, CoreMix
         self._kiosk_active_face_box = None
         self._kiosk_face_stable_since = None
         self._kiosk_unknown_attempts = 0
-        self._clear_strict_confirmation()
+        self._reset_query_aggregation()
         self.recognition_state = self._idle_payload()
         self._is_kiosk_ui_idle = True
         self._publish()

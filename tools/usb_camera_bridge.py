@@ -1,4 +1,4 @@
-"""Nhan JPEG tu ESP32-S3 USB-OTG va phat MJPEG cuc bo cho FaceCheck."""
+"""Nhan JPEG tu ESP32-S3 USB-OTG va phat MJPEG cuc bo cho FaceTouch Pro."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from serial.tools import list_ports
 try:
     import cv2
     import numpy as np
-except ImportError:  # Cau noi van chay neu dung rieng ngoai moi truong FaceCheck.
+except ImportError:  # Cau noi van chay neu dung rieng ngoai moi truong FaceTouch Pro.
     cv2 = None
     np = None
 
@@ -253,10 +253,10 @@ class CameraHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/" or self.path.startswith("/?"):
             body = (
-                b"<!doctype html><meta charset='utf-8'><title>FaceCheck USB</title>"
+                b"<!doctype html><meta charset='utf-8'><title>FaceTouch Pro USB</title>"
                 b"<style>body{margin:0;background:#111827;color:white;font-family:Arial;text-align:center}"
                 b"img{max-width:95vw;max-height:85vh;margin-top:16px}</style>"
-                b"<h2>FaceCheck USB Camera</h2><img src='/stream'>"
+                b"<h2>FaceTouch Pro USB Camera</h2><img src='/stream'>"
             )
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -332,7 +332,7 @@ class CameraHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="FaceCheck ESP32 USB camera bridge")
+    parser = argparse.ArgumentParser(description="FaceTouch Pro ESP32 USB camera bridge")
     parser.add_argument("--port", help="Cong USB-OTG, vi du COM12; bo trong de tu tim")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--http-port", type=int, default=8766)
@@ -341,7 +341,7 @@ def main() -> None:
     threading.Thread(target=serial_worker, args=(args.port,), daemon=True).start()
     server = ThreadingHTTPServer((args.host, args.http_port), CameraHandler)
     print(f"[USB-BRIDGE] Camera cuc bo: http://{args.host}:{args.http_port}/")
-    print(f"[USB-BRIDGE] Stream cho FaceCheck: http://{args.host}:{args.http_port}/stream")
+    print(f"[USB-BRIDGE] Stream cho FaceTouch Pro: http://{args.host}:{args.http_port}/stream")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

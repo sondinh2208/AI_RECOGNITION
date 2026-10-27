@@ -1,4 +1,4 @@
-"""Nhập gallery LFW benchmark vào cơ sở dữ liệu nhận diện FaceCheck."""
+"""Nhập gallery LFW benchmark vào cơ sở dữ liệu nhận diện FaceTouch Pro."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ EMPLOYEE_PROFILES = (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Nhập 90 hồ sơ LFW vào FaceCheck")
+    parser = argparse.ArgumentParser(description="Nhập 90 hồ sơ LFW vào FaceTouch Pro")
     parser.add_argument(
         "--benchmark", type=Path, default=Path("data/benchmark_faces"),
     )

@@ -16,6 +16,8 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
 from web_runtime import WebFaceCheckRuntime
+from display_discovery import discovery_reply, discovery_lifespan
+from branding import APP_NAME
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,7 +32,7 @@ def api_error(exc):
 
 
 async def health(_request):
-    return JSONResponse({"ok": True, "service": "FaceCheck Web UI"})
+    return JSONResponse({"ok": True, "service": "FaceCheck Web UI", "display_name": APP_NAME})
 
 
 async def state(_request):
@@ -74,7 +76,13 @@ async def display_frame(_request):
 async def display_health(request):
     if not _display_authorized(request):
         return JSONResponse({"ok": False, "error": "Forbidden"}, status_code=403)
-    return JSONResponse({"ok": True, "service": "FaceCheck TFT display"})
+    return JSONResponse({"ok": True, "service": "FaceCheck TFT display", "display_name": APP_NAME})
+
+
+async def display_discover(request):
+    reply = discovery_reply(request.query_params.get("nonce"), DISPLAY_TOKEN)
+    return JSONResponse(reply or {"ok": False}, status_code=200 if reply else 400,
+                        headers={"Cache-Control": "no-store"})
 
 
 def _display_authorized(request: Request):
@@ -354,6 +362,7 @@ routes = [
 app = Starlette(routes=routes, lifespan=lifespan)
 
 display_app = Starlette(routes=[
+    Route("/discover", display_discover),
     Route("/health", display_health),
     Route("/frame.jpg", display_frame),
-])
+], lifespan=discovery_lifespan)

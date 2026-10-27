@@ -29,7 +29,11 @@ from ai_engine import (  # noqa: E402
     analyze_face_quality, check_face_constraints, measure_face_brightness,
 )
 from mixins.attendance import (  # noqa: E402
-    AttendanceMixin, aggregate_query_embeddings, calculate_profile_distance,
+    AttendanceMixin,
+)
+
+from recognition_policy import (
+    aggregate_query_embeddings, calculate_profile_distance,
     profile_is_live_recognition_enabled,
 )
 
@@ -37,7 +41,7 @@ from mixins.attendance import (  # noqa: E402
 class RecognitionPolicyTests(unittest.TestCase):
     def setUp(self):
         self.policy = AttendanceMixin.__new__(AttendanceMixin)
-        self.policy._clear_strict_confirmation()
+        self.policy._reset_query_aggregation()
 
     def test_benchmark_profile_is_never_used_for_live_recognition(self):
         self.assertFalse(profile_is_live_recognition_enabled({
@@ -67,47 +71,6 @@ class RecognitionPolicyTests(unittest.TestCase):
         self.assertIsNone(first)
         self.assertIsNotNone(second)
 
-    def test_strict_votes_require_real_temporal_span(self):
-        for offset in (0.0, 0.1, 0.2):
-            state = self.policy._record_strict_vote(
-                "NV001", 0.45, 0.13, now=100.0 + offset
-            )
-        self.assertFalse(self.policy._strict_state_is_acceptable(state))
-
-        self.policy._clear_strict_confirmation()
-        for offset in (0.0, 0.3, 0.6):
-            state = self.policy._record_strict_vote(
-                "NV001", 0.45, 0.13, now=200.0 + offset
-            )
-        self.assertTrue(self.policy._strict_state_is_acceptable(state))
-
-    def test_noisy_frame_breaks_strict_streak(self):
-        now = time.time()
-        first = self.policy._record_strict_vote("NV001", 0.45, 0.10, now=now)
-        noisy = self.policy._record_strict_noise(now=now + 0.1)
-        second = self.policy._record_strict_vote("NV001", 0.44, 0.11, now=now + 0.2)
-
-        self.assertEqual(first["votes"], 1)
-        self.assertEqual(noisy["votes"], 0)
-        self.assertEqual(noisy["attempts"], 2)
-        self.assertEqual(second["votes"], 1)
-        self.assertEqual(second["attempts"], 3)
-
-    def test_two_very_strong_frames_use_safe_fast_path(self):
-        first = self.policy._record_strict_vote("NV001", 0.36, 0.15, now=10.0)
-        second = self.policy._record_strict_vote("NV001", 0.38, 0.14, now=10.3)
-        self.assertFalse(self.policy._strict_state_is_acceptable(first))
-        self.assertTrue(self.policy._strict_state_is_acceptable(second))
-
-    def test_isolated_low_distance_spike_cannot_accumulate(self):
-        self.policy._record_strict_vote("NV001", 0.45, 0.10, now=20.0)
-        self.policy._record_strict_noise(now=20.3)
-        self.policy._record_strict_vote("NV001", 0.45, 0.10, now=20.6)
-        self.policy._record_strict_noise(now=20.9)
-        state = self.policy._record_strict_vote("NV001", 0.45, 0.10, now=21.2)
-        self.assertEqual(state["votes"], 1)
-        self.assertFalse(self.policy._strict_state_is_acceptable(state))
-
 
 class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -126,6 +89,8 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/")
         self.assertEqual(response.status_code, 200)
         html = response.text
+        self.assertIn("FaceTouch Pro", html)
+        self.assertNotIn("FaceCheck", html)
         for page in ("dashboard", "enrollment", "recognition", "employees", "fingerprints", "history"):
             self.assertIn(f'data-page="{page}"', html)
         self.assertEqual(html.count('id="cameraSurface"'), 1)
@@ -148,7 +113,7 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("access", state)
         self.assertIn("access_label", state["access"])
         self.assertIn(state["recognition"]["state"], {
-            "idle", "validating", "recognizing", "strict_confirmation",
+            "idle", "validating", "recognizing", "query_aggregation",
             "success", "duplicate", "ambiguous", "unknown", "error",
         })
         self.assertIn("capture_ready", state["enrollment"])
@@ -168,6 +133,15 @@ class WebUiSmokeTests(unittest.IsolatedAsyncioTestCase):
             "/health", headers={"x-facecheck-token": "test-display-token"}
         )
         self.assertEqual(display_health.status_code, 200)
+        self.assertEqual(display_health.json()["display_name"], "FaceTouch Pro")
+
+        nonce = "a" * 32
+        discovery = await self.display_client.get("/discover", params={"nonce": nonce})
+        self.assertEqual(discovery.status_code, 200)
+        from display_discovery import discovery_reply
+        self.assertEqual(discovery.json(), discovery_reply(nonce, "test-display-token"))
+        self.assertEqual((await self.display_client.get("/discover")).status_code, 400)
+        self.assertEqual((await self.display_client.get("/health")).status_code, 403)
 
         employees = (await self.client.get(
             "/api/employees", params={"page": 1, "page_size": 2}
@@ -771,6 +745,7 @@ class WebAdminSingleInstanceTests(unittest.TestCase):
         specs = _window_specs(simulate_pi=False)
 
         self.assertEqual(len(specs), 1)
+        self.assertTrue(specs[0]["title"].startswith("FaceTouch Pro -"))
         self.assertIn("view=admin", specs[0]["url"])
         self.assertNotIn("view=kiosk", specs[0]["url"])
 

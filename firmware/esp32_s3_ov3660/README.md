@@ -1,6 +1,6 @@
 # ESP32-S3 WROOM CAM + OV3660
 
-Firmware ngày 1 cho thiết bị FaceCheck. Bo chỉ thu hình và phát MJPEG; toàn bộ
+Firmware ngày 1 cho thiết bị FaceTouch Pro. Bo chỉ thu hình và phát MJPEG; toàn bộ
 YOLO, MediaPipe và ArcFace vẫn chạy trên laptop.
 
 ## Cách 1: PlatformIO trong VS Code
@@ -24,8 +24,19 @@ YOLO, MediaPipe và ArcFace vẫn chạy trên laptop.
 
 ## Wi-Fi
 
+Nhan roi tha RESET/EN hai lan, cach nhau 1–2 giay, de mo ngay mang
+`FaceTouchPro-Setup-Camera-XXXX`, ke ca khi Wi-Fi cu van hoat dong. Khong giu
+BOOT. Ket noi bang `FaceCheck2026`, mo `http://192.168.4.1` va luu mang moi.
+Tinh nang can firmware moi; khoi dong binh thuong se cho them khoang 3 giay.
+
 Sao chép `secrets.example.h` thành `secrets.h`, sau đó điền SSID và mật khẩu.
 Không commit `secrets.h`; tệp này đã được `.gitignore` bỏ qua.
+
+Sau lần nạp đầu tiên, không cần sửa `secrets.h` khi đổi mạng. Nếu camera không
+kết nối được lúc khởi động hoặc mất mạng 60 giây, nó phát Wi-Fi dạng
+`FaceTouchPro-Setup-Camera-XXXX`. Kết nối bằng mật khẩu `FaceCheck2026`, mở
+`http://192.168.4.1`, chọn Wi-Fi 2.4 GHz mới và lưu. Cấu hình được giữ trong
+NVS qua các lần khởi động.
 
 ## Nạp và kiểm tra
 
@@ -42,12 +53,12 @@ Không commit `secrets.h`; tệp này đã được `.gitignore` bỏ qua.
 Laptop và ESP32 phải ở cùng mạng Wi-Fi. Địa chỉ IP thật do router cấp và được
 in qua Serial; không sao chép IP ví dụ vào ứng dụng.
 
-## Chạy FaceCheck và kiểm tra FPS
+## Chạy FaceTouch Pro và kiểm tra FPS
 
 Từ thư mục gốc dự án:
 
 ```powershell
-.\venv\Scripts\python.exe facecheck.py wifi --simulate-display
+.\venv\Scripts\python.exe facetouch_pro.py wifi --simulate-display
 ```
 
 Chương trình tự tìm camera và kết nối trực tiếp với MJPEG stream. Firmware bản

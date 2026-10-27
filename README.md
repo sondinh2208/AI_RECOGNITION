@@ -1,6 +1,13 @@
-# FaceCheck — Hệ thống quản lý ra vào tích hợp nhận diện khuôn mặt và cảm biến vân tay
+# FaceTouch Pro — Hệ thống quản lý ra vào tích hợp nhận diện khuôn mặt và cảm biến vân tay
 
-FaceCheck là hệ thống quản lý ra vào tích hợp nhận diện khuôn mặt và cảm biến vân tay. Server nhận hình ảnh từ camera ESP32-S3 OV3660, xử lý YOLO/ArcFace, quản lý hồ sơ và nhật ký xác thực; ESP32-S3 cửa xử lý AS608, OLED, nút và relay, đồng thời vẫn cho phép vân tay hoạt động khi mất mạng.
+FaceTouch Pro là hệ thống quản lý ra vào tích hợp nhận diện khuôn mặt và cảm biến vân tay. Server nhận hình ảnh từ camera ESP32-S3 OV3660, xử lý YOLO/ArcFace, quản lý hồ sơ và nhật ký xác thực; ESP32-S3 cửa xử lý AS608, OLED, nút và relay, đồng thời vẫn cho phép vân tay hoạt động khi mất mạng.
+
+Tên sản phẩm đã đổi từ FaceCheck sang **FaceTouch Pro**. Lệnh mới là
+`python facetouch_pro.py wifi`; lệnh cũ `python facecheck.py wifi` vẫn hoạt động.
+Các khóa `FACECHECK_*`, header `X-FaceCheck-*`, hostname `facecheck-cam.local`,
+định danh dịch vụ, vùng NVS và mật khẩu cấu hình hiện có được giữ tương thích.
+Firmware mới hiển thị tên FaceTouch Pro và phát `FaceTouchPro-Setup-...`;
+thiết bị chưa nạp lại vẫn hiển thị tên cũ nhưng tiếp tục kết nối được.
 
 Ứng dụng có giao diện quản trị dạng web chạy trong cửa sổ desktop, chế độ kiosk dành cho người điểm danh, API nội bộ, luồng camera MJPEG và firmware cho camera/màn hình ESP32.
 
@@ -70,7 +77,7 @@ Webcam / ESP32 USB / ESP32 Wi-Fi
 
 Các lớp được tách theo trách nhiệm:
 
-- `facecheck.py` là launcher duy nhất, nạp `.env`, chọn nguồn camera và quản lý camera bridge nếu cần.
+- `facetouch_pro.py` là launcher duy nhất, nạp `.env`, chọn nguồn camera và quản lý camera bridge nếu cần.
 - `web_admin.py` giữ cổng backend, khởi động Uvicorn, mở cửa sổ PyWebView và dừng dịch vụ khi cửa sổ đóng.
 - `web_backend/app.py` chỉ vận chuyển dữ liệu qua REST, WebSocket và MJPEG; quyết định nghiệp vụ nằm trong runtime.
 - `web_runtime.py` giữ state dùng chung, điều phối chế độ, CRUD nhân viên, lịch sử và dữ liệu gửi đến UI/TFT.
@@ -88,9 +95,9 @@ Camera và model chỉ được khởi tạo một lần trong vòng đời back
 
 ## 4. Luồng khởi động
 
-Khi chạy `python facecheck.py <camera>`:
+Khi chạy `python facetouch_pro.py <camera>`:
 
-1. Launcher gọi `http://127.0.0.1:8765/api/health` để bảo đảm không có phiên FaceCheck khác đang chạy.
+1. Launcher gọi `http://127.0.0.1:8765/api/health` để bảo đảm không có phiên FaceTouch Pro khác đang chạy.
 2. Các biến trong `.env` được nạp, nhưng không ghi đè biến đã đặt từ shell.
 3. Launcher cấu hình nguồn camera:
    - `webcam`: xóa URL stream và chọn camera index.
@@ -192,7 +199,7 @@ Frontend nhận state qua `/ws/state` mỗi khoảng 350 ms và nhận camera qu
 
 ```text
 AI_RECOGNITION/
-├── facecheck.py                 # Launcher webcam/USB/Wi-Fi
+├── facetouch_pro.py                 # Launcher webcam/USB/Wi-Fi
 ├── web_admin.py                 # Vòng đời server và cửa sổ desktop
 ├── web_runtime.py               # State, CRUD, callback và điều phối mode
 ├── web_backend/app.py           # REST API, WebSocket, static files
@@ -321,10 +328,32 @@ Biến môi trường đặt từ PowerShell có độ ưu tiên cao hơn giá t
 
 ## 12. Chạy hệ thống
 
+### Mở từ Desktop trên Windows
+
+Nhấp đúp biểu tượng **FaceTouch Pro** trên Desktop. Cửa sổ khởi động tự tìm camera
+ESP32 trên Wi-Fi, tải AI rồi mở giao diện, không cần terminal. Laptop và camera
+phải cùng mạng. Khi chưa thấy camera, cửa sổ hiện **Thử lại** và **Xem log**.
+Đóng cửa sổ FaceTouch Pro để dừng; nhấp lại biểu tượng khi đang chạy sẽ đưa cửa sổ
+hiện có lên trước, không khởi tạo thêm AI/camera.
+
+Log mỗi lần khởi động nằm trong `logs/facetouch-pro-<thời-gian>.log`. Không gửi
+toàn bộ `.env` hoặc `secrets.h` khi báo lỗi. Launcher sử dụng môi trường `venv`
+hiện có; giữ nguyên vị trí thư mục dự án để shortcut hoạt động.
+
+Để tạo lại shortcut sau khi di chuyển dự án hoặc cho tài khoản Windows khác,
+chạy một lần từ thư mục gốc:
+
+```powershell
+powershell.exe -NoProfile -File tools\install_desktop_shortcut.ps1
+```
+
+Shortcut chạy `venv\Scripts\pythonw.exe facetouch_pro_desktop.pyw`. Chức năng này
+không cài tự chạy cùng Windows và không thay đổi firewall.
+
 ### ESP32-S3 Wi-Fi mặc định
 
 ```powershell
-python facecheck.py
+python facetouch_pro.py
 ```
 
 Lệnh không có tham số mặc định tìm camera ESP32-S3 theo
@@ -334,13 +363,13 @@ cần. Nó không tự rơi về webcam máy tính.
 ### Webcam máy tính
 
 ```powershell
-python facecheck.py webcam
+python facetouch_pro.py webcam
 ```
 
 Hoặc chọn camera cụ thể:
 
 ```powershell
-python facecheck.py webcam --camera-index 1
+python facetouch_pro.py webcam --camera-index 1
 ```
 
 Webcam local được yêu cầu MJPG, 640×480, 30 FPS và buffer size 1. Driver có thể trả về thông số thực tế khác tùy thiết bị.
@@ -348,13 +377,13 @@ Webcam local được yêu cầu MJPG, 640×480, 30 FPS và buffer size 1. Drive
 ### ESP32-S3 qua USB-OTG
 
 ```powershell
-python facecheck.py usb
+python facetouch_pro.py usb
 ```
 
 Chỉ định cổng CDC nếu tự động dò không đúng:
 
 ```powershell
-python facecheck.py usb --usb-port COM13
+python facetouch_pro.py usb --usb-port COM13
 ```
 
 Bridge đọc JPEG từ serial và cung cấp stream nội bộ:
@@ -366,19 +395,19 @@ Bridge đọc JPEG từ serial và cung cấp stream nội bộ:
 ### ESP32-S3 qua Wi-Fi
 
 ```powershell
-python facecheck.py wifi
+python facetouch_pro.py wifi
 ```
 
 Chỉ định IP/hostname để bỏ qua sự không chắc chắn của mDNS:
 
 ```powershell
-python facecheck.py wifi --camera-host 192.168.1.105
+python facetouch_pro.py wifi --camera-host 192.168.1.105
 ```
 
 Các tùy chọn:
 
 ```powershell
-python facecheck.py wifi --no-lan-scan
+python facetouch_pro.py wifi --no-lan-scan
 ```
 
 Launcher cũng giữ tùy chọn tương thích `--skip-fps-check`; ở phiên bản hiện tại phép đo FPS lúc khởi động đã được tắt mặc định nên tùy chọn này không làm thay đổi hành vi.
@@ -390,12 +419,12 @@ Luồng hiện tại lấy MJPEG trực tiếp từ `http://<camera-ip>:81/strea
 Thêm `--simulate-display` hoặc alias `--simulate-pi` vào bất kỳ mode nào:
 
 ```powershell
-python facecheck.py wifi --simulate-display
+python facetouch_pro.py wifi --simulate-display
 ```
 
 Ứng dụng mở đồng thời một cửa sổ kiosk 480×320 và một cửa sổ quản trị 1440×900.
 
-> Chỉ chạy một phiên FaceCheck tại một thời điểm. Muốn đổi nguồn camera, hãy đóng ứng dụng hiện tại rồi chạy lại launcher.
+> Chỉ chạy một phiên FaceTouch Pro tại một thời điểm. Muốn đổi nguồn camera, hãy đóng ứng dụng hiện tại rồi chạy lại launcher.
 
 ## 13. Các cổng mạng
 
@@ -409,7 +438,7 @@ python facecheck.py wifi --simulate-display
 
 Các endpoint chính trên cổng `8765`:
 
-- `GET /api/health`: kiểm tra đúng backend FaceCheck.
+- `GET /api/health`: kiểm tra đúng backend FaceTouch Pro.
 - `GET /api/state`: snapshot runtime hiện tại.
 - `POST /api/mode`: chuyển giữa `attendance`, `add_employee`, `idle`.
 - `GET /api/camera/stream`: MJPEG dùng cho UI.
@@ -429,12 +458,16 @@ Các endpoint chính trên cổng `8765`:
 - `GET /api/attendance`: lịch sử có lọc và phân trang.
 - `GET /api/dashboard`: số liệu tổng quan.
 
-API TFT trên cổng `8767` chỉ có:
+API TFT trên cổng `8767` có:
 
 - `GET /health`
 - `GET /frame.jpg`
 
 Cả hai yêu cầu `X-FaceCheck-Token` trùng với `FACECHECK_DISPLAY_TOKEN`.
+
+`GET /discover?nonce=<32 ký tự hex>` trả thông tin dịch vụ kèm chữ ký HMAC,
+không trả token, hình ảnh hay dữ liệu nhân viên. UDP `8768` trả cùng phản hồi
+cho yêu cầu `FACECHECK_DISCOVER_V1 <nonce>` để TFT tự tìm laptop trên LAN.
 
 ## 15. Dữ liệu lưu trữ
 
@@ -485,7 +518,7 @@ Lưu ý cổng upload và cổng CDC runtime có thể khác nhau. Xem Device Ma
 ### TFT — `firmware/esp32_035_display`
 
 1. Sao chép `secrets.example.h` thành `include/secrets.h`.
-2. Điền Wi-Fi, URL `http://<IP-laptop>:8767` và cùng `FACECHECK_DISPLAY_TOKEN` với `.env`.
+2. Điền Wi-Fi và cùng `FACECHECK_DISPLAY_TOKEN` với `.env`; TFT tự tìm máy chủ trên cùng mạng.
 3. Thử environment `esp32-035-st7796`; nếu màn hình trắng/đen/nhiễu, thử `esp32-035-ili9488`.
 4. Cho phép inbound TCP 8767 trên Windows Firewall trong mạng private.
 
@@ -500,6 +533,34 @@ hiển thị `DROP`, `RETRY`, `FAIL` cùng thời gian trung bình/tối đa đ�
 chậm mạng với chậm giải mã/vẽ.
 
 Mỗi thư mục firmware có README riêng với hướng dẫn phần cứng chi tiết.
+
+### Đổi Wi-Fi không cần nạp lại firmware
+
+Để mở trang cấu hình ngay khi Wi-Fi cũ vẫn hoạt động, nhấn rồi thả nút
+**RESET/EN hai lần**, cách nhau khoảng **1–2 giây**. Không giữ nút BOOT.
+Thiết bị sẽ phát `FaceTouchPro-Setup-...`; kết nối bằng `FaceCheck2026` rồi mở
+`http://192.168.4.1`. Thao tác này giữ nguyên Wi-Fi đã lưu cho tới khi bạn
+lưu cấu hình mới. Cũng có thể kích hoạt bằng hai lần khởi động nguồn nhanh;
+sau khi cấp nguồn bình thường, hãy đợi ít nhất 5 giây trước khi reset nếu
+không muốn mở trang cấu hình. Khởi động bình thường thêm khoảng 3 giây để
+chờ thao tác nhấn lần hai.
+
+Camera, bộ điều khiển cửa và TFT lưu cấu hình Wi-Fi trong NVS của ESP32. Khi
+không kết nối được lúc khởi động, hoặc mất mạng liên tục 60 giây, thiết bị tự
+mở một mạng có tên dạng `FaceTouchPro-Setup-<thiết-bị>-XXXX`.
+
+1. Kết nối điện thoại/laptop vào mạng `FaceTouchPro-Setup-...` với mật khẩu
+   `FaceCheck2026`.
+2. Mở `http://192.168.4.1` nếu trang cấu hình không tự hiện.
+3. Chọn Wi-Fi 2.4 GHz và nhập mật khẩu. TFT tự tìm laptop, không cần nhập IP máy chủ.
+4. Bấm **Lưu và kết nối**. ESP32 lưu cấu hình vào flash rồi tự khởi động lại.
+
+`secrets.h` chỉ còn là cấu hình mặc định cho lần nạp đầu tiên và phương án dự
+phòng. Có thể nhấn RESET hai lần để đổi mạng hoặc chờ mất mạng 60 giây
+để cổng cấu hình xuất hiện. TFT tự tìm máy chủ bằng UDP 8768, dự phòng tìm
+từng địa chỉ trong subnet qua TCP 8767 (tối đa /24). Phản hồi tìm kiếm được
+xác minh HMAC-SHA256; token hiển thị vẫn lấy từ `secrets.h` và phải
+trùng với `FACECHECK_DISPLAY_TOKEN` trong `.env`.
 
 ## 17. Công cụ hỗ trợ
 
@@ -542,7 +603,7 @@ Bộ test hiện kiểm tra các nhóm chính:
 - camera capture/latest frame;
 - launcher, dò camera Wi-Fi và chọn nguồn camera;
 - API/UI smoke test và vòng đời single-instance;
-- chính sách nhận diện nhiều frame, centroid và chống spike nhiễu;
+- chính sách gộp embedding nhiều frame, centroid và phân loại top1/top2;
 - phiên đăng ký liên tục, timeout và yêu cầu người cũ rời camera;
 - chất lượng khuôn mặt, độ sáng và vùng miệng;
 - layout eKYC và lựa chọn FPS camera.
@@ -555,11 +616,22 @@ Remove-Item Env:FACECHECK_WEB_SKIP_AI -ErrorAction SilentlyContinue
 
 ## 19. Điều chỉnh nhận diện
 
+Để đọc code theo đúng trách nhiệm:
+
+- `facetouch_pro.py`: chọn chế độ, cấu hình môi trường và khởi động ứng dụng.
+- `ai_engine.py`: phát hiện, kiểm tra chất lượng và căn chỉnh khuôn mặt.
+- `recognition_policy.py`: gộp vector, so khoảng cách hồ sơ, xếp top1/top2 và phân loại kết quả; không gửi lệnh mở cửa.
+- `mixins/attendance.py`: điều phối camera và luồng `tạo embedding → gộp frame → so khớp → xử lý kết quả`.
+- `web_runtime.py`: cập nhật trạng thái giao diện, lịch sử và phối hợp dịch vụ cửa/cảnh báo.
+- `door_service.py`, `telegram_alerts.py`: giao tiếp thiết bị và gửi cảnh báo theo chính sách riêng.
+
 Các ngưỡng quan trọng nằm trong `config.py`:
 
-- `ARCFACE_THRESHOLD`, `ARCFACE_TOP2_MARGIN`: điều kiện nhận diện strict.
-- `ARCFACE_HIGH_CONFIDENCE_*`: nhánh xác nhận nhanh.
-- `ARCFACE_STRICT_*`: số phiếu, số lần thử và cửa sổ thời gian.
+- `ARCFACE_THRESHOLD`, `ARCFACE_TOP2_MARGIN`: điều kiện nhận diện đạt ngưỡng (`matched`); không phải xác nhận strict nhiều lần.
+- `ARCFACE_QUERY_AGGREGATION_FRAMES`, `ARCFACE_QUERY_AGGREGATION_MAX_SECONDS`: gộp embedding các frame cùng vùng mặt trong thời gian giới hạn.
+- `ARCFACE_UNCERTAIN_THRESHOLD`: phân loại kết quả chưa chắc chắn; không cho phép mở khóa.
+- `KIOSK_FACE_STABLE_SECONDS`, `KIOSK_CONFIRMATION_INTERVAL_SECONDS`: thời gian ổn định và lấy frame tiếp theo.
+- `KIOSK_UNKNOWN_CONFIRMATIONS`: số kết quả không khớp trước khi báo thất bại.
 - `KIOSK_MIN_FACE_WIDTH`, `KIOSK_MIN_FACE_CONFIDENCE`: chất lượng ứng viên.
 - `KIOSK_*_ANGLE/RATIO`: giới hạn tư thế.
 - `FACE_MIN_BRIGHTNESS`, `FACE_MAX_BRIGHTNESS`: giới hạn ánh sáng.
@@ -573,7 +645,7 @@ Không nên giảm threshold theo cảm tính. Quy trình an toàn là chuẩn b
 ### Không tìm thấy camera webcam
 
 - Đóng ứng dụng khác đang giữ camera.
-- Thử `python facecheck.py webcam --camera-index 1` rồi index `2`.
+- Thử `python facetouch_pro.py webcam --camera-index 1` rồi index `2`.
 - Kiểm tra quyền Camera trong Windows Settings.
 - Xem log `[CAMERA] Nguồn ưu tiên` và `[CAMERA] KHÔNG TÌM THẤY CAMERA`.
 
@@ -594,7 +666,7 @@ Không nên giảm threshold theo cảm tính. Quy trình an toàn là chuẩn b
 
 ### Cổng 8765 hoặc 8767 bị chiếm
 
-- Đóng phiên FaceCheck cũ.
+- Đóng phiên FaceTouch Pro cũ.
 - Kiểm tra process đang lắng nghe cổng bằng `Get-NetTCPConnection -LocalPort 8765,8767`.
 - Không khởi chạy trực tiếp nhiều `web_admin.py`; launcher đã có kiểm tra single-instance.
 
@@ -615,7 +687,7 @@ Không nên giảm threshold theo cảm tính. Quy trình an toàn là chuẩn b
 ### TFT báo Forbidden hoặc không kết nối
 
 - Token trong firmware phải giống hệt `FACECHECK_DISPLAY_TOKEN` trong `.env`.
-- `FACECHECK_SERVER` phải dùng IPv4 của laptop, không dùng `127.0.0.1`.
+- TFT tự tìm laptop; `FACECHECK_SERVER` chỉ là địa chỉ thử ban đầu, không dùng `127.0.0.1`.
 - Cho phép cổng 8767 trong Windows Firewall cho mạng private.
 - Nếu IP laptop thay đổi, cập nhật firmware hoặc cấp DHCP reservation.
 
@@ -639,7 +711,7 @@ Không nên giảm threshold theo cảm tính. Quy trình an toàn là chuẩn b
 pip install -r requirements.txt
 
 # 3. Chạy với webcam
-python facecheck.py webcam --camera-index 0
+python facetouch_pro.py webcam --camera-index 0
 
 # 4. Chạy test ở một terminal khác khi ứng dụng đã đóng
 $env:FACECHECK_WEB_SKIP_AI="1"

@@ -1,4 +1,4 @@
-"""Nhan JPEG tu HiveMQ Cloud va phat luong noi bo cho FaceCheck."""
+"""Nhan JPEG tu HiveMQ Cloud va phat luong noi bo cho FaceTouch Pro."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def load_dotenv() -> None:
 def main() -> None:
     load_dotenv()
     STORE.service = "FaceCheck MQTT Camera"
-    parser = argparse.ArgumentParser(description="FaceCheck MQTT camera bridge")
+    parser = argparse.ArgumentParser(description="FaceTouch Pro MQTT camera bridge")
     parser.add_argument("--host", default=os.getenv("MQTT_HOST", ""))
     parser.add_argument("--port", type=int, default=int(os.getenv("MQTT_PORT", "8883")))
     parser.add_argument("--username", default=os.getenv("MQTT_USERNAME", ""))

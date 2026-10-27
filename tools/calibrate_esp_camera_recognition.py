@@ -1,4 +1,4 @@
-"""Calibrate FaceCheck recognition after QVGA/JPEG camera degradation."""
+"""Calibrate FaceTouch Pro recognition after QVGA/JPEG camera degradation."""
 
 from __future__ import annotations
 

@@ -31,7 +31,7 @@ static void centered(const char *text, int y, int size = 1) {
 
 void renderDisplay(const DisplayMsg &msg) {
     if (!displayReady) return;
-    const char *title = "FACECHECK";
+    const char *title = "FACETOUCH PRO";
     const char *main = "SAN SANG";
     const char *hint = "Mat hoac van tay";
     switch (msg.type) {

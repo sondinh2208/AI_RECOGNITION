@@ -1,2 +1,2 @@
-"""Backend mỏng cho giao diện web FaceCheck."""
+"""Backend mỏng cho giao diện web FaceTouch Pro."""
 

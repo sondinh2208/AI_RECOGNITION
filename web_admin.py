@@ -1,4 +1,4 @@
-"""Entry point giao diện HTML/CSS desktop của FaceCheck."""
+"""Entry point giao diện HTML/CSS desktop của FaceTouch Pro."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 import uvicorn
+from branding import APP_NAME
 
 
 HOST = "127.0.0.1"
@@ -29,14 +30,14 @@ def _window_specs(simulate_pi=False):
     if simulate_pi:
         return [
             {
-                "title": "FaceCheck - Kiosk 3.5 inch (480x320)",
+                "title": f"{APP_NAME} - Kiosk 3.5 inch (480x320)",
                 "url": KIOSK_URL,
                 "width": 480,
                 "height": 320,
                 "min_size": (320, 240),
             },
             {
-                "title": "FaceCheck - Quản lý ra vào",
+                "title": f"{APP_NAME} - Quản lý ra vào",
                 "url": SIMULATED_ADMIN_URL,
                 "width": 1440,
                 "height": 900,
@@ -45,7 +46,7 @@ def _window_specs(simulate_pi=False):
         ]
     return [
         {
-            "title": "FaceCheck - HỆ THỐNG QUẢN LÝ RA VÀO TÍCH HỢP NHẬN DIỆN KHUÔN MẶT VÀ CẢM BIẾN VÂN TAY",
+            "title": f"{APP_NAME} - Kiểm soát ra vào · Khuôn mặt & vân tay",
             "url": ADMIN_URL,
             "width": 1440,
             "height": 900,
@@ -55,7 +56,7 @@ def _window_specs(simulate_pi=False):
 
 
 def _parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="Khoi dong giao dien FaceCheck")
+    parser = argparse.ArgumentParser(description=f"Khoi dong giao dien {APP_NAME}")
     parser.add_argument(
         "--simulate-display", "--simulate-pi",
         dest="simulate_display",
@@ -92,7 +93,7 @@ def _display_host():
 
 
 def _is_facecheck_server(timeout=0.4):
-    """Chỉ chấp nhận tái sử dụng đúng backend FaceCheck, không chỉ kiểm tra cổng."""
+    """Chỉ chấp nhận tái sử dụng đúng backend FaceTouch Pro, không chỉ kiểm tra cổng."""
     try:
         with urlopen(f"{URL}/api/health", timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -150,7 +151,7 @@ def main(simulate_pi=False):
             uvicorn_server.should_exit = True
             server_thread.join(timeout=5)
             listener.close()
-            raise RuntimeError("Backend FaceCheck không khởi động trong thời gian cho phép")
+            raise RuntimeError(f"Backend {APP_NAME} không khởi động trong thời gian cho phép")
         display_bind = "0.0.0.0"
         display_host = _display_host()
         display_listener = _reserve_server_socket(display_bind, DISPLAY_PORT)
@@ -177,10 +178,10 @@ def main(simulate_pi=False):
     elif not _wait_for_facecheck_server(timeout=5):
         raise RuntimeError(
             f"Cổng {PORT} đang được một ứng dụng khác sử dụng. "
-            "Hãy đóng ứng dụng đó rồi mở lại FaceCheck."
+            f"Hãy đóng ứng dụng đó rồi mở lại {APP_NAME}."
         )
     else:
-        print("[WEB UI] FaceCheck đã chạy; tái sử dụng backend và camera hiện có.")
+        print(f"[WEB UI] {APP_NAME} đã chạy; tái sử dụng backend và camera hiện có.")
 
     try:
         import webview

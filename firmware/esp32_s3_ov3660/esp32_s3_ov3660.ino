@@ -1,4 +1,7 @@
 #include <Arduino.h>
+#include <DNSServer.h>
+#include <Preferences.h>
+#include <WebServer.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include "esp_camera.h"
@@ -7,6 +10,7 @@
 #include "img_converters.h"
 #include "lwip/sockets.h"
 #include "secrets.h"
+#include "../common/FaceCheckWifiProvisioning.h"
 
 #ifndef WIFI_SECONDARY_SSID
 #define WIFI_SECONDARY_SSID ""
@@ -63,6 +67,7 @@ volatile uint32_t stream_client_count = 0;
 volatile uint32_t stream_frame_count = 0;
 volatile float stream_fps = 0.0f;
 unsigned long server_probe_after = 0;
+FaceCheckWifi::Config provisioned_wifi;
 
 bool facecheck_server_reachable(const char* host) {
   WiFiClient probe;
@@ -92,7 +97,7 @@ bool connect_station(const char* ssid, const char* password,
   Serial.println();
   if (WiFi.status() != WL_CONNECTED) return false;
   if (require_server && !facecheck_server_reachable(server_host)) {
-    Serial.printf("[WIFI] %s co song nhung khong thay FaceCheck tai %s:8767\n",
+    Serial.printf("[WIFI] %s co song nhung khong thay FaceTouch Pro tai %s:8767\n",
                   ssid, server_host);
     return false;
   }
@@ -104,6 +109,17 @@ bool connect_station(const char* ssid, const char* password,
 
 void begin_station_connection() {
   if (web_server_ready || stream_server_ready) esp_task_wdt_reset();
+
+  // Cau hinh trong NVS duoc uu tien. secrets.h chi con la mac dinh/du phong.
+  if (provisioned_wifi.saved &&
+      connect_station(provisioned_wifi.ssid.c_str(),
+                      provisioned_wifi.password.c_str(),
+                      provisioned_wifi.server.length()
+                          ? provisioned_wifi.server.c_str()
+                          : FACECHECK_SERVER_HOST,
+                      false)) {
+    return;
+  }
   WiFi.disconnect(false);
   delay(100);
   const int count = WiFi.scanNetworks(false, true);
@@ -169,13 +185,13 @@ esp_err_t root_handler(httpd_req_t *request) {
   static const char page[] PROGMEM = R"HTML(
 <!doctype html><html lang="vi"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FaceCheck Camera</title><style>
+<title>FaceTouch Pro Camera</title><style>
 html,body{margin:0;background:#0f172a;color:#fff;font-family:Arial,sans-serif}
 main{min-height:100vh;display:grid;place-items:center;padding:12px;box-sizing:border-box}
 section{width:min(100%,760px);text-align:center}h1{font-size:20px;margin:0 0 10px}
 img{display:block;width:100%;aspect-ratio:4/3;object-fit:contain;background:#000;border-radius:12px}
 p{font-size:13px;color:#bfdbfe}</style></head><body><main><section>
-<h1>FaceCheck · ESP32-S3 OV3660</h1><img id="cam" alt="Camera đang kết nối">
+<h1>FaceTouch Pro · ESP32-S3 OV3660</h1><img id="cam" alt="Camera đang kết nối">
 <p>Luồng MJPEG 640×480 · xử lý AI thực hiện trên laptop</p>
 <script>
 const cam=document.getElementById('cam');
@@ -492,7 +508,8 @@ bool start_camera() {
 void setup() {
   Serial.begin(115200);
   delay(800);
-  Serial.println("\n[BOOT] FaceCheck ESP32-S3 OV3660");
+  Serial.println("\n[BOOT] FaceTouch Pro ESP32-S3 OV3660");
+  FaceCheckWifi::checkDoubleReset("Camera", FACECHECK_SERVER_HOST);
 
   if (!psramFound()) {
     Serial.println("[PSRAM] Khong tim thay PSRAM. Dung khoi dong camera.");
@@ -530,6 +547,8 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
+  provisioned_wifi = FaceCheckWifi::load(
+      WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER_HOST);
   begin_station_connection();
   Serial.printf("[WIFI] Dang tim %s hoac %s\n", WIFI_SSID,
                 WIFI_SECONDARY_SSID);
@@ -544,8 +563,8 @@ void setup() {
     // bandwidth and TX power with the access point, then disable sleep.
     WiFi.setSleep(false);
   } else {
-    Serial.println(
-        "[WIFI] Chua ket noi duoc; firmware se tu thu lai moi 5 giay.");
+    Serial.println("[WIFI] Chua ket noi duoc; mo cong cau hinh.");
+    FaceCheckWifi::startPortal("Camera", provisioned_wifi.server);
   }
 #endif
 
@@ -593,6 +612,7 @@ void loop() {
   static unsigned long last_report = 0;
 #if !CAMERA_USE_SOFT_AP
   static unsigned long last_reconnect_attempt = 0;
+  static unsigned long disconnected_since = 0;
   static bool was_connected = WiFi.status() == WL_CONNECTED;
   bool is_connected = WiFi.status() == WL_CONNECTED;
   if (is_connected && !was_connected) {
@@ -606,9 +626,18 @@ void loop() {
 #endif
   } else if (!is_connected && was_connected) {
     Serial.println("[WIFI] Mat ket noi.");
+    disconnected_since = millis();
 #if !FACECHECK_AP_ONLY_TEST
     stop_web_servers();
 #endif
+  }
+  if (is_connected) disconnected_since = 0;
+  if (!is_connected && disconnected_since == 0) disconnected_since = millis();
+  if (!is_connected && millis() - disconnected_since >= 60000) {
+#if !FACECHECK_AP_ONLY_TEST
+    stop_web_servers();
+#endif
+    FaceCheckWifi::startPortal("Camera", provisioned_wifi.server);
   }
   was_connected = is_connected;
   if (!is_connected &&

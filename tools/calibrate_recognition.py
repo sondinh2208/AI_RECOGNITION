@@ -1,4 +1,4 @@
-"""Hiệu chỉnh threshold và top-2 margin cho gallery ArcFace của FaceCheck."""
+"""Hiệu chỉnh threshold và top-2 margin cho gallery ArcFace của FaceTouch Pro."""
 
 from __future__ import annotations
 

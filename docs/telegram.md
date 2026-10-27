@@ -1,4 +1,4 @@
-# Telegram trong FaceCheck
+# Telegram trong FaceTouch Pro
 
 ESP32 xử lý là nơi duy nhất nhận lệnh bot. Server chỉ gửi cảnh báo khuôn mặt;
 không chạy một bộ nhận lệnh Telegram thứ hai với cùng token.

@@ -10,7 +10,7 @@ const simulatedAdminView = viewRole === "admin";
 const debugView = new URLSearchParams(location.search).get("debug") === "1";
 document.body.classList.toggle("kiosk-view", kioskView);
 document.body.classList.toggle("simulated-admin-view", simulatedAdminView);
-if (kioskView) document.title = "FaceCheck - Kiosk quản lý ra vào";
+if (kioskView) document.title = "FaceTouch Pro - Kiosk quản lý ra vào";
 if (simulatedAdminView) $("#enrollmentCameraHeading").textContent = "Theo dõi quét tại kiosk";
 $("#testRecognitionImage").hidden = !debugView;
 const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`;

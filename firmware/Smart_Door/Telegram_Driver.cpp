@@ -226,7 +226,7 @@ static void handleBotCommand(UniversalTelegramBot &bot,
 
     // --- /start hoặc /help ---
     if (text == "/start" || text == "/help") {
-        String msg  = "🚪 *SMART DOOR CONTROLLER*\n\n";
+        String msg  = "🚪 *FaceTouch Pro*\n\n";
         msg        += "*Lệnh khả dụng:*\n";
         msg        += "/status - Xem trạng thái cửa\n";
         msg        += "/open   - Mở khóa từ xa\n";

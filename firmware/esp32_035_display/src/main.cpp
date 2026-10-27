@@ -1,12 +1,22 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <DNSServer.h>
 #include <HTTPClient.h>
 #include <LovyanGFX.hpp>
+#include <Preferences.h>
+#include <WebServer.h>
 #include <WiFi.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 
+#if __has_include("secrets.h")
 #include "secrets.h"
+#else
+// Cho phep build ban dau; cong cau hinh se mo khi Wi-Fi mau khong ton tai.
+#include "../secrets.example.h"
+#endif
+#include "../../common/FaceCheckWifiProvisioning.h"
+#include "ServerDiscovery.h"
 
 #ifndef WIFI_SECONDARY_SSID
 #define WIFI_SECONDARY_SSID ""
@@ -111,7 +121,7 @@ struct KioskState {
   String mode = "idle";
   String state = "idle";
   String title = "DANG KET NOI";
-  String message = "Khoi dong FaceCheck...";
+  String message = "Khoi dong FaceTouch Pro...";
   String name;
   String employeeId;
   float fps = 0;
@@ -124,6 +134,9 @@ struct KioskState {
 
 FaceCheckDisplay display;
 String facecheckServer = FACECHECK_SERVER;
+ServerDiscovery serverDiscovery(FACECHECK_DISPLAY_TOKEN);
+bool serverVerified = false;  // Protected by frameHttpMutex once fetch task starts.
+FaceCheckWifi::Config provisionedWifi;
 KioskState kiosk;
 volatile uint32_t lastSuccessfulRequest = 0;
 uint32_t renderedFrameCount = 0;
@@ -193,7 +206,10 @@ SemaphoreHandle_t frameHttpMutex = nullptr;
 TaskHandle_t frameFetchTaskHandle = nullptr;
 
 void selectFaceCheckServer() {
-  if (strlen(WIFI_SECONDARY_SSID) > 0 &&
+  if (provisionedWifi.saved && WiFi.SSID() == provisionedWifi.ssid &&
+      !provisionedWifi.server.isEmpty()) {
+    facecheckServer = provisionedWifi.server;
+  } else if (strlen(WIFI_SECONDARY_SSID) > 0 &&
       WiFi.SSID() == WIFI_SECONDARY_SSID) {
     facecheckServer = FACECHECK_SECONDARY_SERVER;
   } else {
@@ -238,9 +254,8 @@ bool connectConfiguredNetwork(const char* ssid, const char* password,
   }
   if (WiFi.status() != WL_CONNECTED) return false;
   if (!faceCheckServerReachable(server)) {
-    Serial.printf("[WIFI] %s co song nhung khong thay FaceCheck tai %s\n",
+    Serial.printf("[WIFI] %s da ket noi; FaceTouch Pro chua san sang tai %s\n",
                   ssid, server);
-    return false;
   }
   facecheckServer = server;
   return true;
@@ -280,7 +295,7 @@ uint32_t statusColor() {
 void drawConnectionScreen(const String& detail) {
   frameAreaPrepared = false;
   display.fillScreen(kBackground);
-  centerText("FaceCheck", 42, 4, TFT_WHITE);
+  centerText("FaceTouch Pro", 42, 4, TFT_WHITE);
   display.fillCircle(240, 135, 28, kBlue);
   centerText("...", 119, 3, TFT_WHITE);
   centerText("DANG KET NOI LAPTOP", 184, 2, TFT_WHITE);
@@ -371,6 +386,10 @@ bool fetchFrame(uint8_t slotIndex) {
   }
   if (WiFi.status() != WL_CONNECTED) {
     ++fetchWifiErrorCount;
+    xSemaphoreGive(frameHttpMutex);
+    return false;
+  }
+  if (!serverVerified) {
     xSemaphoreGive(frameHttpMutex);
     return false;
   }
@@ -646,8 +665,19 @@ void ensureWiFi() {
   frameHttp.end();
   frameClient.stop();
   frameHttpReady = false;
-  bool connected = connectConfiguredNetwork(
-      WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER);
+  bool connected = false;
+  serverVerified = false;
+  if (provisionedWifi.saved) {
+    const String configuredServer = provisionedWifi.server.isEmpty()
+        ? String(FACECHECK_SERVER) : provisionedWifi.server;
+    connected = connectConfiguredNetwork(
+        provisionedWifi.ssid.c_str(), provisionedWifi.password.c_str(),
+        configuredServer.c_str());
+  }
+  if (!connected) {
+    connected = connectConfiguredNetwork(
+        WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER);
+  }
   if (!connected) {
     connected = connectConfiguredNetwork(
         WIFI_SECONDARY_SSID, WIFI_SECONDARY_PASSWORD,
@@ -661,7 +691,7 @@ void ensureWiFi() {
     WiFi.setSleep(false);
     Serial.printf("[WIFI] %s | %s | RSSI=%d dBm\n",
                   WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
-    drawConnectionScreen("Wi-Fi OK, dang cho FaceCheck");
+    drawConnectionScreen("Wi-Fi OK, dang cho FaceTouch Pro");
     lastSuccessfulRequest = millis();
   } else {
     Serial.printf("[WIFI] Khong ket noi duoc mang da cau hinh | status=%d\n", WiFi.status());
@@ -678,6 +708,7 @@ void ensureWiFi() {
 
 void setup() {
   Serial.begin(115200);
+  FaceCheckWifi::checkDoubleReset("Display", FACECHECK_SERVER);
   display.init();
   display.setRotation(1);
   display.setBrightness(220);
@@ -698,7 +729,14 @@ void setup() {
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   WiFi.onEvent(onWiFiEvent);
+  provisionedWifi = FaceCheckWifi::load(
+      WIFI_SSID, WIFI_PASSWORD, FACECHECK_SERVER);
   ensureWiFi();
+  if (WiFi.status() != WL_CONNECTED) {
+    drawConnectionScreen("Mo FaceTouchPro-Setup de doi Wi-Fi");
+    FaceCheckWifi::startPortal("Display", provisionedWifi.server);
+  }
+  serverDiscovery.restart();
   if (!isEnrollmentMode()) {
     drawStatusPanel();
   }
@@ -719,13 +757,19 @@ void setup() {
 }
 
 void loop() {
+  static uint32_t disconnectedSince = 0;
   if (wifiTransportChanged) {
     wifiTransportChanged = false;
     resetFrameTransport();
+    if (xSemaphoreTake(frameHttpMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
+      serverVerified = false;
+      xSemaphoreGive(frameHttpMutex);
+    }
     previousStatusKey = "";
     frameAreaPrepared = false;
     if (WiFi.status() == WL_CONNECTED) {
       selectFaceCheckServer();
+      serverDiscovery.restart();
       lastSuccessfulRequest = millis();
       drawConnectionScreen("Wi-Fi da khoi phuc, dang tai lai");
       Serial.printf("[RECOVERY] Da tao lai HTTP sau khi Wi-Fi co IP %s\n",
@@ -738,8 +782,30 @@ void loop() {
   }
   ensureWiFi();
   if (WiFi.status() != WL_CONNECTED) {
+    if (disconnectedSince == 0) disconnectedSince = millis();
+    if (millis() - disconnectedSince >= 60000) {
+      drawConnectionScreen("Mo FaceTouchPro-Setup de doi Wi-Fi");
+      FaceCheckWifi::startPortal("Display", provisionedWifi.server);
+    }
     delay(250);
     return;
+  }
+  disconnectedSince = 0;
+
+  const bool needsServer = !serverVerified || lastSuccessfulRequest == 0 ||
+      millis() - lastSuccessfulRequest > kFrameTransportRecoveryMs;
+  const String discoveredServer = serverDiscovery.poll(facecheckServer, needsServer);
+  if (!discoveredServer.isEmpty() &&
+      (!serverVerified || discoveredServer != facecheckServer)) {
+    if (xSemaphoreTake(frameHttpMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
+      frameHttp.end();
+      frameClient.stop();
+      frameHttpReady = false;
+      facecheckServer = discoveredServer;
+      serverVerified = true;
+      xSemaphoreGive(frameHttpMutex);
+      Serial.printf("[DISCOVERY] Da xac minh may chu: %s\n", facecheckServer.c_str());
+    }
   }
 
   uint8_t readySlot = 0;

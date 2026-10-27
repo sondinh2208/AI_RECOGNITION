@@ -34,7 +34,7 @@ MANUAL_GALLERY_EXCLUSIONS = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Chuẩn bị benchmark LFW cho FaceCheck")
+    parser = argparse.ArgumentParser(description="Chuẩn bị benchmark LFW cho FaceTouch Pro")
     parser.add_argument("--output", type=Path, default=Path("data/benchmark_faces"))
     parser.add_argument("--enrolled", type=int, default=90)
     parser.add_argument("--unknown", type=int, default=30)

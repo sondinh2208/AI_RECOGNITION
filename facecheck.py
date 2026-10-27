@@ -1,4 +1,4 @@
-"""Launcher duy nhất cho FaceCheck: webcam, ESP32 USB hoặc ESP32 Wi-Fi."""
+"""Launcher duy nhất cho FaceTouch Pro: webcam, ESP32 USB hoặc ESP32 Wi-Fi."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from branding import APP_NAME
 
 try:
     import psutil
@@ -287,7 +288,7 @@ def configure_wifi_camera(
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="Khởi động hệ thống FaceCheck")
+    parser = argparse.ArgumentParser(description=f"Khởi động hệ thống {APP_NAME}")
     parser.add_argument(
         "camera",
         nargs="?",
@@ -306,7 +307,7 @@ def parse_args(argv=None):
 
 def run(arguments) -> int:
     if facecheck_running():
-        print("[FACECHECK] Hệ thống đã chạy. Hãy đóng cửa sổ hiện tại trước khi đổi camera.")
+        print(f"[{APP_NAME}] Hệ thống đã chạy. Hãy đóng cửa sổ hiện tại trước khi đổi camera.")
         return 2
 
     environment = load_local_environment(os.environ.copy())
@@ -340,7 +341,7 @@ def run(arguments) -> int:
             command.append("--simulate-display")
         return subprocess.call(command, cwd=ROOT, env=environment)
     except (OSError, RuntimeError) as error:
-        print(f"[FACECHECK] {error}")
+        print(f"[{APP_NAME}] {error}")
         return 1
     finally:
         if display_probe is not None:

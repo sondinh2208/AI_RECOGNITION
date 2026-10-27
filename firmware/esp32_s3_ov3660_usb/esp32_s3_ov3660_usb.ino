@@ -133,8 +133,8 @@ void setup() {
   CameraUSB.begin(115200);
   USB.begin();
   delay(500);
-  Serial.println("\n[BOOT] FaceCheck USB Camera");
-  CameraUSB.println("\n[BOOT] FaceCheck USB Camera");
+  Serial.println("\n[BOOT] FaceTouch Pro USB Camera");
+  CameraUSB.println("\n[BOOT] FaceTouch Pro USB Camera");
 
   if (!psramFound()) {
     Serial.println("[PSRAM] Khong tim thay PSRAM.");
